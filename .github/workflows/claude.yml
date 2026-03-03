@@ -36,7 +36,7 @@ jobs:
           fetch-depth: 1
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
   # Automatic code review on new PRs
   claude-review:
@@ -48,7 +48,7 @@ jobs:
           fetch-depth: 1
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Review this PR for:
             - Code quality and best practices
