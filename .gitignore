@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Profile data (databases, backups, generated PDFs, sheet music files)
+profiles/
+
+# Runtime/config
+profiles.json
+*.db
+.imported
+
+# IDE / workspace
+*.code-workspace
+.vscode/
+
+# Claude Code
+.claude/
+
+# Misc
+=4.0.0
