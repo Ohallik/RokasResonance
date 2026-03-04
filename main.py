@@ -345,20 +345,52 @@ def _load_profile(app, profile_name: str):
     return menu
 
 
+def _resolve_startup_display(profiles, last_used):
+    """
+    Read display settings from the about-to-be-loaded profile so we can
+    create the Window with the correct theme and apply font scaling.
+    Returns (theme_name: str, font_size: str).
+    """
+    from ui.settings_dialog import load_settings
+    profile_name = last_used if (last_used and last_used in profiles) else (profiles[0] if profiles else None)
+    if profile_name:
+        data_dir = os.path.join(PROFILES_DIR, profile_name)
+        settings = load_settings(data_dir)
+        display = settings.get("display") or {}
+        return display.get("theme", "litera"), display.get("font_size", "normal")
+    return "litera", "normal"
+
+
 def main():
     # Migrate legacy (pre-profile) data if needed
     _migrate_legacy_data()
 
     profiles, last_used = _load_profiles()
 
+    # Read saved display preferences before creating the window
+    from ui.theme import (
+        set_theme_name, set_font_scale, apply_global_font_scaling,
+        LARGE_FONT_SCALE,
+    )
+    startup_theme, startup_font_size = _resolve_startup_display(profiles, last_used)
+    set_theme_name(startup_theme)
+    if startup_font_size == "large":
+        set_font_scale(LARGE_FONT_SCALE)
+
+    win_w = 680 if startup_font_size == "large" else 600
+    win_h = 820 if startup_font_size == "large" else 720
+
     app = ttk.Window(
         title="Roka's Resonance",
-        themename="litera",
-        size=(600, 720),
+        themename=startup_theme,
+        size=(win_w, win_h),
         resizable=(True, True),
     )
-    app.minsize(520, 600)
+    app.minsize(520 if startup_font_size == "normal" else 580, 600)
     app.withdraw()
+
+    # Apply font scaling after Tk root exists
+    apply_global_font_scaling()
 
     # Pick initial profile (no dialog on first launch)
     if not profiles:
@@ -382,8 +414,8 @@ def main():
     app.update_idletasks()
     sw = app.winfo_screenwidth()
     sh = app.winfo_screenheight()
-    x = (sw - 600) // 2
-    y = (sh - 720) // 2
+    x = (sw - win_w) // 2
+    y = (sh - win_h) // 2
     app.geometry(f"+{x}+{y}")
     app.deiconify()
 

@@ -8,6 +8,7 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from tkinter import filedialog
+from ui.theme import muted_fg, file_selected_fg
 
 
 GENRE_OPTIONS = [
@@ -43,7 +44,7 @@ FILE_TYPES = [
 
 
 class MusicDialog(ttk.Toplevel):
-    def __init__(self, parent, db, base_dir: str, music_id=None):
+    def __init__(self, parent, db, base_dir: str, music_id=None, prefill_data=None):
         super().__init__(parent)
         self.db = db
         self.base_dir = base_dir
@@ -53,14 +54,14 @@ class MusicDialog(ttk.Toplevel):
 
         title = "Edit Sheet Music" if music_id else "Add Sheet Music"
         self.title(title)
-        self.geometry("620x700")
+        self.geometry("760x740")
         self.resizable(True, True)
         self.grab_set()
 
         # Center
         self.update_idletasks()
-        x = (self.winfo_screenwidth() - 620) // 2
-        y = (self.winfo_screenheight() - 700) // 2
+        x = (self.winfo_screenwidth() - 760) // 2
+        y = (self.winfo_screenheight() - 740) // 2
         self.geometry(f"+{x}+{y}")
 
         self._vars = {}
@@ -71,6 +72,8 @@ class MusicDialog(ttk.Toplevel):
         else:
             # Defaults for new entries
             self._vars["location"].set("Chinook Middle School")
+            if prefill_data:
+                self._prefill(prefill_data)
 
     # ───────────────────────────────────────────────────── Build UI ────────
 
@@ -142,6 +145,10 @@ class MusicDialog(ttk.Toplevel):
         self._field(row1, "Composer", "composer", side=LEFT, width=24)
         self._field(row1, "Arranger", "arranger", side=LEFT, width=24)
 
+        row1b = ttk.Frame(basic)
+        row1b.pack(fill=X, pady=2)
+        self._field(row1b, "Publisher", "publisher", side=LEFT, width=36)
+
         # ── Classification ────────────────────────────────────────────────
         self._section(parent, "Classification")
         cls = ttk.Frame(parent)
@@ -158,8 +165,8 @@ class MusicDialog(ttk.Toplevel):
 
         row3 = ttk.Frame(cls)
         row3.pack(fill=X, pady=2)
-        self._field(row3, "Key Signature", "key_signature", widget="combobox",
-                    options=KEY_SIGNATURE_OPTIONS, side=LEFT, width=16)
+        self._field(row3, "Key Signature(s)  (e.g. Bb Major, G Minor)", "key_signature",
+                    widget="entry", side=LEFT, width=32)
         self._field(row3, "Time Signature", "time_signature", widget="combobox",
                     options=TIME_SIGNATURE_OPTIONS, side=LEFT, width=10)
 
@@ -174,32 +181,34 @@ class MusicDialog(ttk.Toplevel):
 
         # ── File ──────────────────────────────────────────────────────────
         self._section(parent, "Source File (Optional)")
-        file_frame = ttk.Frame(parent)
-        file_frame.pack(fill=X, padx=16, pady=(0, 8))
+        file_row = ttk.Frame(parent)
+        file_row.pack(fill=X, padx=16, pady=(0, 8))
 
-        path_row = ttk.Frame(file_frame)
-        path_row.pack(fill=X, pady=2)
-        ttk.Label(path_row, text="File:", font=("Segoe UI", 8)).pack(side=LEFT)
+        ttk.Button(file_row, text="Browse...", bootstyle=(PRIMARY, OUTLINE),
+                   command=self._browse_file).pack(side=LEFT, padx=(0, 6))
         self._file_label = ttk.Label(
-            path_row, text="No file selected",
-            font=("Segoe UI", 8), foreground="#666",
-            wraplength=400, justify=LEFT
+            file_row, text="No file selected",
+            font=("Segoe UI", 8), foreground=muted_fg(),
         )
-        self._file_label.pack(side=LEFT, padx=(4, 8), fill=X, expand=True)
-        ttk.Button(path_row, text="Browse...", bootstyle=(PRIMARY, OUTLINE),
-                   command=self._browse_file).pack(side=RIGHT)
+        self._file_label.pack(side=LEFT, fill=X, expand=True)
 
-        info_row = ttk.Frame(file_frame)
-        info_row.pack(fill=X, pady=2)
-        self._field(info_row, "File Type", "file_type", side=LEFT, width=10)
-        self._field(info_row, "Pages", "num_pages", side=LEFT, width=8)
+        # File type + pages inline on same row
+        ttk.Label(file_row, text="Type:", font=("Segoe UI", 8)).pack(side=LEFT, padx=(8, 2))
+        file_type_var = tk.StringVar()
+        self._vars["file_type"] = file_type_var
+        ttk.Entry(file_row, textvariable=file_type_var, width=7).pack(side=LEFT)
+
+        ttk.Label(file_row, text="Pages:", font=("Segoe UI", 8)).pack(side=LEFT, padx=(8, 2))
+        pages_var = tk.StringVar()
+        self._vars["num_pages"] = pages_var
+        ttk.Entry(file_row, textvariable=pages_var, width=5).pack(side=LEFT)
 
         # ── Comments ──────────────────────────────────────────────────────
         self._section(parent, "Comments")
         notes_frame = ttk.Frame(parent)
         notes_frame.pack(fill=X, padx=16, pady=(0, 8))
 
-        self._notes_text = tk.Text(notes_frame, height=3, font=("Segoe UI", 9),
+        self._notes_text = tk.Text(notes_frame, height=8, font=("Segoe UI", 9),
                                    relief="solid", bd=1, wrap=WORD)
         self._notes_text.pack(fill=X, pady=2)
 
@@ -236,7 +245,7 @@ class MusicDialog(ttk.Toplevel):
             return
 
         self._source_file = path
-        self._file_label.config(text=os.path.basename(path), foreground="#000")
+        self._file_label.config(text=os.path.basename(path), foreground=file_selected_fg())
 
         # Auto-detect file type
         ext = os.path.splitext(path)[1].lower()
@@ -272,7 +281,18 @@ class MusicDialog(ttk.Toplevel):
         file_path = row["file_path"] or ""
         if file_path:
             self._file_label.config(text=os.path.basename(file_path),
-                                    foreground="#000")
+                                    foreground=file_selected_fg())
+
+    def _prefill(self, data: dict):
+        """Populate form fields from an AI-analysed prefill dict."""
+        for key, var in self._vars.items():
+            val = data.get(key, "")
+            if val:
+                var.set(str(val).strip())
+        notes = data.get("notes", "")
+        if notes:
+            self._notes_text.delete("1.0", "end")
+            self._notes_text.insert("1.0", notes)
 
     def _collect_data(self) -> dict:
         data = {k: v.get().strip() for k, v in self._vars.items()}

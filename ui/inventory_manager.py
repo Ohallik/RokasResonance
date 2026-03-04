@@ -8,6 +8,7 @@ import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
+from ui.theme import muted_fg
 
 
 TREEVIEW_COLS = (
@@ -59,6 +60,7 @@ class InventoryManager(ttk.Frame):
         self._col_vars = {c: tk.BooleanVar(value=True)
                           for c in TREEVIEW_COLS if c != "status"}
         self._col_popup = None
+        self._chat_window = None
 
         self._build()
         self._load_col_prefs()
@@ -120,7 +122,7 @@ class InventoryManager(ttk.Frame):
         self._cat_combo.pack(side=LEFT, padx=(0, 10))
         self._filter_category.trace_add("write", lambda *_: self._apply_filters())
 
-        self._count_label = ttk.Label(filter_bar, text="", foreground="#666")
+        self._count_label = ttk.Label(filter_bar, text="", foreground=muted_fg())
         self._count_label.pack(side=RIGHT, padx=6)
 
         self._col_btn = ttk.Button(
@@ -198,6 +200,17 @@ class InventoryManager(ttk.Frame):
         self._build_detail_tab()
         self._build_history_tab()
         self._build_repair_tab()
+
+        # ── AI Chat Footer ─────────────────────────────────────────────────────
+        footer = ttk.Frame(self)
+        footer.pack(fill=X, side=BOTTOM)
+        ttk.Separator(footer).pack(fill=X)
+        ttk.Button(
+            footer,
+            text="🎩 Ask Reginald",
+            bootstyle=(DARK, OUTLINE),
+            command=self._open_chat,
+        ).pack(side=RIGHT, padx=10, pady=5)
 
     def _build_detail_tab(self):
         outer = ttk.Frame(self._detail_tab)
@@ -499,6 +512,27 @@ class InventoryManager(ttk.Frame):
         iid = sel[0]
         self._selected_id = int(iid)
         self._load_detail(self._selected_id)
+        # Keep open chat window in sync with selected instrument
+        if self._chat_window and self._chat_window.winfo_exists():
+            instrument = self.db.get_instrument(self._selected_id)
+            if instrument:
+                self._chat_window.update_selected_instrument(dict(instrument))
+
+    def _open_chat(self):
+        from ui.chat_dialog import ChatDialog
+        # Raise existing window if already open
+        if self._chat_window and self._chat_window.winfo_exists():
+            self._chat_window.lift()
+            self._chat_window.focus_force()
+            return
+        instrument = None
+        if self._selected_id:
+            row = self.db.get_instrument(self._selected_id)
+            if row:
+                instrument = dict(row)
+        self._chat_window = ChatDialog(
+            self.winfo_toplevel(), self.db, self.base_dir, instrument
+        )
 
     def _load_detail(self, instrument_id: int):
         instrument = self.db.get_instrument(instrument_id)

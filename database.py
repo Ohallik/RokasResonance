@@ -160,8 +160,9 @@ class Database:
                 conn.commit()
             except Exception:
                 pass  # Column already exists
-            # Migrate: add key_signature, time_signature, location to sheet_music
-            for col in ("key_signature TEXT", "time_signature TEXT", "location TEXT"):
+            # Migrate: add key_signature, time_signature, location, publisher to sheet_music
+            for col in ("key_signature TEXT", "time_signature TEXT", "location TEXT",
+                        "publisher TEXT"):
                 try:
                     conn.execute(f"ALTER TABLE sheet_music ADD COLUMN {col}")
                     conn.commit()
@@ -665,7 +666,7 @@ class Database:
         cols = [
             "title", "composer", "arranger", "genre", "ensemble_type",
             "difficulty", "file_path", "file_type", "num_pages", "notes",
-            "key_signature", "time_signature", "location"
+            "key_signature", "time_signature", "location", "publisher"
         ]
         values = [data.get(c) for c in cols]
         placeholders = ",".join(["?"] * len(cols))
@@ -680,7 +681,7 @@ class Database:
         cols = [
             "title", "composer", "arranger", "genre", "ensemble_type",
             "difficulty", "file_path", "file_type", "num_pages", "notes", "is_active",
-            "key_signature", "time_signature", "location"
+            "key_signature", "time_signature", "location", "publisher"
         ]
         set_clause = ", ".join([f"{c}=?" for c in cols])
         values = [data.get(c) for c in cols] + [music_id]

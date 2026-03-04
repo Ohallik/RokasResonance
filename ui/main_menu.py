@@ -7,6 +7,7 @@ import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from PIL import Image, ImageTk
+from ui.theme import fs, muted_fg, subtle_fg, link_fg
 
 class MainMenu(ttk.Frame):
     def __init__(self, parent, db, base_dir: str, app_dir: str = None, teacher_name: str = ""):
@@ -81,7 +82,7 @@ class MainMenu(ttk.Frame):
         ttk.Label(
             text_frame,
             text="🎵  Roka's Resonance",
-            font=("Segoe UI", 22, "bold"),
+            font=("Segoe UI", fs(22), "bold"),
             bootstyle=(INVERSE, PRIMARY),
             anchor=CENTER,
         ).pack(fill=X, pady=(0, 2))
@@ -89,7 +90,7 @@ class MainMenu(ttk.Frame):
         ttk.Label(
             text_frame,
             text=f"{self.teacher_name}  •  Instrument Management" if self.teacher_name else "Instrument Management",
-            font=("Segoe UI", 10),
+            font=("Segoe UI", fs(10)),
             bootstyle=(INVERSE, PRIMARY),
             anchor=CENTER,
         ).pack(fill=X)
@@ -114,8 +115,8 @@ class MainMenu(ttk.Frame):
         ttk.Label(
             btn_area,
             text="Instrument Inventory",
-            font=("Segoe UI", 10, "bold"),
-            foreground="#555555",
+            font=("Segoe UI", fs(10), "bold"),
+            foreground=muted_fg(),
         ).pack(anchor=W, pady=(0, 6))
 
         self._make_main_button(
@@ -154,8 +155,8 @@ class MainMenu(ttk.Frame):
         ttk.Label(
             btn_area,
             text="Sheet Music",
-            font=("Segoe UI", 10, "bold"),
-            foreground="#555555",
+            font=("Segoe UI", fs(10), "bold"),
+            foreground=muted_fg(),
         ).pack(anchor=W, pady=(0, 6))
 
         self._make_main_button(
@@ -179,37 +180,54 @@ class MainMenu(ttk.Frame):
         ttk.Label(
             footer_inner,
             text=f"Roka's Resonance  •  {self.teacher_name}" if self.teacher_name else "Roka's Resonance",
-            font=("Segoe UI", 8),
-            foreground="#999999",
+            font=("Segoe UI", fs(8)),
+            foreground=subtle_fg(),
         ).pack(side=LEFT)
 
         ttk.Label(
             footer_inner,
             text="  •  ",
-            font=("Segoe UI", 8),
-            foreground="#999999",
+            font=("Segoe UI", fs(8)),
+            foreground=subtle_fg(),
         ).pack(side=LEFT)
 
         switch_lbl = ttk.Label(
             footer_inner,
             text="Switch Profile",
-            font=("Segoe UI", 8, "underline"),
-            foreground="#4A90D9",
+            font=("Segoe UI", fs(8), "underline"),
+            foreground=link_fg(),
             cursor="hand2",
         )
         switch_lbl.pack(side=LEFT)
         switch_lbl.bind("<Button-1>", lambda e: self._switch_profile())
 
+        ttk.Label(
+            footer_inner,
+            text="  •  ",
+            font=("Segoe UI", fs(8)),
+            foreground=subtle_fg(),
+        ).pack(side=LEFT)
+
+        settings_lbl = ttk.Label(
+            footer_inner,
+            text="Settings",
+            font=("Segoe UI", fs(8), "underline"),
+            foreground=link_fg(),
+            cursor="hand2",
+        )
+        settings_lbl.pack(side=LEFT)
+        settings_lbl.bind("<Button-1>", lambda e: self._open_settings())
+
     def _make_stat(self, parent, value: str, label: str, col: int):
         f = ttk.Frame(parent)
         f.grid(row=0, column=col, padx=20)
-        val_lbl = ttk.Label(f, text=value, font=("Segoe UI", 20, "bold"), bootstyle=PRIMARY)
+        val_lbl = ttk.Label(f, text=value, font=("Segoe UI", fs(20), "bold"), bootstyle=PRIMARY)
         val_lbl.pack()
-        ttk.Label(f, text=label, font=("Segoe UI", 8), foreground="#666666").pack()
+        ttk.Label(f, text=label, font=("Segoe UI", fs(8)), foreground=muted_fg()).pack()
         return val_lbl
 
     def _make_main_button(self, parent, text, subtext, icon, command, style, row):
-        frame = ttk.Frame(parent, bootstyle=LIGHT)
+        frame = ttk.Frame(parent)
         frame.pack(fill=X, pady=6)
 
         btn = ttk.Button(
@@ -219,13 +237,13 @@ class MainMenu(ttk.Frame):
             bootstyle=style,
             width=40,
         )
-        btn.pack(fill=X, ipady=10, padx=0)
+        btn.pack(fill=X, ipady=fs(10), padx=0)
 
         ttk.Label(
             frame,
             text=f"      {subtext}",
-            font=("Segoe UI", 8),
-            foreground="#666666",
+            font=("Segoe UI", fs(8)),
+            foreground=muted_fg(),
         ).pack(anchor=W, pady=(2, 0))
 
     def _refresh_stats(self):
@@ -336,6 +354,10 @@ class MainMenu(ttk.Frame):
 
         ttk.Label(win, text=f"{len(checkouts)} instrument(s) currently checked out",
                   font=("Segoe UI", 9), foreground="#666").pack(pady=6)
+
+    def _open_settings(self):
+        from ui.settings_dialog import SettingsDialog
+        SettingsDialog(self.winfo_toplevel(), self.base_dir)
 
     def _switch_profile(self):
         """Ask main.py to show the profile selector via the callback."""

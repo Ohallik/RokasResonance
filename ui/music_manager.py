@@ -12,6 +12,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from tkinter import filedialog
 from datetime import datetime
+from ui.theme import muted_fg
 
 
 TREEVIEW_COLS = (
@@ -64,6 +65,7 @@ class MusicManager(ttk.Frame):
         self._col_vars = {c: tk.BooleanVar(value=True) for c in TREEVIEW_COLS}
         self._col_popup = None
         self._last_played_cache = {}  # music_id -> date string
+        self._chat_window = None
 
         self._build()
         self._load_col_prefs()
@@ -79,6 +81,8 @@ class MusicManager(ttk.Frame):
 
         ttk.Button(toolbar, text="Add Music", bootstyle=SUCCESS,
                    command=self._add_music).pack(side=LEFT, padx=6, pady=6)
+        ttk.Button(toolbar, text="Import Music", bootstyle=(SUCCESS, OUTLINE),
+                   command=self._import_music).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="Edit", bootstyle=PRIMARY,
                    command=self._edit_music).pack(side=LEFT, padx=2, pady=6)
         self._omr_btn = ttk.Button(toolbar, text="Process OMR", bootstyle=WARNING,
@@ -127,7 +131,7 @@ class MusicManager(ttk.Frame):
         )
         self._col_btn.pack(side=RIGHT, padx=(0, 4))
 
-        self._count_label = ttk.Label(filter_bar, text="", foreground="#666")
+        self._count_label = ttk.Label(filter_bar, text="", foreground=muted_fg())
         self._count_label.pack(side=RIGHT, padx=6)
 
         # ── Main Content: Tree + Detail Panel ─────────────────────────────
@@ -191,6 +195,17 @@ class MusicManager(ttk.Frame):
         self._build_omr_tab()
         self._build_history_tab()
 
+        # ── AI Chat Footer ─────────────────────────────────────────────────
+        footer = ttk.Frame(self)
+        footer.pack(fill=X, side=BOTTOM)
+        ttk.Separator(footer).pack(fill=X)
+        ttk.Button(
+            footer,
+            text="🎩 Ask Reginald",
+            bootstyle=(DARK, OUTLINE),
+            command=self._open_chat,
+        ).pack(side=RIGHT, padx=10, pady=5)
+
     def _build_detail_tab(self):
         outer = ttk.Frame(self._detail_tab)
         outer.pack(fill=BOTH, expand=True, padx=8, pady=8)
@@ -200,6 +215,7 @@ class MusicManager(ttk.Frame):
             ("Title", "title"),
             ("Composer", "composer"),
             ("Arranger", "arranger"),
+            ("Publisher", "publisher"),
             ("Genre", "genre"),
             ("Ensemble", "ensemble_type"),
             ("Difficulty", "difficulty"),
@@ -259,7 +275,7 @@ class MusicManager(ttk.Frame):
 
         self._omr_summary = ttk.Label(
             frame, text="Select a piece to see OMR results",
-            font=("Segoe UI", 9), foreground="#666"
+            font=("Segoe UI", 9), foreground=muted_fg()
         )
         self._omr_summary.pack(anchor=W, padx=8, pady=(8, 4))
 
@@ -555,6 +571,12 @@ class MusicManager(ttk.Frame):
         self._omr_btn.config(state=state)
         self._export_btn.config(state=state)
 
+        # Keep open chat window in sync with selected piece
+        if self._chat_window and self._chat_window.winfo_exists():
+            self._chat_window.update_selected_music(
+                dict(piece) if piece else None
+            )
+
     def _load_detail(self, music_id: int):
         piece = self.db.get_sheet_music(music_id)
         if not piece:
@@ -596,7 +618,7 @@ class MusicManager(ttk.Frame):
                 status_lbl.config(foreground="#CC0000",
                                   font=("Segoe UI", 8, "bold"))
             else:
-                status_lbl.config(foreground="#666666",
+                status_lbl.config(foreground=muted_fg(),
                                   font=("Segoe UI", 8))
 
         self._load_performances(music_id)
@@ -743,6 +765,72 @@ class MusicManager(ttk.Frame):
         self.wait_window(dlg)
         self.refresh()
 
+    def _import_music(self):
+        from llm_client import is_configured
+        if not is_configured(self.base_dir):
+            Messagebox.show_warning(
+                "No API key configured. Open Settings and enter your GitHub token "
+                "to use AI-powered import.",
+                title="API Key Required",
+            )
+            return
+
+        paths = filedialog.askopenfilenames(
+            title="Select Sheet Music Files to Import",
+            filetypes=[
+                ("Image & PDF files", "*.pdf *.png *.jpg *.jpeg *.tiff *.tif *.bmp"),
+                ("PDF files", "*.pdf"),
+                ("Images", "*.png *.jpg *.jpeg *.tiff *.tif *.bmp"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not paths:
+            return
+
+        from ui.music_importer import ImportProgressDialog
+        progress_dlg = ImportProgressDialog(
+            self.winfo_toplevel(), list(paths), self.base_dir
+        )
+        self.wait_window(progress_dlg)
+
+        results = progress_dlg.results
+        if results is None:
+            return  # cancelled or errored
+        if not results:
+            Messagebox.show_info(
+                "No music pieces were found in the selected files.",
+                title="Import Complete",
+            )
+            return
+
+        n = len(results)
+        answer = Messagebox.yesno(
+            f"Found {n} piece(s). Review and add them one at a time?\n\n"
+            "Edit the details for each piece and click Save, or Cancel to skip.",
+            title=f"Found {n} Piece(s)",
+        )
+        if answer != "Yes":
+            return
+
+        from ui.music_dialog import MusicDialog
+        added = 0
+        for prefill in results:
+            dlg = MusicDialog(
+                self.winfo_toplevel(), self.db,
+                base_dir=self.base_dir,
+                prefill_data=prefill,
+            )
+            self.wait_window(dlg)
+            if dlg._result == "saved":
+                added += 1
+            self.refresh()
+
+        if added:
+            Messagebox.show_info(
+                f"Added {added} of {n} piece(s) to your library.",
+                title="Import Complete",
+            )
+
     def _edit_music(self):
         iid = self._get_selected_music()
         if iid is None:
@@ -828,6 +916,23 @@ class MusicManager(ttk.Frame):
                 f"Failed to export:\n{e}",
                 title="Export Error"
             )
+
+
+    def _open_chat(self):
+        from ui.chat_dialog import ChatDialog
+        if self._chat_window and self._chat_window.winfo_exists():
+            self._chat_window.lift()
+            self._chat_window.focus_force()
+            return
+        piece = None
+        if self._selected_id:
+            row = self.db.get_sheet_music(self._selected_id)
+            if row:
+                piece = dict(row)
+        self._chat_window = ChatDialog(
+            self.winfo_toplevel(), self.db, self.base_dir,
+            selected_music=piece,
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════

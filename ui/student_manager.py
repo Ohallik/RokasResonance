@@ -180,8 +180,9 @@ class StudentManager(ttk.Frame):
             if y not in years:
                 years.insert(0, y)
         self._years_combo["values"] = years
-        if years:
-            self._year_var.set(years[0])
+        # Default to current school year (not necessarily years[0])
+        if not self._year_var.get():
+            self._year_var.set(cur)
 
     def refresh(self):
         year = self._year_var.get() or None
