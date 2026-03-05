@@ -3,9 +3,14 @@ ui/music_importer.py - AI-powered sheet music import from images/PDFs
 
 Flow:
   1. User selects files (PDF / PNG / JPG / etc.)
-  2. Files are converted to images and sent to LLM vision for title extraction
-  3. Each found title is enriched via LLM text query (composer, difficulty, etc.)
-  4. Returns a list of prefill dicts for MusicDialog
+  2. Each image is classified into one of four types:
+       SINGLE_PIECE       - one score page or one folder cover
+       FLAT_COVERS        - multiple folders laid face-up on a table
+       SPINE_SHELF        - shelf/cabinet with vertical binder spines
+       TABLE_OF_CONTENTS  - a printed list/index of titles
+  3. A specialized extraction prompt is used for each type.
+  4. Optionally each piece is enriched via a text query (difficulty, key, genre).
+  5. BatchImportDialog shows all found pieces for review before importing.
 """
 
 from __future__ import annotations
@@ -21,41 +26,35 @@ from pathlib import Path
 from ttkbootstrap.constants import *
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Image helpers ──────────────────────────────────────────────────────────────
 
-def _file_to_images(path: str) -> list[dict]:
-    """
-    Convert a file to a list of image dicts {mime_type, data}.
-    PDFs: renders first 3 pages at 150 DPI.
-    Images: returned directly (resized if needed).
-    """
+def _file_to_images(path: str, max_px: int = 1800) -> list[dict]:
+    """Convert a file to a list of image dicts {mime_type, data}."""
     ext = Path(path).suffix.lower()
     images = []
 
     if ext == ".pdf":
         try:
-            import fitz  # pymupdf
+            import fitz
             doc = fitz.open(path)
             for i, page in enumerate(doc):
                 if i >= 3:
                     break
                 mat = fitz.Matrix(150 / 72, 150 / 72)
                 pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB)
-                img_bytes = pix.tobytes("png")
                 images.append({
                     "mime_type": "image/png",
-                    "data": base64.b64encode(img_bytes).decode(),
+                    "data": base64.b64encode(pix.tobytes("png")).decode(),
                 })
             doc.close()
         except ImportError:
-            pass  # fitz not available, skip PDF
+            pass
     else:
         try:
             from PIL import Image
             img = Image.open(path).convert("RGB")
-            # Resize so longest side ≤ 1500px
             w, h = img.size
-            scale = min(1.0, 1500 / max(w, h))
+            scale = min(1.0, max_px / max(w, h))
             if scale < 1.0:
                 img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
             buf = io.BytesIO()
@@ -70,13 +69,12 @@ def _file_to_images(path: str) -> list[dict]:
     return images
 
 
+# ── JSON extraction ────────────────────────────────────────────────────────────
+
 def _extract_json(text: str) -> list | dict | None:
-    """Pull the first JSON array or object out of an LLM response."""
-    # Try ```json...``` block first
     m = re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
     if m:
         text = m.group(1).strip()
-    # Try to find a JSON array or object
     for pattern in (r"(\[[\s\S]+\])", r"(\{[\s\S]+\})"):
         m = re.search(pattern, text)
         if m:
@@ -87,434 +85,897 @@ def _extract_json(text: str) -> list | dict | None:
     return None
 
 
+# ── Filename hints ─────────────────────────────────────────────────────────────
+
 def _filename_hints(path: str) -> tuple[str, str]:
-    """Parse 'Title - Composer' from a filename stem, stripping leading numbers."""
     stem = Path(path).stem
-    clean = re.sub(r"^\d+\s*[-.]?\s*", "", stem)  # strip "12 " or "12. "
+    # Camera-generated filenames (IMG_1234, DSC_5678, etc.) carry no title info
+    if re.match(r'^(?:IMG|DSC|DCIM|PHOTO|PIC|IMAGE|P\d{1,2})[-_]?\d+$', stem, re.IGNORECASE):
+        return "", ""
+    clean = re.sub(r"^\d+\s*[-.]?\s*", "", stem)
     parts = [p.strip() for p in clean.split(" - ", 1)]
     title = parts[0] if parts else clean
     composer = parts[1] if len(parts) > 1 else ""
     return title, composer
 
 
-def _identify_piece(path: str, images: list[dict], base_dir: str) -> dict:
+# ── 4-way image classifier ─────────────────────────────────────────────────────
+
+def _classify_image(images: list[dict], base_dir: str, on_retry=None) -> str:
     """
-    Phase 1: identify the ONE piece this file represents.
-    Uses filename as primary hint, images as supplemental.
-    Always returns exactly one piece dict.
+    Returns one of: SINGLE_PIECE, FLAT_COVERS, SPINE_SHELF, TABLE_OF_CONTENTS
     """
+    from llm_client import query_with_images
+
+    probe = (
+        "Look at this image and classify it into EXACTLY one of these categories:\n\n"
+        "  A) SINGLE_PIECE — a scan or photo of ONE piece of sheet music "
+        "(one cover, one score page, or one folder shown alone). "
+        "There is only a single title visible as the main piece.\n"
+        "  B) FLAT_COVERS — multiple music folders or booklets laid face-up "
+        "on a table or floor, so you can see their front covers\n"
+        "  C) SPINE_SHELF — a shelf, cabinet, or rack where you can see the "
+        "vertical spine text of multiple binders or folders stored upright\n"
+        "  D) TABLE_OF_CONTENTS — any page or document that lists MULTIPLE piece "
+        "titles in rows or columns. This includes: a printed table of contents, "
+        "an index page, a set list, a conductor packet contents page, a folder "
+        "insert listing songs in a collection, or a concert program listing pieces. "
+        "If you can count 3 or more piece titles listed on the page, choose D.\n\n"
+        "Reply with ONLY the letter: A, B, C, or D."
+    )
+    try:
+        kind = query_with_images(base_dir, probe, images, on_retry=on_retry).strip().upper()
+    except Exception:
+        return "SINGLE_PIECE"
+
+    if kind.startswith("B"):
+        return "FLAT_COVERS"
+    if kind.startswith("C"):
+        return "SPINE_SHELF"
+    if kind.startswith("D"):
+        return "TABLE_OF_CONTENTS"
+    return "SINGLE_PIECE"
+
+
+# ── Extraction: SINGLE_PIECE ───────────────────────────────────────────────────
+
+def _extract_single_piece(path: str, images: list[dict], base_dir: str, on_retry=None) -> list[dict]:
     from llm_client import query_with_images
 
     title_hint, composer_hint = _filename_hints(path)
     fname = Path(path).stem
+    composer_str = f' by "{composer_hint}"' if composer_hint else ""
 
     _EMPTY = {
-        "title": title_hint, "composer": composer_hint,
-        "arranger": "", "publisher": "",
-        "instrument_parts": "", "time_signature": "", "visible_notes": "",
+        "title": title_hint, "composer": composer_hint, "arranger": "",
+        "publisher": "", "ensemble_type": "", "difficulty": "",
+        "time_signature": "", "visible_notes": "",
     }
 
     if not images:
-        return _EMPTY
+        return [_EMPTY]
 
-    composer_str = f' by "{composer_hint}"' if composer_hint else ""
+    if title_hint:
+        intro = f'This image shows ONE piece of sheet music, likely titled "{title_hint}"{composer_str}.'
+        title_instruction = "- title: the piece title (confirm or correct the hint above)\n"
+    else:
+        intro = "This image shows ONE piece of sheet music."
+        title_instruction = "- title: the piece title as printed on the cover or score\n"
+
     prompt = (
-        f'This file ("{fname}") represents ONE piece of sheet music, '
-        f'likely titled "{title_hint}"{composer_str}.\n\n'
-        "Examine the images to confirm or correct the title and composer, "
-        "then capture any additional info you can clearly SEE:\n"
-        "- title: confirmed/corrected title of this one piece\n"
-        "- composer: full composer name (use filename hint if not visible)\n"
-        "- arranger: arranger name if visible, otherwise empty\n"
+        intro + "\n\n"
+        "Extract everything you can clearly see:\n"
+        + title_instruction +
+        "- composer: full composer name\n"
+        "- arranger: arranger name if visible, else empty\n"
         "- publisher: publishing house if visible "
-        "  (e.g. Hal Leonard, Alfred Music, Carl Fischer, FJH, Boosey & Hawkes)\n"
-        "- instrument_parts: all instrument names visible on the pages\n"
-        "- time_signature: meter if clearly shown at the start of a staff\n"
-        "- visible_notes: grade/difficulty marking, catalog number, year, "
-        "  or other useful identifying text\n\n"
-        "This file contains ONE piece. Do not list other titles that appear "
-        "in margins, catalogs, series listings, or tables of contents.\n\n"
-        "Do NOT attempt to read key signatures — transposing parts make this unreliable.\n\n"
-        "Respond ONLY with a single JSON object (not an array):\n"
-        '{"title": "...", "composer": "...", "arranger": "...", "publisher": "...", '
-        '"instrument_parts": "...", "time_signature": "...", "visible_notes": "..."}\n'
-        "Use empty string for fields you cannot clearly see."
+        "(e.g. Hal Leonard, Alfred, Carl Fischer, FJH, C.L. Barnhouse)\n"
+        "- ensemble_type: Concert Band, Jazz Band, Percussion Ensemble, "
+        "Small Ensemble, Solo, Marching Band, or Other\n"
+        "- difficulty: grade/level if shown (e.g. 'Grade 2', 'Level 1', 'Easy Jazz')\n"
+        "- time_signature: meter if clearly shown (e.g. '4/4', '3/4')\n"
+        "- visible_notes: any other useful text (catalog number, year, series name)\n\n"
+        "Respond ONLY with a single JSON object. Use empty string for anything not visible.\n"
+        '{"title":"","composer":"","arranger":"","publisher":"","ensemble_type":"",'
+        '"difficulty":"","time_signature":"","visible_notes":""}'
     )
 
-    raw = query_with_images(base_dir, prompt, images)
-    result = _extract_json(raw)
-    if isinstance(result, dict):
-        return result
-    if isinstance(result, list) and result:
-        return result[0]  # fallback if LLM returned array anyway
-    return _EMPTY
+    try:
+        raw = query_with_images(base_dir, prompt, images, on_retry=on_retry)
+        result = _extract_json(raw)
+        if isinstance(result, dict):
+            return [result]
+        if isinstance(result, list) and result:
+            return [result[0]]
+    except Exception:
+        pass
+    return [_EMPTY]
 
 
-def _enrich_piece(piece: dict, base_dir: str) -> dict:
-    """
-    Phase 2: text query to fill in composer, difficulty, key sig, time sig, etc.
-    """
+# ── Extraction: FLAT_COVERS ────────────────────────────────────────────────────
+
+def _extract_flat_covers(images: list[dict], base_dir: str, on_retry=None) -> list[dict]:
+    from llm_client import query_with_images
+
+    prompt = (
+        "This image shows multiple pieces of sheet music laid face-up on a surface. "
+        "Each folder or booklet is a separate piece.\n\n"
+        "For EACH cover you can clearly read, extract:\n"
+        "- title: piece title exactly as printed on the cover\n"
+        "- composer: composer name if visible\n"
+        "- arranger: arranger name if visible, else empty\n"
+        "- publisher: publishing house (logo, text, or imprint) if visible. "
+        "Common publishers: Hal Leonard, Alfred Music, Carl Fischer, FJH Music, "
+        "C.L. Barnhouse, Warner Bros, Southern Music.\n"
+        "- ensemble_type: Concert Band, Jazz Band, Percussion Ensemble, "
+        "Small Ensemble, Solo, Marching Band, or Other — infer from series name if needed\n"
+        "- difficulty: grade or level if shown on the cover\n"
+        "- visible_notes: any other text visible on that cover (series, catalog number, year)\n\n"
+        "Include EVERY cover whose title you can read. "
+        "Respond ONLY with a JSON array. Use empty string for anything not visible.\n"
+        '[{"title":"","composer":"","arranger":"","publisher":"","ensemble_type":"",'
+        '"difficulty":"","visible_notes":""}]'
+    )
+
+    try:
+        raw = query_with_images(base_dir, prompt, images, on_retry=on_retry)
+        result = _extract_json(raw)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict):
+            return [result]
+    except Exception:
+        pass
+    return []
+
+
+# ── Extraction: SPINE_SHELF ────────────────────────────────────────────────────
+
+def _extract_spine_shelf(images: list[dict], base_dir: str, on_retry=None) -> list[dict]:
+    from llm_client import query_with_images
+
+    prompt = (
+        "This image shows sheet music binders or folders stored upright on a shelf "
+        "or in a file cabinet. The title text runs vertically along each spine.\n\n"
+        "Carefully read each visible spine. The text is rotated — tilt your "
+        "perspective. For each piece you can make out:\n"
+        "- title: piece title (read the vertical text carefully)\n"
+        "- composer: composer or arranger name if printed on the spine\n"
+        "- publisher: publisher name if visible on the spine. "
+        "Common publishers: Hal Leonard, Alfred, Carl Fischer, FJH, "
+        "C.L. Barnhouse, Warner Bros, Manhattan Beach Music.\n"
+        "- ensemble_type: infer from spine text if possible "
+        "(e.g. 'Beginning Band Series' → Concert Band, 'Easy Jazz Ensemble' → Jazz Band, "
+        "'Young Band' → Concert Band, 'FJH Beginning Band' → Concert Band)\n"
+        "- visible_notes: any other text on that spine (grade level, catalog number, series)\n\n"
+        "Include EVERY spine you can read, even if the title is partial. "
+        "Respond ONLY with a JSON array. Use empty string for anything not visible.\n"
+        '[{"title":"","composer":"","publisher":"","ensemble_type":"","visible_notes":""}]'
+    )
+
+    try:
+        raw = query_with_images(base_dir, prompt, images, on_retry=on_retry)
+        result = _extract_json(raw)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict):
+            return [result]
+    except Exception:
+        pass
+    return []
+
+
+# ── Extraction: TABLE_OF_CONTENTS ─────────────────────────────────────────────
+
+def _extract_toc(images: list[dict], base_dir: str, on_retry=None) -> list[dict]:
+    from llm_client import query_with_images
+
+    prompt = (
+        "This image shows a printed table of contents, index, or set list for "
+        "a music collection.\n\n"
+        "Extract EVERY entry in the list. For each row:\n"
+        "- title: piece title exactly as printed\n"
+        "- composer: composer name if listed in this row\n"
+        "- arranger: arranger name if listed (often shown as 'arr.' or 'Arranged by')\n"
+        "- visible_notes: page number or any other info from this row\n\n"
+        "Read the entire page — some pages may be upside-down or at an angle. "
+        "Respond ONLY with a JSON array. Use empty string for missing fields.\n"
+        '[{"title":"","composer":"","arranger":"","visible_notes":""}]'
+    )
+
+    try:
+        raw = query_with_images(base_dir, prompt, images, on_retry=on_retry)
+        result = _extract_json(raw)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict):
+            return [result]
+    except Exception:
+        pass
+    return []
+
+
+# ── Enrichment (optional) ──────────────────────────────────────────────────────
+
+def _enrich_piece(piece: dict, base_dir: str, on_retry=None) -> dict:
+    """Text-only LLM call to fill in difficulty, key, genre, comments."""
     from llm_client import query
 
     title = piece.get("title", "").strip()
-    composer = piece.get("composer", "").strip()
-    arranger = piece.get("arranger", "").strip()
-    publisher = piece.get("publisher", "").strip()
-    vis_time = piece.get("time_signature", "").strip()
-    instrument_parts = piece.get("instrument_parts", "").strip()
-    visible_notes = piece.get("visible_notes", "").strip()
-    vis_publisher = piece.get("publisher", "").strip()
+    if not title:
+        return piece
 
     context_lines = [f'Title: "{title}"']
-    if composer:
-        context_lines.append(f"Composer: {composer}")
-    if arranger:
-        context_lines.append(f"Arranger: {arranger}")
-    if vis_publisher:
-        context_lines.append(f"Publisher visible in image: {vis_publisher}")
-    if instrument_parts:
-        context_lines.append(f"Instrument parts visible: {instrument_parts}")
-    if vis_time:
-        context_lines.append(f"Time signature visible: {vis_time}")
-    if visible_notes:
-        context_lines.append(f"Other visible info: {visible_notes}")
+    for key, label in [
+        ("composer", "Composer"), ("arranger", "Arranger"),
+        ("publisher", "Publisher"), ("ensemble_type", "Ensemble type"),
+        ("time_signature", "Time signature visible"),
+        ("visible_notes", "Other visible info"),
+    ]:
+        val = piece.get(key, "").strip()
+        if val:
+            context_lines.append(f"{label}: {val}")
 
     prompt = (
         "You are a band director and music librarian with deep knowledge of "
         "published educational band and ensemble music.\n\n"
-        "Piece to catalogue:\n" + "\n".join(f"  {l}" for l in context_lines) + "\n\n"
+        "Piece:\n" + "\n".join(f"  {l}" for l in context_lines) + "\n\n"
         "Use your knowledge of this specific published work as the PRIMARY source. "
-        "Cross-reference with what these band music databases list for this piece: "
-        "windrep.org (Wind Repertoire Project), jwpepper.com (J.W. Pepper), and "
-        "sheetmusicplus.com. Their listings take priority over general estimation. "
-        "Image hints above are supplemental. "
-        "If you cannot confidently determine a value, return an empty string — do not guess.\n\n"
-        "Fields:\n"
+        "Cross-reference windrep.org, jwpepper.com, and sheetmusicplus.com. "
+        "If you cannot confidently determine a value, return empty string — do not guess.\n\n"
+        "Fields to fill:\n"
         "- title: exact corrected full title\n"
         "- composer: full name of original composer\n"
         "- arranger: full name of arranger (empty if none)\n"
-        "- difficulty: rate the SPECIFIC PUBLISHED ARRANGEMENT (not the original "
-        "  composition) on a 1–5 scale. "
-        "  FIRST: check windrep.org, jwpepper.com, or sheetmusicplus.com for a listed grade "
-        "  and convert: Grade 1→1, Grade 2→2, Grade 3→3, Grade 4→4, Grade 5→4.5, Grade 6→5. "
-        "  SECOND: if the piece is not in those databases (e.g. non-US publisher, jazz band, "
-        "  less-known edition), estimate based on style, complexity, and instrumentation using "
-        "  these anchors: 1=very easy/beginning band, 2=easy/early middle school, "
-        "  3=developing middle school, 4=strong middle/early high school, 4.5–5=advanced. "
-        "  Jazz band context: Easy Jazz=1–2, Medium Jazz=2.5–3, Medium-Advanced=3.5–4, "
-        "  Advanced=4.5–5. Educational arrangements of complex orchestral works are typically "
-        "  Grade 2–3. Only leave blank if you have absolutely no basis for estimation.\n"
-        "- key_signature: CONCERT PITCH key as heard by the audience / played by "
-        "  C instruments (flute, oboe, trombone, tuba). Use your knowledge of the "
-        "  published piece — do NOT attempt to read from a transposing instrument part. "
-        "  List comma-separated if the piece modulates (e.g. 'Ab Major, F Minor').\n"
-        "- time_signature: primary meter; use visible value if provided, "
-        "  otherwise from knowledge (e.g. '4/4', '3/4', '6/8').\n"
-        "- publisher: publishing house (e.g. Hal Leonard, Alfred Music, Carl Fischer, "
-        "  FJH Music, Boosey & Hawkes, C.L. Barnhouse, Southern Music). "
-        "  Use visible value if provided; otherwise use your knowledge of this edition.\n"
-        "- genre: one of: March, Concert, Pop/Rock, Classical, Jazz, World, "
-        "  Holiday, Warm-Up, Method Book, Chorale, Other\n"
-        "- ensemble_type: one of: Concert Band, Jazz Band, Percussion Ensemble, "
-        "  Small Ensemble, Solo, Marching Band, Other\n"
-        "- comments: Two parts separated by a newline:\n"
-        "  Part 1: One sentence describing what the piece is (style, origin, mood, character).\n"
-        "  Part 2: A short bulleted list (• bullet per line) of info a middle school band "
-        "  director needs when deciding whether to program this for a concert. "
-        "  Only include bullets you know with confidence:\n"
-        "    • Duration: approximate performance time (e.g. ~3:30)\n"
-        "    • Features: notable solos, featured sections, special instruments\n"
-        "    • Occasion: ideal context (opener, closer, holiday concert, contest, etc.)\n"
-        "    • Challenges: technical demands worth flagging (range, exposed solos, etc.)\n"
-        "    • Extras: alternate versions, special equipment, programmatic content, etc.\n"
-        "  Omit any bullet whose info is already captured in the structured fields "
-        "  (genre, difficulty, key, time sig, publisher, ensemble type).\n\n"
+        "- publisher: publishing house\n"
+        "- difficulty: 1–5 scale. Grade 1→1, Grade 2→2, Grade 3→3, Grade 4→4, "
+        "  Grade 5→4.5, Grade 6→5. "
+        "  1=beginning band, 2=easy middle school, 3=developing middle school, "
+        "  4=strong middle/early high school, 5=advanced.\n"
+        "- key_signature: concert pitch key. Comma-separated if the piece modulates.\n"
+        "- time_signature: primary meter (e.g. '4/4', '3/4', '6/8')\n"
+        "- genre: March, Concert, Pop/Rock, Classical, Jazz, World, Holiday, "
+        "  Warm-Up, Method Book, Chorale, or Other\n"
+        "- ensemble_type: Concert Band, Jazz Band, Percussion Ensemble, "
+        "  Small Ensemble, Solo, Marching Band, or Other\n"
+        "- comments: One sentence describing the piece, then a bullet list of "
+        "  duration, notable features, ideal occasion, challenges, and extras. "
+        "  Omit bullets that duplicate structured fields.\n"
+        "- confidence: high | medium | low — your overall confidence that the "
+        "  above facts are correct for THIS specific published work. "
+        "  high = you know this piece well from a recognised publisher; "
+        "  medium = you are fairly sure but the title is common or details are thin; "
+        "  low = you are inferring or the piece is obscure.\n\n"
         "Respond ONLY with a JSON object with those exact keys."
     )
 
-    raw = query(base_dir, prompt)
-    enriched = _extract_json(raw)
-    if isinstance(enriched, dict):
-        # Merge: enriched wins over phase-1 data, but keep visible_notes
-        result = dict(piece)
-        result.update(enriched)
-        return result
-
-    # Enrichment failed — return phase-1 data as-is
+    try:
+        raw = query(base_dir, prompt, on_retry=on_retry)
+        enriched = _extract_json(raw)
+        if isinstance(enriched, dict):
+            result = dict(piece)
+            # Only overwrite a field if the enriched value is non-empty,
+            # so extraction-quality data (composer, title etc.) is never
+            # blanked out by an LLM that returned an empty string.
+            for k, v in enriched.items():
+                if v is not None and str(v).strip():
+                    result[k] = v
+            return result
+    except Exception:
+        pass
     return piece
 
 
-def _extract_titles_from_collection_image(
-    path: str, images: list[dict], base_dir: str
-) -> list[dict]:
-    """
-    For images that show multiple titles (e.g. a photo of binder spines on a shelf).
-    Returns a list of minimal piece dicts {title, composer, ...}.
-    """
-    from llm_client import query_with_images
-
-    prompt = (
-        "You are a music librarian cataloguing sheet music from a photo.\n\n"
-        "This image shows multiple pieces of sheet music (e.g. binder spines on a shelf, "
-        "a stack of folders, or a storage cabinet). Extract EVERY title and composer "
-        "you can read.\n\n"
-        "For each piece you can make out:\n"
-        "- title: the piece title as it appears\n"
-        "- composer: composer or arranger name if visible\n"
-        "- visible_notes: any other text visible (grade, publisher, etc.)\n\n"
-        "Respond ONLY with a JSON array of objects. Include only what you can actually read.\n"
-        '{"title": "...", "composer": "...", "arranger": "", "publisher": "", '
-        '"instrument_parts": "", "time_signature": "", "visible_notes": "..."}\n'
-        "Do not add commentary."
-    )
-
-    raw = query_with_images(base_dir, prompt, images)
-    result = _extract_json(raw)
-    if isinstance(result, list):
-        return result
-    if isinstance(result, dict):
-        return [result]
-    return []
-
+# ── Main analysis pipeline ─────────────────────────────────────────────────────
 
 def analyze_music_files(
     paths: list[str],
     base_dir: str,
-    progress_cb,   # callable(message: str)
-    cancel_flag,   # list with one bool — checked to cancel
+    progress_cb,
+    cancel_flag,
+    enrich: bool = False,
+    results_list: list | None = None,
 ) -> list[dict]:
     """
-    Full analysis pipeline. Returns list of enriched piece dicts.
-
-    PDFs → always 1 piece per file (filename-driven, images just confirm).
-    Images → LLM decides: if it looks like a single scan, 1 piece;
-             if it's a collection photo (shelf/binders), extract all visible titles.
+    Full analysis pipeline. Returns list of piece dicts.
+    enrich=False (default): vision-only extraction, fast.
+    enrich=True: adds a knowledge-enrichment LLM call per piece.
+    results_list: if provided, pieces are appended here as they are found (for partial import).
     """
-    all_pieces: list[dict] = []
+    all_pieces: list[dict] = results_list if results_list is not None else []
     _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp"}
 
     for file_idx, path in enumerate(paths):
         if cancel_flag[0]:
             break
+
         fname = Path(path).name
         ext = Path(path).suffix.lower()
         is_image = ext in _IMAGE_EXTS
 
-        progress_cb(f"[{file_idx + 1}/{len(paths)}] Reading: {fname}")
-        images = _file_to_images(path)
+        progress_cb(f"[{file_idx + 1}/{len(paths)}] {fname}")
+        images = _file_to_images(path, max_px=1800)
 
-        # ── Images: let LLM decide if it's a single scan or a collection photo ──
-        if is_image and images:
-            try:
-                pieces = _classify_and_extract(path, images, base_dir, progress_cb)
-            except Exception as e:
-                progress_cb(f"  Vision failed ({e}) — using filename only")
-                t, c = _filename_hints(path)
-                pieces = [{"title": t, "composer": c, "arranger": "", "publisher": "",
-                           "instrument_parts": "", "time_signature": "", "visible_notes": ""}]
-        # ── PDFs (or unreadable images): always 1 piece per file ──
-        else:
-            try:
-                piece = _identify_piece(path, images, base_dir)
-            except Exception as e:
-                progress_cb(f"  Vision failed ({e}) — using filename only")
-                t, c = _filename_hints(path)
-                piece = {"title": t, "composer": c, "arranger": "", "publisher": "",
-                         "instrument_parts": "", "time_signature": "", "visible_notes": ""}
-            pieces = [piece]
-
-        if not pieces:
-            progress_cb(f"  Nothing found in: {fname}")
+        if not images:
+            progress_cb("  Could not read file — skipping")
             continue
 
-        for p in pieces:
-            parts_note = f" [{p.get('instrument_parts')}]" if p.get("instrument_parts") else ""
-            progress_cb(f"  Found: {p.get('title', '?')[:55]}{parts_note}")
+        def _retry_cb(n, d):
+            progress_cb(f"  Rate limited — retry {n} in {d}s...")
+
+        try:
+            if is_image:
+                progress_cb("  Classifying...")
+                img_type = _classify_image(images, base_dir, on_retry=_retry_cb)
+                progress_cb(f"  {img_type.replace('_', ' ').title()}")
+
+                if img_type == "FLAT_COVERS":
+                    progress_cb("  Extracting covers...")
+                    pieces = _extract_flat_covers(images, base_dir, on_retry=_retry_cb)
+                elif img_type == "SPINE_SHELF":
+                    progress_cb("  Extracting spines (high-res)...")
+                    hi_res = _file_to_images(path, max_px=2400)
+                    pieces = _extract_spine_shelf(hi_res or images, base_dir, on_retry=_retry_cb)
+                elif img_type == "TABLE_OF_CONTENTS":
+                    progress_cb("  Extracting TOC...")
+                    pieces = _extract_toc(images, base_dir, on_retry=_retry_cb)
+                else:
+                    progress_cb("  Extracting piece...")
+                    pieces = _extract_single_piece(path, images, base_dir, on_retry=_retry_cb)
+            else:
+                progress_cb("  Extracting piece...")
+                pieces = _extract_single_piece(path, images, base_dir, on_retry=_retry_cb)
+
+        except Exception as e:
+            progress_cb(f"  Vision failed: {e}")
+            t, c = _filename_hints(path)
+            pieces = [{"title": t, "composer": c, "arranger": "", "publisher": "",
+                       "ensemble_type": "", "difficulty": "", "time_signature": "",
+                       "visible_notes": ""}]
+
+        if not pieces:
+            progress_cb("  Nothing found")
+            continue
+
+        progress_cb(f"  Found {len(pieces)} piece(s)")
 
         for piece in pieces:
             if cancel_flag[0]:
                 break
-            title = piece.get("title") or "?"
-            progress_cb(f"  Enriching: {title[:55]}")
-            try:
-                enriched = _enrich_piece(piece, base_dir)
-            except Exception as e:
-                progress_cb(f"  Enrichment failed ({e}) — using basic data")
-                enriched = piece
-            all_pieces.append(enriched)
+            if not piece.get("title", "").strip():
+                progress_cb("  (skipping piece with no title)")
+                continue
+            piece["_source_file"] = fname
+            if enrich:
+                title = piece.get("title", "").strip()
+                progress_cb(f"  Enriching: {title[:50]}")
+                try:
+                    piece = _enrich_piece(piece, base_dir, on_retry=_retry_cb)
+                except Exception as e:
+                    progress_cb(f"  Enrichment failed after all retries: {e}")
+            all_pieces.append(piece)
 
     return all_pieces
 
 
-def _classify_and_extract(
-    path: str, images: list[dict], base_dir: str, progress_cb
-) -> list[dict]:
-    """
-    For image files: ask the LLM whether this is a single-piece scan or a
-    collection photo, then dispatch accordingly.
-    """
-    from llm_client import query_with_images
-
-    probe = (
-        "Look at this image. Is it:\n"
-        "  A) A scan or photo of a SINGLE piece of sheet music (cover, title page, "
-        "or notation for one piece)\n"
-        "  B) A photo showing MULTIPLE pieces at once (shelf of binders, stack of "
-        "folders, cabinet, or any view where you can read several different titles)\n\n"
-        "Reply with ONLY the letter A or B."
-    )
-    kind = query_with_images(base_dir, probe, images).strip().upper()
-
-    if kind.startswith("B"):
-        progress_cb("  Collection photo detected — extracting all visible titles")
-        return _extract_titles_from_collection_image(path, images, base_dir)
-    else:
-        progress_cb("  Single piece scan detected")
-        result = _identify_piece(path, images, base_dir)
-        return [result]
-
+# ── Normalisation / prefill ────────────────────────────────────────────────────
 
 def _clean_title(raw: str) -> str:
-    """Strip leading piece-number prefix from a title (e.g. '12 The Clock Strikes' → 'The Clock Strikes')."""
-    # Match patterns like "12 ", "12. ", "12 - ", "No. 12 " at the start
     cleaned = re.sub(r"^(?:No\.?\s*)?\d+\s*[-.]?\s*", "", raw).strip()
-    return cleaned if cleaned else raw  # fallback to original if stripping empties it
+    return cleaned if cleaned else raw
 
 
-def _dict_to_prefill(d: dict) -> dict:
-    """Normalise an enriched piece dict into MusicDialog prefill_data keys."""
-    def _s(key, *aliases):
-        for k in (key, *aliases):
+def _norm_title(t: str) -> str:
+    """Normalised title for duplicate comparison (lowercase, alphanum only)."""
+    return re.sub(r"[^a-z0-9]", "", t.lower())
+
+
+def _dict_to_prefill(d: dict, existing_titles: set[str] | None = None) -> dict:
+    def _s(*keys):
+        for k in keys:
             v = d.get(k)
             if v:
                 return str(v).strip()
         return ""
 
-    return {
-        "title":          _clean_title(_s("title")),
+    # Normalise difficulty: "Grade 2" / "Level 2" → "2"
+    diff = _s("difficulty")
+    m = re.search(r"(\d+(?:\.\d+)?)", diff)
+    diff = m.group(1) if m else diff
+
+    title = _clean_title(_s("title"))
+    prefill = {
+        "title":          title,
         "composer":       _s("composer"),
         "arranger":       _s("arranger"),
         "publisher":      _s("publisher"),
         "genre":          _s("genre"),
         "ensemble_type":  _s("ensemble_type"),
-        "difficulty":     _s("difficulty"),
+        "difficulty":     diff,
         "key_signature":  _s("key_signature"),
         "time_signature": _s("time_signature"),
         "location":       "Chinook Middle School",
         "notes":          _s("comments", "visible_notes", "notes"),
+        "_duplicate":     False,
+        "_source_file":   d.get("_source_file", ""),
+        "_confidence":    d.get("confidence", "").strip().lower(),
     }
 
+    if existing_titles and title:
+        prefill["_duplicate"] = _norm_title(title) in existing_titles
 
-# ── Progress Dialog ───────────────────────────────────────────────────────────
+    return prefill
 
-class ImportProgressDialog(ttk.Toplevel):
+
+# ── Batch Import Dialog ────────────────────────────────────────────────────────
+
+class BatchImportDialog(ttk.Toplevel):
     """
-    Shows analysis progress and returns results via self.results when done.
-    self.results is None if cancelled or failed, else list of prefill dicts.
+    Two-phase dialog:
+      Phase 1 — analysis progress log while the background thread runs.
+      Phase 2 — batch review table where the user checks/edits pieces before import.
+    self.results is None if cancelled, or a list of prefill dicts for confirmed pieces.
     """
 
-    def __init__(self, parent, paths: list[str], base_dir: str):
+    _COLS = ("sel", "title", "composer", "arranger", "ensemble_type", "difficulty", "publisher", "conf", "source")
+    _HDR  = {"sel": "", "title": "Title", "composer": "Composer",
+             "arranger": "Arranger", "ensemble_type": "Ensemble",
+             "difficulty": "Diff", "publisher": "Publisher",
+             "conf": "Conf", "source": "Source File"}
+    _WID  = {"sel": 28, "title": 200, "composer": 130, "arranger": 110,
+             "ensemble_type": 100, "difficulty": 40, "publisher": 110,
+             "conf": 36, "source": 140}
+
+    def __init__(self, parent, paths: list[str], base_dir: str,
+                 existing_titles: set[str] | None = None):
         super().__init__(parent)
-        self.paths = paths
-        self.base_dir = base_dir
-        self.results = None
-        self._cancel_flag = [False]
+        self.paths          = paths
+        self.base_dir       = base_dir
+        self.existing_titles = existing_titles or set()
+        self.results        = None          # None=cancelled; list=confirmed pieces
+        self._cancel_flag   = [False]
+        self._in_review     = False
+        self._partial_pieces: list[dict] = []  # grows as analysis runs
+        self._prefills: list[dict] = []
+        self._check_vars: list[tk.BooleanVar] = []
+        self._selected_idx: int | None = None
+        self._edit_vars: dict[str, tk.StringVar] = {}
+        self._edit_notes: tk.Text | None = None
+        self._enrich_var    = tk.BooleanVar(value=True)
+        self._mousewheel_bound = False
 
-        self.title("Importing Sheet Music…")
-        self.geometry("540x360")
-        self.resizable(False, True)
+        self.title("Import Sheet Music")
+        self.geometry("1140x600")
+        self.resizable(True, True)
         self.grab_set()
+        self.minsize(900, 480)
 
         self.update_idletasks()
-        x = (self.winfo_screenwidth() - 540) // 2
-        y = (self.winfo_screenheight() - 360) // 2
+        x = (self.winfo_screenwidth()  - 940) // 2
+        y = (self.winfo_screenheight() - 580) // 2
         self.geometry(f"+{x}+{y}")
 
         self.protocol("WM_DELETE_WINDOW", self._cancel)
-        self._build()
-        self.after(100, self._start)
+        self._build_progress_phase()
+        self.after(100, self._start_analysis)
 
-    def _build(self):
-        hdr = ttk.Frame(self, bootstyle=INFO)
+    # ─────────────────────────────────────────── Phase 1: Progress ────────
+
+    def _build_progress_phase(self):
+        self._phase1 = ttk.Frame(self)
+        self._phase1.pack(fill=BOTH, expand=True)
+
+        hdr = ttk.Frame(self._phase1, bootstyle=INFO)
         hdr.pack(fill=X)
-        ttk.Label(
-            hdr, text="  🎼  Analyzing Sheet Music",
-            font=("Segoe UI", 12, "bold"),
-            bootstyle=(INVERSE, INFO),
-        ).pack(pady=10, padx=12, anchor=W)
+        ttk.Label(hdr, text="  🎼  Analyzing Sheet Music",
+                  font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, INFO)).pack(pady=10, padx=12, anchor=W)
 
-        ttk.Label(
-            self,
-            text=f"Processing {len(self.paths)} file(s) — this may take a minute…",
-            font=("Segoe UI", 9), foreground="#555",
-        ).pack(anchor=W, padx=14, pady=(10, 4))
+        ttk.Label(self._phase1,
+                  text=f"Processing {len(self.paths)} file(s) — this may take a few minutes…",
+                  font=("Segoe UI", 9), foreground="#555").pack(anchor=W, padx=14, pady=(10, 2))
 
-        log_frame = ttk.Frame(self)
+        opt = ttk.Frame(self._phase1)
+        opt.pack(anchor=W, padx=14, pady=(0, 6))
+        ttk.Checkbutton(opt,
+                        text="Full enrichment (adds difficulty, key, genre from AI knowledge — slower)",
+                        variable=self._enrich_var,
+                        bootstyle=SECONDARY).pack(side=LEFT)
+
+        log_frame = ttk.Frame(self._phase1)
         log_frame.pack(fill=BOTH, expand=True, padx=12, pady=(0, 8))
 
         sb = ttk.Scrollbar(log_frame, orient=VERTICAL)
-        self._log = tk.Text(
-            log_frame, wrap=WORD, state="disabled",
-            font=("Consolas", 8), relief="flat",
-            yscrollcommand=sb.set,
-        )
+        self._log = tk.Text(log_frame, wrap=WORD, state="disabled",
+                            font=("Consolas", 8), relief="flat",
+                            yscrollcommand=sb.set)
         sb.config(command=self._log.yview)
         sb.pack(side=RIGHT, fill=Y)
         self._log.pack(fill=BOTH, expand=True)
 
-        self._status_lbl = ttk.Label(
-            self, text="Starting…", font=("Segoe UI", 8), foreground="#555"
-        )
+        self._status_lbl = ttk.Label(self._phase1, text="Starting…",
+                                     font=("Segoe UI", 8), foreground="#555")
         self._status_lbl.pack(anchor=W, padx=14, pady=(0, 4))
 
-        btn_frame = ttk.Frame(self)
+        btn_frame = ttk.Frame(self._phase1)
         btn_frame.pack(fill=X, padx=12, pady=8)
-        self._cancel_btn = ttk.Button(
-            btn_frame, text="Cancel",
-            bootstyle=(SECONDARY, OUTLINE),
-            command=self._cancel,
-        )
+        self._cancel_btn = ttk.Button(btn_frame, text="Cancel",
+                                      bootstyle=(SECONDARY, OUTLINE),
+                                      command=self._cancel)
         self._cancel_btn.pack(side=RIGHT)
+        self._partial_btn = ttk.Button(btn_frame, text="Import What We Have",
+                                       bootstyle=(WARNING, OUTLINE),
+                                       command=self._import_partial)
+        self._partial_btn.pack(side=RIGHT, padx=(0, 6))
 
     def _log_line(self, msg: str):
-        self._log.config(state="normal")
-        self._log.insert("end", msg + "\n")
-        self._log.config(state="disabled")
-        self._log.see("end")
-        self._status_lbl.config(text=msg[:80])
+        try:
+            self._log.config(state="normal")
+            self._log.insert("end", msg + "\n")
+            self._log.config(state="disabled")
+            self._log.see("end")
+            self._status_lbl.config(text=msg[:90])
+        except Exception:
+            pass  # dialog was closed while background thread was still running
 
-    def _start(self):
+    def _start_analysis(self):
+        enrich = self._enrich_var.get()
+
         def _run():
             try:
-                raw_pieces = analyze_music_files(
+                raw = analyze_music_files(
                     self.paths, self.base_dir,
                     lambda msg: self.after(0, self._log_line, msg),
                     self._cancel_flag,
+                    enrich=enrich,
+                    results_list=self._partial_pieces,
                 )
-                prefills = [_dict_to_prefill(p) for p in raw_pieces]
-                self.after(0, self._done, prefills)
+                prefills = [_dict_to_prefill(p, self.existing_titles) for p in raw]
+                self.after(0, self._analysis_done, prefills)
             except Exception as e:
-                self.after(0, self._done, None, str(e))
+                self.after(0, self._analysis_error, str(e))
 
         threading.Thread(target=_run, daemon=True).start()
 
-    def _done(self, prefills, error=None):
-        if error:
-            self._log_line(f"ERROR: {error}")
-            self._status_lbl.config(text="Analysis failed.", foreground="#cc0000")
-            self._cancel_btn.config(text="Close")
+    def _import_partial(self):
+        """Stop analysis and review whatever has been found so far."""
+        self._cancel_flag[0] = True
+        pieces = list(self._partial_pieces)
+        if not pieces:
+            self._log_line("No pieces found yet — nothing to import.")
             return
+        prefills = [_dict_to_prefill(p, self.existing_titles) for p in pieces]
+        self._log_line(f"\nStopped early — {len(prefills)} piece(s) ready to review.")
+        self._prefills = prefills
+        self._in_review = True
+        self._phase1.pack_forget()
+        self._build_review_phase()
 
+    def _analysis_done(self, prefills: list[dict]):
+        if self._in_review:
+            return  # already transitioned via _import_partial
         if self._cancel_flag[0]:
-            self._log_line("Cancelled.")
             self.results = []
             self.destroy()
             return
 
-        self.results = prefills or []
+        self._prefills = prefills
+
+        if not prefills:
+            self._log_line("\nNo pieces found in the selected files.")
+            self._cancel_btn.config(text="Close")
+            return
+
+        self._log_line(f"\nDone — found {len(prefills)} piece(s). Preparing review…")
+        self._in_review = True
+        self._phase1.pack_forget()
+        self._build_review_phase()
+
+    def _analysis_error(self, msg: str):
+        self._log_line(f"\nERROR: {msg}")
+        self._status_lbl.config(text="Analysis failed.", foreground="#cc0000")
+        self._cancel_btn.config(text="Close")
+
+    # ─────────────────────────────────────────── Phase 2: Review ──────────
+
+    def _build_review_phase(self):
+        n      = len(self._prefills)
+        n_dup  = sum(1 for p in self._prefills if p.get("_duplicate"))
+        n_low  = sum(1 for p in self._prefills if p.get("_confidence") == "low")
+
+        self._phase2 = ttk.Frame(self)
+        self._phase2.pack(fill=BOTH, expand=True)
+
+        # Header
+        hdr = ttk.Frame(self._phase2, bootstyle=SUCCESS)
+        hdr.pack(fill=X)
+        notes = []
+        if n_dup:
+            notes.append(f"{n_dup} possible duplicate(s) flagged")
+        if n_low:
+            notes.append(f"{n_low} low-confidence row(s) — spot-check !")
+        dup_note = " — " + "; ".join(notes) if notes else ""
+        ttk.Label(hdr, text=f"  🎼  Review {n} piece(s){dup_note}",
+                  font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, SUCCESS)).pack(pady=10, padx=12, anchor=W)
+
+        # Control bar
+        ctrl = ttk.Frame(self._phase2)
+        ctrl.pack(fill=X, padx=10, pady=(6, 2))
+        ttk.Button(ctrl, text="Select All", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: self._set_all(True)).pack(side=LEFT, padx=2)
+        ttk.Button(ctrl, text="Select None", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: self._set_all(False)).pack(side=LEFT, padx=2)
+        if n_dup:
+            ttk.Button(ctrl, text="Deselect Duplicates", bootstyle=(WARNING, OUTLINE),
+                       command=self._deselect_dups).pack(side=LEFT, padx=6)
+        self._sel_lbl = ttk.Label(ctrl, text="", font=("Segoe UI", 9))
+        self._sel_lbl.pack(side=RIGHT, padx=6)
+
+        # Bottom buttons — must be packed BEFORE the pane so pack reserves space for them
+        btns = ttk.Frame(self._phase2)
+        btns.pack(fill=X, padx=10, pady=8, side=BOTTOM)
+        ttk.Button(btns, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self._cancel).pack(side=RIGHT, padx=4)
+        self._import_btn = ttk.Button(btns, text="Import Selected",
+                                      bootstyle=SUCCESS, command=self._do_import)
+        self._import_btn.pack(side=RIGHT, padx=4)
+
+        # Main pane: list left, edit panel right
+        pane = ttk.Panedwindow(self._phase2, orient=HORIZONTAL)
+        pane.pack(fill=BOTH, expand=True, padx=6, pady=(0, 4))
+
+        left = ttk.Frame(pane)
+        pane.add(left, weight=3)
+        self._build_review_tree(left)
+
+        right = ttk.Frame(pane, width=320)
+        pane.add(right, weight=2)
+        self._build_edit_panel(right)
+
+        self._populate_review_tree()
+        self._update_sel_count()
+
+        # Update WM_DELETE_WINDOW to also unbind mousewheel
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+
+    def _build_review_tree(self, parent):
+        sb  = ttk.Scrollbar(parent, orient=VERTICAL)
+        xsb = ttk.Scrollbar(parent, orient=HORIZONTAL)
+        self._rev_tree = ttk.Treeview(
+            parent, columns=self._COLS, show="headings", selectmode="browse",
+            bootstyle=SUCCESS, yscrollcommand=sb.set, xscrollcommand=xsb.set,
+        )
+        sb.config(command=self._rev_tree.yview)
+        xsb.config(command=self._rev_tree.xview)
+        sb.pack(side=RIGHT, fill=Y)
+        xsb.pack(side=BOTTOM, fill=X)
+        self._rev_tree.pack(fill=BOTH, expand=True)
+
+        _STRETCH = {"title", "composer"}
+        for col in self._COLS:
+            self._rev_tree.heading(col, text=self._HDR[col], anchor=W)
+            self._rev_tree.column(col, width=self._WID[col], anchor=W,
+                                  minwidth=28, stretch=col in _STRETCH)
+
+        self._rev_tree.tag_configure("dup",       foreground="#bb8800")
+        self._rev_tree.tag_configure("conf_low",  foreground="#cc2222")
+        self._rev_tree.tag_configure("conf_med",  foreground="#cc7700")
+        self._rev_tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        # Click the checkbox column to toggle
+        self._rev_tree.bind("<Button-1>", self._on_tree_click)
+
+    def _populate_review_tree(self):
+        self._check_vars.clear()
+        for i, p in enumerate(self._prefills):
+            # Default: unchecked for duplicates, checked for everything else
+            checked = not p.get("_duplicate", False)
+            var = tk.BooleanVar(value=checked)
+            self._check_vars.append(var)
+            dup  = p.get("_duplicate", False)
+            conf = p.get("_confidence", "")
+            if dup:
+                tags = ("dup",)
+            elif conf == "low":
+                tags = ("conf_low",)
+            elif conf == "medium":
+                tags = ("conf_med",)
+            else:
+                tags = ()
+            self._rev_tree.insert("", "end", iid=str(i), tags=tags,
+                                  values=self._row_values(i))
+
+        children = self._rev_tree.get_children()
+        if children:
+            self._rev_tree.selection_set(children[0])
+            self._rev_tree.focus(children[0])
+            self._on_tree_select()
+
+    def _row_values(self, idx: int) -> tuple:
+        p   = self._prefills[idx]
+        chk = "☑" if self._check_vars[idx].get() else "☐"
+        dup = " ⚠" if p.get("_duplicate") else ""
+        conf_sym = {"high": "✓", "medium": "~", "low": "!"}.get(
+            p.get("_confidence", ""), "")
+        return (chk, p.get("title", "") + dup, p.get("composer", ""),
+                p.get("arranger", ""), p.get("ensemble_type", ""),
+                p.get("difficulty", ""), p.get("publisher", ""),
+                conf_sym, p.get("_source_file", ""))
+
+    def _build_edit_panel(self, parent):
+        ttk.Label(parent, text="Edit Selected Piece",
+                  font=("Segoe UI", 10, "bold")).pack(anchor=W, padx=8, pady=(8, 4))
+
+        # Scrollable inner frame
+        canv = tk.Canvas(parent, highlightthickness=0)
+        sb   = ttk.Scrollbar(parent, orient=VERTICAL, command=canv.yview)
+        canv.configure(yscrollcommand=sb.set)
+        sb.pack(side=RIGHT, fill=Y)
+        canv.pack(fill=BOTH, expand=True)
+
+        inner = ttk.Frame(canv)
+        win   = canv.create_window((0, 0), window=inner, anchor=NW)
+
+        def _resize(e):
+            canv.configure(scrollregion=canv.bbox("all"))
+        def _width(e):
+            canv.itemconfig(win, width=e.width)
+        inner.bind("<Configure>", _resize)
+        canv.bind("<Configure>", _width)
+
+        def _wheel(e):
+            try:
+                canv.yview_scroll(int(-1 * (e.delta / 120)), "units")
+            except tk.TclError:
+                pass
+        canv.bind_all("<MouseWheel>", _wheel)
+        self._mousewheel_bound = True
+        self._canv_ref = canv   # keep ref for unbinding
+
+        FIELDS = [
+            ("Title",        "title"),
+            ("Composer",     "composer"),
+            ("Arranger",     "arranger"),
+            ("Publisher",    "publisher"),
+            ("Ensemble",     "ensemble_type"),
+            ("Difficulty",   "difficulty"),
+            ("Genre",        "genre"),
+            ("Key Sig",      "key_signature"),
+            ("Time Sig",     "time_signature"),
+            ("Location",     "location"),
+        ]
+        for label, key in FIELDS:
+            f = ttk.Frame(inner)
+            f.pack(fill=X, padx=8, pady=1)
+            ttk.Label(f, text=label + ":", font=("Segoe UI", 8, "bold"),
+                      width=11, anchor=W).pack(side=LEFT)
+            var = tk.StringVar()
+            self._edit_vars[key] = var
+            ttk.Entry(f, textvariable=var, font=("Segoe UI", 8)).pack(
+                side=LEFT, fill=X, expand=True)
+            var.trace_add("write", lambda *_, k=key: self._on_edit_change(k))
+
+        ttk.Label(inner, text="Comments:", font=("Segoe UI", 8, "bold")).pack(
+            anchor=W, padx=8, pady=(6, 0))
+        self._edit_notes = tk.Text(inner, height=5, font=("Segoe UI", 8),
+                                   relief="solid", bd=1, wrap=WORD)
+        self._edit_notes.pack(fill=X, padx=8, pady=(2, 6))
+        self._edit_notes.bind("<<Modified>>", self._on_notes_modified)
+
+        ttk.Button(inner, text="Toggle ☑/☐ for Selected",
+                   bootstyle=(SECONDARY, OUTLINE),
+                   command=self._toggle_selected).pack(padx=8, pady=(4, 10), anchor=W)
+
+    # ─────────────────────────────────────── Review interactions ──────────
+
+    def _on_tree_click(self, event):
+        """Toggle checkbox when the user clicks the ☑/☐ column."""
+        region = self._rev_tree.identify_region(event.x, event.y)
+        col    = self._rev_tree.identify_column(event.x)
+        if region == "cell" and col == "#1":
+            item = self._rev_tree.identify_row(event.y)
+            if item:
+                idx = int(item)
+                self._check_vars[idx].set(not self._check_vars[idx].get())
+                self._rev_tree.item(item, values=self._row_values(idx))
+                self._update_sel_count()
+
+    def _on_tree_select(self, event=None):
+        sel = self._rev_tree.selection()
+        if not sel:
+            return
+        self._flush_edit()
+        idx = int(sel[0])
+        self._selected_idx = idx
+        p = self._prefills[idx]
+        for key, var in self._edit_vars.items():
+            var.set(p.get(key, "") or "")
+        if self._edit_notes:
+            self._edit_notes.delete("1.0", "end")
+            self._edit_notes.insert("1.0", p.get("notes", "") or "")
+            self._edit_notes.edit_modified(False)
+
+    def _on_edit_change(self, key: str):
+        if self._selected_idx is None:
+            return
+        self._prefills[self._selected_idx][key] = self._edit_vars[key].get()
+        self._rev_tree.item(str(self._selected_idx),
+                            values=self._row_values(self._selected_idx))
+
+    def _on_notes_modified(self, event=None):
+        if self._edit_notes and self._edit_notes.edit_modified():
+            if self._selected_idx is not None:
+                self._prefills[self._selected_idx]["notes"] = (
+                    self._edit_notes.get("1.0", "end").strip()
+                )
+            self._edit_notes.edit_modified(False)
+
+    def _flush_edit(self):
+        """Write current edit fields back to prefills before switching rows."""
+        if self._selected_idx is None:
+            return
+        p = self._prefills[self._selected_idx]
+        for key, var in self._edit_vars.items():
+            p[key] = var.get()
+        if self._edit_notes:
+            p["notes"] = self._edit_notes.get("1.0", "end").strip()
+
+    def _toggle_selected(self):
+        if self._selected_idx is None:
+            return
+        var = self._check_vars[self._selected_idx]
+        var.set(not var.get())
+        self._rev_tree.item(str(self._selected_idx),
+                            values=self._row_values(self._selected_idx))
+        self._update_sel_count()
+
+    def _set_all(self, value: bool):
+        for i, var in enumerate(self._check_vars):
+            var.set(value)
+            self._rev_tree.item(str(i), values=self._row_values(i))
+        self._update_sel_count()
+
+    def _deselect_dups(self):
+        for i, p in enumerate(self._prefills):
+            if p.get("_duplicate"):
+                self._check_vars[i].set(False)
+                self._rev_tree.item(str(i), values=self._row_values(i))
+        self._update_sel_count()
+
+    def _update_sel_count(self):
+        n_sel   = sum(1 for v in self._check_vars if v.get())
+        n_total = len(self._check_vars)
+        if hasattr(self, "_sel_lbl"):
+            self._sel_lbl.config(text=f"{n_sel} of {n_total} selected")
+        if hasattr(self, "_import_btn"):
+            self._import_btn.config(
+                text=f"Import Selected ({n_sel})",
+                state=NORMAL if n_sel > 0 else DISABLED,
+            )
+
+    # ─────────────────────────────────────────── Final actions ────────────
+
+    def _do_import(self):
+        self._flush_edit()
+        selected = [p for p, var in zip(self._prefills, self._check_vars) if var.get()]
+        for p in selected:
+            p.pop("_duplicate", None)
+            p["source_file"] = p.pop("_source_file", "") or ""
+            p.pop("_confidence", None)
+        self.results = selected
+        self._cleanup()
         self.destroy()
 
     def _cancel(self):
         self._cancel_flag[0] = True
-        self._cancel_btn.config(state="disabled")
-        self._status_lbl.config(text="Cancelling…")
+        self.results = None
+        self._cleanup()
+        self.destroy()
+
+    def _cleanup(self):
+        if self._mousewheel_bound:
+            try:
+                self._canv_ref.unbind_all("<MouseWheel>")
+            except Exception:
+                pass
+            self._mousewheel_bound = False

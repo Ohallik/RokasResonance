@@ -19,7 +19,7 @@ TREEVIEW_COLS = (
 COL_HEADERS = {
     "status":        "●",
     "category":      "Category",
-    "description":   "Description",
+    "description":   "Instrument",
     "brand":         "Brand",
     "model":         "Model",
     "barcode":       "Barcode",
@@ -265,9 +265,11 @@ class InventoryManager(ttk.Frame):
         sb.pack(side=RIGHT, fill=Y)
         self._history_tree.pack(fill=BOTH, expand=True)
 
+        _stretch_h = {"Student"}
         for col in cols:
-            self._history_tree.heading(col, text=col)
-            self._history_tree.column(col, width=100, anchor=W)
+            self._history_tree.heading(col, text=col, anchor=W)
+            self._history_tree.column(col, width=100, anchor=W,
+                                      minwidth=40, stretch=col in _stretch_h)
 
     def _build_repair_tab(self):
         frame = ttk.Frame(self._repair_tab)
@@ -292,9 +294,11 @@ class InventoryManager(ttk.Frame):
         self._repair_tree.pack(fill=BOTH, expand=True)
 
         widths = [80, 160, 55, 55, 80]
+        _stretch_r = {"Description"}
         for col, w in zip(cols, widths):
-            self._repair_tree.heading(col, text=col)
-            self._repair_tree.column(col, width=w, anchor=W)
+            self._repair_tree.heading(col, text=col, anchor=W)
+            self._repair_tree.column(col, width=w, anchor=W,
+                                     minwidth=40, stretch=col in _stretch_r)
 
     # ──────────────────────────────────────────────────── Column Visibility ────
 
@@ -731,6 +735,7 @@ class InventoryManager(ttk.Frame):
 
         paths = filedialog.askopenfilenames(
             title="Select Invoice PDF(s)",
+            parent=self.winfo_toplevel(),
             filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
         )
         if not paths:

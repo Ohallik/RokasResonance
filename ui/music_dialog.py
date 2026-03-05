@@ -239,6 +239,7 @@ class MusicDialog(ttk.Toplevel):
     def _browse_file(self):
         path = filedialog.askopenfilename(
             title="Select Sheet Music File",
+            parent=self,
             filetypes=FILE_TYPES,
         )
         if not path:

@@ -11,6 +11,7 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
+from ui.theme import muted_fg, subtle_fg
 
 
 def _current_school_year() -> str:
@@ -38,6 +39,7 @@ class StudentManager(ttk.Frame):
         self.db = db
         self._year_var = tk.StringVar()
         self._search_var = tk.StringVar()
+        self._show_inactive_var = tk.BooleanVar(value=False)
         self._selected_id = None
 
         self._build()
@@ -69,12 +71,24 @@ class StudentManager(ttk.Frame):
         years_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh())
         self._years_combo = years_combo
 
-        ttk.Label(toolbar, text="Search:").pack(side=LEFT, padx=(0, 4))
-        ttk.Entry(toolbar, textvariable=self._search_var, width=22).pack(side=LEFT)
+        # ── Filter bar (below toolbar) ─────────────────────────────────────────
+        filter_bar = ttk.Frame(self)
+        filter_bar.pack(fill=X, padx=6, pady=(2, 0))
+
+        ttk.Label(filter_bar, text="Search:").pack(side=LEFT, padx=(0, 4))
+        ttk.Entry(filter_bar, textvariable=self._search_var, width=26).pack(side=LEFT)
         self._search_var.trace_add("write", lambda *_: self._apply_filter())
 
-        self._count_lbl = ttk.Label(toolbar, text="", foreground="#666")
-        self._count_lbl.pack(side=RIGHT, padx=10)
+        ttk.Checkbutton(
+            filter_bar,
+            text="Show Inactive",
+            variable=self._show_inactive_var,
+            bootstyle=SECONDARY,
+            command=self.refresh,
+        ).pack(side=LEFT, padx=(12, 0))
+
+        self._count_lbl = ttk.Label(filter_bar, text="", foreground=muted_fg())
+        self._count_lbl.pack(side=RIGHT, padx=6)
 
         # ── Content: Tree + Detail ─────────────────────────────────────────────
         paned = ttk.Panedwindow(self, orient=HORIZONTAL)
@@ -165,9 +179,11 @@ class StudentManager(ttk.Frame):
         sb_h.pack(side=RIGHT, fill=Y)
         self._hist_tree.pack(fill=BOTH, expand=True)
 
+        _stretch_h = {"Instrument"}
         for col in cols_h:
-            self._hist_tree.heading(col, text=col)
-            self._hist_tree.column(col, width=100, anchor=W)
+            self._hist_tree.heading(col, text=col, anchor=W)
+            self._hist_tree.column(col, width=100, anchor=W,
+                                   minwidth=40, stretch=col in _stretch_h)
 
     # ─────────────────────────────────────────────────────────── Data Loading ─
 
@@ -186,7 +202,9 @@ class StudentManager(ttk.Frame):
 
     def refresh(self):
         year = self._year_var.get() or None
-        self._all_students = list(self.db.get_all_students(school_year=year))
+        include_inactive = self._show_inactive_var.get()
+        self._all_students = list(self.db.get_all_students(
+            school_year=year, include_inactive=include_inactive))
         self._apply_filter()
         self._populate_year_options()
 
@@ -238,14 +256,20 @@ class StudentManager(ttk.Frame):
 
         students = sorted(students, key=sort_key, reverse=not self._sort_asc)
 
+        # Configure inactive tag with current theme color
+        self.tree.tag_configure("inactive", foreground=subtle_fg())
+
         self.tree.delete(*self.tree.get_children())
         for s in students:
             full_name = f"{s['last_name']}, {s['first_name']}".strip(", ")
             active = active_checkouts.get(s["id"], 0)
             active_str = f"✓ {active}" if active > 0 else ""
             iid = str(s["id"])
-            self.tree.insert("", "end", iid=iid, values=(
-                full_name,
+            is_inactive = not s["is_active"]
+            tags = ("inactive",) if is_inactive else ()
+            name_display = f"{full_name} (inactive)" if is_inactive else full_name
+            self.tree.insert("", "end", iid=iid, tags=tags, values=(
+                name_display,
                 s["grade"] or "",
                 s["phone"] or "",
                 s["parent1_name"] or "",
@@ -707,6 +731,17 @@ class StudentDialog(ttk.Toplevel):
         ttk.Button(btn, text="Save", bootstyle=SUCCESS,
                    command=self._save).pack(side=RIGHT, padx=4)
 
+        # Mark Inactive / Reactivate — only shown when editing an existing student
+        if self.student_id:
+            student = self.db.get_student(self.student_id)
+            is_active = student["is_active"] if student else 1
+            if is_active:
+                ttk.Button(btn, text="Mark Inactive", bootstyle=(WARNING, OUTLINE),
+                           command=self._mark_inactive).pack(side=LEFT, padx=4)
+            else:
+                ttk.Button(btn, text="Reactivate", bootstyle=(SUCCESS, OUTLINE),
+                           command=self._reactivate).pack(side=LEFT, padx=4)
+
     def _section(self, parent, text):
         f = ttk.Frame(parent)
         f.pack(fill=X, padx=8, pady=(10, 2))
@@ -819,6 +854,23 @@ class StudentDialog(ttk.Toplevel):
             Messagebox.show_warning("School year is required.", title="Validation")
             return False
         return True
+
+    def _mark_inactive(self):
+        student = self.db.get_student(self.student_id)
+        name = f"{student['first_name']} {student['last_name']}".strip() if student else "this student"
+        answer = Messagebox.yesno(
+            f"Mark {name} as inactive?\n\nThey will be hidden from the student list "
+            f"unless 'Show Inactive' is checked.",
+            title="Mark Inactive",
+            parent=self,
+        )
+        if answer == "Yes":
+            self.db.deactivate_student(self.student_id)
+            self.destroy()
+
+    def _reactivate(self):
+        self.db.reactivate_student(self.student_id)
+        self.destroy()
 
     def _save(self):
         data = self._collect()

@@ -160,9 +160,9 @@ class Database:
                 conn.commit()
             except Exception:
                 pass  # Column already exists
-            # Migrate: add key_signature, time_signature, location, publisher to sheet_music
+            # Migrate: add key_signature, time_signature, location, publisher, source_file to sheet_music
             for col in ("key_signature TEXT", "time_signature TEXT", "location TEXT",
-                        "publisher TEXT"):
+                        "publisher TEXT", "source_file TEXT"):
                 try:
                     conn.execute(f"ALTER TABLE sheet_music ADD COLUMN {col}")
                     conn.commit()
@@ -213,6 +213,45 @@ class Database:
         for old in backups[max_backups:]:
             try:
                 os.remove(os.path.join(backup_dir, old))
+            except OSError:
+                pass
+
+        return backup_path
+
+    def backup_to_external(self, external_dir: str, profile_name: str = "", max_backups: int = 30) -> str:
+        """
+        Copy the database to a user-specified external folder (e.g. OneDrive, network drive).
+        Files are stored in a subfolder named after the profile so multiple profiles
+        don't overwrite each other.  Keeps the most recent *max_backups* copies.
+        Returns the backup path on success, raises on failure.
+        """
+        if not os.path.exists(self.db_path):
+            raise FileNotFoundError(f"Database not found: {self.db_path}")
+
+        # Use a subfolder per profile so multiple teachers' backups don't collide
+        dest_dir = os.path.join(external_dir, profile_name) if profile_name else external_dir
+        os.makedirs(dest_dir, exist_ok=True)
+
+        # Flush WAL before copying
+        try:
+            with self._connect() as conn:
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception:
+            pass
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_name = f"rokas_resonance_{timestamp}.db"
+        backup_path = os.path.join(dest_dir, backup_name)
+        shutil.copy2(self.db_path, backup_path)
+
+        # Rotate: keep only the newest max_backups files
+        backups = sorted(
+            [f for f in os.listdir(dest_dir) if f.endswith(".db")],
+            reverse=True,
+        )
+        for old in backups[max_backups:]:
+            try:
+                os.remove(os.path.join(dest_dir, old))
             except OSError:
                 pass
 
@@ -368,6 +407,12 @@ class Database:
         with self._connect() as conn:
             conn.execute(
                 "UPDATE students SET is_active=0 WHERE id=?", (student_id,)
+            )
+
+    def reactivate_student(self, student_id: int):
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE students SET is_active=1 WHERE id=?", (student_id,)
             )
 
     def get_student_active_checkout_count(self, student_id: int) -> int:
@@ -666,7 +711,7 @@ class Database:
         cols = [
             "title", "composer", "arranger", "genre", "ensemble_type",
             "difficulty", "file_path", "file_type", "num_pages", "notes",
-            "key_signature", "time_signature", "location", "publisher"
+            "key_signature", "time_signature", "location", "publisher", "source_file"
         ]
         values = [data.get(c) for c in cols]
         placeholders = ",".join(["?"] * len(cols))
@@ -681,7 +726,7 @@ class Database:
         cols = [
             "title", "composer", "arranger", "genre", "ensemble_type",
             "difficulty", "file_path", "file_type", "num_pages", "notes", "is_active",
-            "key_signature", "time_signature", "location", "publisher"
+            "key_signature", "time_signature", "location", "publisher", "source_file"
         ]
         set_clause = ", ".join([f"{c}=?" for c in cols])
         values = [data.get(c) for c in cols] + [music_id]
@@ -695,6 +740,13 @@ class Database:
             conn.execute(
                 "UPDATE sheet_music SET is_active=0 WHERE id=?", (music_id,)
             )
+
+    def delete_sheet_music(self, music_id: int):
+        """Hard-delete a sheet music record and its related jobs/performances."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM omr_jobs WHERE music_id=?", (music_id,))
+            conn.execute("DELETE FROM performances WHERE music_id=?", (music_id,))
+            conn.execute("DELETE FROM sheet_music WHERE id=?", (music_id,))
 
     # ─── Performances CRUD ────────────────────────────────────────────────────
 

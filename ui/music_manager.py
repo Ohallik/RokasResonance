@@ -14,11 +14,15 @@ from tkinter import filedialog
 from datetime import datetime
 from ui.theme import muted_fg
 
+# MusicPics folder names to search when resolving source_file paths
+_MUSIC_PICS_FOLDERS = ["MusicPics", "music_pics", "musicpics"]
+
 
 TREEVIEW_COLS = (
     "title", "composer", "arranger",
     "ensemble_type", "genre", "difficulty",
     "key_signature", "time_signature", "location", "last_played", "file_type",
+    "source_file",
 )
 COL_HEADERS = {
     "title":          "Title",
@@ -32,6 +36,7 @@ COL_HEADERS = {
     "location":       "Location",
     "last_played":    "Last Played",
     "file_type":      "Type",
+    "source_file":    "Source File",
 }
 COL_WIDTHS = {
     "title":          220,
@@ -45,7 +50,10 @@ COL_WIDTHS = {
     "location":       120,
     "last_played":    100,
     "file_type":      50,
+    "source_file":    160,
 }
+# Columns hidden by default (user can enable via Columns menu)
+COL_HIDDEN_DEFAULT = {"source_file"}
 
 
 class MusicManager(ttk.Frame):
@@ -62,7 +70,10 @@ class MusicManager(ttk.Frame):
         self._filter_genre = tk.StringVar(value="All")
         self._filter_location = tk.StringVar(value="All")
         self._filter_omr = tk.StringVar(value="All")
-        self._col_vars = {c: tk.BooleanVar(value=True) for c in TREEVIEW_COLS}
+        self._col_vars = {
+            c: tk.BooleanVar(value=(c not in COL_HIDDEN_DEFAULT))
+            for c in TREEVIEW_COLS
+        }
         self._col_popup = None
         self._last_played_cache = {}  # music_id -> date string
         self._chat_window = None
@@ -85,12 +96,23 @@ class MusicManager(ttk.Frame):
                    command=self._import_music).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="Edit", bootstyle=PRIMARY,
                    command=self._edit_music).pack(side=LEFT, padx=2, pady=6)
+        self._delete_btn = ttk.Button(toolbar, text="Delete", bootstyle=DANGER,
+                                      command=self._delete_selected, state=DISABLED)
+        self._delete_btn.pack(side=LEFT, padx=2, pady=6)
+
+        ttk.Separator(toolbar, orient=VERTICAL).pack(
+            side=LEFT, fill=Y, padx=8, pady=4)
+
         self._omr_btn = ttk.Button(toolbar, text="Process OMR", bootstyle=WARNING,
                                    command=self._process_omr, state=DISABLED)
         self._omr_btn.pack(side=LEFT, padx=2, pady=6)
         self._export_btn = ttk.Button(toolbar, text="Export MusicXML", bootstyle=INFO,
                                       command=self._export_musicxml, state=DISABLED)
         self._export_btn.pack(side=LEFT, padx=2, pady=6)
+        self._validate_btn = ttk.Button(toolbar, text="Validate with LLM",
+                                        bootstyle=(SECONDARY, OUTLINE),
+                                        command=self._validate_with_llm, state=DISABLED)
+        self._validate_btn.pack(side=LEFT, padx=2, pady=6)
 
         ttk.Separator(toolbar, orient=VERTICAL).pack(
             side=LEFT, fill=Y, padx=8, pady=4)
@@ -151,7 +173,7 @@ class MusicManager(ttk.Frame):
             show="headings",
             yscrollcommand=scrollbar_y.set,
             xscrollcommand=scrollbar_x.set,
-            selectmode="browse",
+            selectmode="extended",
             bootstyle=INFO,
         )
         scrollbar_y.config(command=self.tree.yview)
@@ -225,6 +247,7 @@ class MusicManager(ttk.Frame):
             ("File Type", "file_type"),
             ("Pages", "num_pages"),
             ("File", "file_path"),
+            ("Source File", "source_file"),
             ("Comments", "notes"),
             ("OMR Status", "_omr_status"),
             ("Last Processed", "_last_processed"),
@@ -267,7 +290,7 @@ class MusicManager(ttk.Frame):
         for col, w in zip(cols, widths):
             self._perf_tree.heading(col, text=col, anchor=W)
             self._perf_tree.column(col, width=w, anchor=W,
-                                   stretch=col in ("Event", "Notes"))
+                                   minwidth=40, stretch=col in ("Event", "Notes"))
 
     def _build_omr_tab(self):
         frame = ttk.Frame(self._omr_tab)
@@ -293,7 +316,7 @@ class MusicManager(ttk.Frame):
         for col, w in zip(cols, widths):
             self._omr_tree.heading(col, text=col, anchor=W)
             self._omr_tree.column(col, width=w, anchor=W,
-                                  stretch=col == "Message")
+                                  minwidth=40, stretch=col == "Message")
 
         self._omr_tree.tag_configure("error", foreground="#CC0000")
         self._omr_tree.tag_configure("warning", foreground="#B8860B")
@@ -318,7 +341,7 @@ class MusicManager(ttk.Frame):
         for col, w in zip(cols, widths):
             self._history_tree.heading(col, text=col, anchor=W)
             self._history_tree.column(col, width=w, anchor=W,
-                                      stretch=col == "Output")
+                                      minwidth=40, stretch=col == "Output")
 
         self._history_tree.tag_configure("completed", foreground="#1a7a1a")
         self._history_tree.tag_configure("failed", foreground="#CC0000")
@@ -536,6 +559,7 @@ class MusicManager(ttk.Frame):
                 row.get("location") or "",
                 self._last_played_cache.get(row["id"], ""),
                 row["file_type"] or "",
+                os.path.basename(row.get("source_file") or ""),
             )
             iid = str(row["id"])
             self.tree.insert("", "end", iid=iid, values=values)
@@ -558,13 +582,24 @@ class MusicManager(ttk.Frame):
 
     def _on_select(self, event=None):
         sel = self.tree.selection()
+        n = len(sel)
+
+        # Enable/disable multi-selection buttons
+        multi_state = NORMAL if n >= 1 else DISABLED
+        self._delete_btn.config(state=multi_state)
+        self._validate_btn.config(state=multi_state)
+
         if not sel:
+            self._omr_btn.config(state=DISABLED)
+            self._export_btn.config(state=DISABLED)
             return
-        iid = sel[0]
+
+        # Detail panel shows the last selected item
+        iid = sel[-1]
         self._selected_id = int(iid)
         self._load_detail(self._selected_id)
 
-        # Enable/disable OMR buttons based on source file
+        # Enable/disable OMR buttons based on source file (single-select context)
         piece = self.db.get_sheet_music(self._selected_id)
         has_file = bool(piece and piece["file_path"])
         state = NORMAL if has_file else DISABLED
@@ -576,6 +611,10 @@ class MusicManager(ttk.Frame):
             self._chat_window.update_selected_music(
                 dict(piece) if piece else None
             )
+
+    def _get_selected_ids(self) -> list[int]:
+        """Return list of all selected music IDs."""
+        return [int(iid) for iid in self.tree.selection()]
 
     def _load_detail(self, music_id: int):
         piece = self.db.get_sheet_music(music_id)
@@ -712,7 +751,8 @@ class MusicManager(ttk.Frame):
 
     def _add_performance(self):
         if not self._selected_id:
-            Messagebox.show_warning("Select a piece first.", title="No Selection")
+            Messagebox.show_warning("Select a piece first.", title="No Selection",
+                                    parent=self.winfo_toplevel())
             return
         from ui.performance_dialog import PerformanceDialog
         dlg = PerformanceDialog(self.winfo_toplevel(), self.db, self._selected_id)
@@ -723,7 +763,8 @@ class MusicManager(ttk.Frame):
     def _edit_performance(self):
         sel = self._perf_tree.selection()
         if not sel:
-            Messagebox.show_warning("Select a performance first.", title="No Selection")
+            Messagebox.show_warning("Select a performance first.", title="No Selection",
+                                    parent=self.winfo_toplevel())
             return
         perf_id = int(sel[0])
         from ui.performance_dialog import PerformanceDialog
@@ -736,11 +777,13 @@ class MusicManager(ttk.Frame):
     def _delete_performance(self):
         sel = self._perf_tree.selection()
         if not sel:
-            Messagebox.show_warning("Select a performance first.", title="No Selection")
+            Messagebox.show_warning("Select a performance first.", title="No Selection",
+                                    parent=self.winfo_toplevel())
             return
         perf_id = int(sel[0])
         answer = Messagebox.yesno(
-            "Delete this performance record?", title="Confirm Delete"
+            "Delete this performance record?", title="Confirm Delete",
+            parent=self.winfo_toplevel()
         )
         if answer != "Yes":
             return
@@ -753,7 +796,8 @@ class MusicManager(ttk.Frame):
         sel = self.tree.selection()
         if not sel:
             Messagebox.show_warning(
-                "Please select a piece first.", title="No Selection"
+                "Please select a piece first.", title="No Selection",
+                parent=self.winfo_toplevel()
             )
             return None
         return int(sel[0])
@@ -772,11 +816,13 @@ class MusicManager(ttk.Frame):
                 "No API key configured. Open Settings and enter your GitHub token "
                 "to use AI-powered import.",
                 title="API Key Required",
+                parent=self.winfo_toplevel()
             )
             return
 
         paths = filedialog.askopenfilenames(
             title="Select Sheet Music Files to Import",
+            parent=self.winfo_toplevel(),
             filetypes=[
                 ("Image & PDF files", "*.pdf *.png *.jpg *.jpeg *.tiff *.tif *.bmp"),
                 ("PDF files", "*.pdf"),
@@ -787,49 +833,33 @@ class MusicManager(ttk.Frame):
         if not paths:
             return
 
-        from ui.music_importer import ImportProgressDialog
-        progress_dlg = ImportProgressDialog(
-            self.winfo_toplevel(), list(paths), self.base_dir
-        )
-        self.wait_window(progress_dlg)
+        from ui.music_importer import BatchImportDialog, _norm_title
 
-        results = progress_dlg.results
-        if results is None:
-            return  # cancelled or errored
+        # Build set of existing titles for duplicate detection
+        existing = self.db.get_all_sheet_music()
+        existing_titles = {_norm_title(r["title"]) for r in existing if r["title"]}
+
+        dlg = BatchImportDialog(
+            self.winfo_toplevel(), list(paths), self.base_dir,
+            existing_titles=existing_titles,
+        )
+        self.wait_window(dlg)
+
+        results = dlg.results
         if not results:
-            Messagebox.show_info(
-                "No music pieces were found in the selected files.",
-                title="Import Complete",
-            )
             return
 
-        n = len(results)
-        answer = Messagebox.yesno(
-            f"Found {n} piece(s). Review and add them one at a time?\n\n"
-            "Edit the details for each piece and click Save, or Cancel to skip.",
-            title=f"Found {n} Piece(s)",
-        )
-        if answer != "Yes":
-            return
-
-        from ui.music_dialog import MusicDialog
-        added = 0
         for prefill in results:
-            dlg = MusicDialog(
-                self.winfo_toplevel(), self.db,
-                base_dir=self.base_dir,
-                prefill_data=prefill,
-            )
-            self.wait_window(dlg)
-            if dlg._result == "saved":
-                added += 1
-            self.refresh()
+            # Strip internal-only keys before saving
+            prefill.pop("_duplicate", None)
+            self.db.add_sheet_music(prefill)
 
-        if added:
-            Messagebox.show_info(
-                f"Added {added} of {n} piece(s) to your library.",
-                title="Import Complete",
-            )
+        self.refresh()
+        Messagebox.show_info(
+            f"Added {len(results)} piece(s) to your library.",
+            title="Import Complete",
+            parent=self.winfo_toplevel()
+        )
 
     def _edit_music(self):
         iid = self._get_selected_music()
@@ -842,6 +872,81 @@ class MusicManager(ttk.Frame):
         self.refresh()
         self._load_detail(iid)
 
+    def _delete_selected(self):
+        ids = self._get_selected_ids()
+        if not ids:
+            return
+        n = len(ids)
+
+        # Build title list preview (up to 5)
+        titles = []
+        for mid in ids[:5]:
+            row = self.db.get_sheet_music(mid)
+            if row:
+                titles.append(f"  \u2022 {row['title'] or '(untitled)'}")
+        preview = "\n".join(titles)
+        if n > 5:
+            preview += f"\n  \u2026 and {n - 5} more"
+
+        msg = (
+            f"Permanently delete {n} piece(s) from the database?\n\n"
+            f"{preview}\n\n"
+            "This cannot be undone."
+        )
+        if n > 1:
+            msg += "\n\nA backup of the database will be created first."
+
+        answer = Messagebox.yesno(msg, title="Confirm Delete",
+                                  parent=self.winfo_toplevel())
+        if answer != "Yes":
+            return
+
+        # Backup DB before bulk delete
+        if n > 1:
+            try:
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_path = self.db.db_path + f".backup_{ts}.db"
+                shutil.copy2(self.db.db_path, backup_path)
+            except Exception as e:
+                Messagebox.show_warning(
+                    f"Could not create backup: {e}\nDelete cancelled.",
+                    title="Backup Failed",
+                    parent=self.winfo_toplevel()
+                )
+                return
+
+        for mid in ids:
+            self.db.delete_sheet_music(mid)
+
+        self._selected_id = None
+        self.refresh()
+
+        info = f"Deleted {n} piece(s)."
+        if n > 1:
+            info += f"\nBackup saved to:\n{backup_path}"
+        Messagebox.show_info(info, title="Deleted", parent=self.winfo_toplevel())
+
+    def _validate_with_llm(self):
+        ids = self._get_selected_ids()
+        if not ids:
+            return
+        from llm_client import is_configured
+        if not is_configured(self.base_dir):
+            Messagebox.show_warning(
+                "No LLM API key configured. Open Settings and enter a key first.",
+                title="API Key Required",
+                parent=self.winfo_toplevel()
+            )
+            return
+        pieces = [dict(self.db.get_sheet_music(mid)) for mid in ids
+                  if self.db.get_sheet_music(mid)]
+        dlg = _LLMValidateDialog(
+            self.winfo_toplevel(), self.db, self.base_dir, pieces
+        )
+        self.wait_window(dlg)
+        if getattr(dlg, "changes_made", False):
+            self.refresh()
+
     def _process_omr(self):
         iid = self._get_selected_music()
         if iid is None:
@@ -850,13 +955,15 @@ class MusicManager(ttk.Frame):
         if not piece or not piece["file_path"]:
             Messagebox.show_warning(
                 "This piece has no source file. Edit it to add one first.",
-                title="No File"
+                title="No File",
+                parent=self.winfo_toplevel()
             )
             return
         if not os.path.exists(piece["file_path"]):
             Messagebox.show_warning(
                 f"Source file not found:\n{piece['file_path']}",
-                title="File Missing"
+                title="File Missing",
+                parent=self.winfo_toplevel()
             )
             return
 
@@ -878,14 +985,16 @@ class MusicManager(ttk.Frame):
             Messagebox.show_warning(
                 "No completed OMR output to export.\n"
                 "Process the piece first with 'Process OMR'.",
-                title="No Output"
+                title="No Output",
+                parent=self.winfo_toplevel()
             )
             return
         src = job["musicxml_path"]
         if not os.path.exists(src):
             Messagebox.show_warning(
                 f"MusicXML file not found:\n{src}",
-                title="File Missing"
+                title="File Missing",
+                parent=self.winfo_toplevel()
             )
             return
 
@@ -895,6 +1004,7 @@ class MusicManager(ttk.Frame):
 
         dest = filedialog.asksaveasfilename(
             title="Export MusicXML",
+            parent=self.winfo_toplevel(),
             defaultextension=ext,
             initialfile=default_name,
             filetypes=[
@@ -909,12 +1019,14 @@ class MusicManager(ttk.Frame):
             shutil.copy2(src, dest)
             Messagebox.show_info(
                 f"MusicXML exported to:\n{dest}",
-                title="Export Complete"
+                title="Export Complete",
+                parent=self.winfo_toplevel()
             )
         except Exception as e:
             Messagebox.show_error(
                 f"Failed to export:\n{e}",
-                title="Export Error"
+                title="Export Error",
+                parent=self.winfo_toplevel()
             )
 
 
@@ -1212,3 +1324,797 @@ class _OMRProcessDialog(ttk.Toplevel):
 
         self._log_msg("=" * 50)
         self._log_msg("You may close this dialog.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LLM Validation Dialog
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _resolve_source_file(path: str, base_dir: str) -> str | None:
+    """Return the resolved path to a source image, or None if not found."""
+    if not path:
+        return None
+    if os.path.isfile(path):
+        return path
+    # Try just the filename in known MusicPics folders
+    fname = os.path.basename(path)
+    for folder in _MUSIC_PICS_FOLDERS:
+        candidate = os.path.join(base_dir, folder, fname)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _load_image_b64(path: str) -> dict | None:
+    """Load an image file as a base64 dict for LLM vision calls."""
+    try:
+        import base64, io
+        from PIL import Image
+        img = Image.open(path).convert("RGB")
+        w, h = img.size
+        scale = min(1.0, 1800 / max(w, h))
+        if scale < 1.0:
+            img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return {
+            "mime_type": "image/png",
+            "data": base64.b64encode(buf.getvalue()).decode(),
+        }
+    except Exception:
+        return None
+
+
+class _LLMValidateDialog(ttk.Toplevel):
+    """
+    Validates selected pieces against their source images using the LLM.
+
+    For each unique source image among the selected pieces:
+      - Checks whether each piece is actually visible in the image
+      - Checks if title/composer look correct
+      - Identifies any pieces visible but NOT in the database
+    Low-confidence results are cross-checked with backup models.
+    """
+
+    _BACKUP_MODELS = ["claude-opus-4-6", "openai/gpt-4o"]
+
+    def __init__(self, parent, db, base_dir: str, pieces: list[dict]):
+        super().__init__(parent)
+        self.db = db
+        self.base_dir = base_dir
+        self.pieces = pieces  # selected piece dicts
+        self.changes_made = False
+
+        self.title("Validate with LLM")
+        self.geometry("700x540")
+        self.resizable(True, True)
+        self.grab_set()
+
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() - 700) // 2
+        y = (self.winfo_screenheight() - 540) // 2
+        self.geometry(f"+{x}+{y}")
+
+        self._build()
+        self.after(200, self._start_validation)
+
+    def _build(self):
+        hdr = ttk.Frame(self, bootstyle=SECONDARY)
+        hdr.pack(fill=X)
+        ttk.Label(
+            hdr,
+            text=f"  Validating {len(self.pieces)} piece(s) with LLM...",
+            font=("Segoe UI", 11, "bold"),
+            bootstyle=(INVERSE, SECONDARY),
+        ).pack(pady=10, padx=16, anchor=W)
+
+        prog_frame = ttk.Frame(self)
+        prog_frame.pack(fill=X, padx=16, pady=(10, 4))
+        self._progress_var = tk.IntVar(value=0)
+        self._progress = ttk.Progressbar(
+            prog_frame, mode="determinate", bootstyle=INFO,
+            variable=self._progress_var, maximum=100,
+        )
+        self._progress.pack(side=LEFT, fill=X, expand=True)
+        self._pct_label = ttk.Label(prog_frame, text="", width=12, anchor=CENTER)
+        self._pct_label.pack(side=LEFT, padx=(8, 0))
+
+        log_frame = ttk.Frame(self)
+        log_frame.pack(fill=BOTH, expand=True, padx=16, pady=(4, 8))
+        log_sb = ttk.Scrollbar(log_frame, orient=VERTICAL)
+        self._log = tk.Text(
+            log_frame, height=18, font=("Consolas", 9),
+            relief="solid", bd=1, wrap=WORD,
+            yscrollcommand=log_sb.set, state=DISABLED,
+        )
+        log_sb.config(command=self._log.yview)
+        log_sb.pack(side=RIGHT, fill=Y)
+        self._log.pack(fill=BOTH, expand=True)
+
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill=X, padx=16, pady=(0, 10))
+        self._close_btn = ttk.Button(
+            btn_frame, text="Close", bootstyle=(SECONDARY, OUTLINE),
+            command=self.destroy
+        )
+        self._close_btn.pack(side=RIGHT, padx=4)
+        self._review_btn = ttk.Button(
+            btn_frame, text="Review Suggestions", bootstyle=SUCCESS,
+            command=self._open_review, state=DISABLED,
+        )
+        self._review_btn.pack(side=RIGHT, padx=4)
+
+        self._suggestions = []  # populated by worker thread
+
+    def _log_msg(self, msg: str):
+        self._log.config(state=NORMAL)
+        self._log.insert("end", msg + "\n")
+        self._log.see("end")
+        self._log.config(state=DISABLED)
+
+    def _set_progress(self, pct: int, label: str = ""):
+        self._progress_var.set(pct)
+        self._pct_label.config(text=label)
+
+    def _start_validation(self):
+        threading.Thread(target=self._do_validate, daemon=True).start()
+
+    @staticmethod
+    def _norm(t: str) -> str:
+        import re
+        return re.sub(r"[^a-z0-9]", "", (t or "").lower())
+
+    def _do_validate(self):
+        import llm_client
+        from ui.settings_dialog import load_settings
+
+        settings = load_settings(self.base_dir)
+        current_model = (settings.get("llm") or {}).get("model", llm_client.DEFAULT_MODEL)
+        github_key = llm_client._get_api_key(self.base_dir)
+        anthropic_key = llm_client._get_anthropic_key(self.base_dir)
+
+        # Build full-DB title set for "missing" filtering
+        all_db_rows = self.db.get_all_sheet_music()
+        db_titles_norm = {self._norm(r["title"]) for r in all_db_rows if r["title"]}
+
+        # Group pieces by source_file
+        by_image: dict[str, list[dict]] = {}
+        no_source = []
+        for p in self.pieces:
+            sf = p.get("source_file") or ""
+            resolved = _resolve_source_file(sf, self.base_dir)
+            if resolved:
+                by_image.setdefault(resolved, []).append(p)
+            else:
+                no_source.append(p)
+
+        total_images = len(by_image)
+        all_suggestions: list[dict] = []
+
+        self.after(0, self._log_msg, f"Selected: {len(self.pieces)} pieces across {total_images} image(s).")
+        if no_source:
+            names = ", ".join(p.get("title","?") for p in no_source[:5])
+            if len(no_source) > 5:
+                names += f" + {len(no_source)-5} more"
+            self.after(0, self._log_msg,
+                       f"Skipping {len(no_source)} piece(s) with no/missing source image: {names}")
+        self.after(0, self._log_msg, "")
+
+        for img_idx, (img_path, img_pieces) in enumerate(by_image.items()):
+            pct = int(img_idx / total_images * 90)
+            self.after(0, self._set_progress, pct, f"{img_idx+1}/{total_images}")
+            self.after(0, self._log_msg,
+                       f"[{img_idx+1}/{total_images}] {os.path.basename(img_path)}")
+
+            img_dict = _load_image_b64(img_path)
+            if not img_dict:
+                self.after(0, self._log_msg,
+                           "  Could not load image (PIL not available or bad file). Skipping.")
+                continue
+
+            # Build prompt — focused on what's visible in the image
+            piece_list = "\n".join(
+                f"  ID {p['id']}: title=\"{p.get('title','')}\", "
+                f"composer=\"{p.get('composer','')}\", arranger=\"{p.get('arranger','')}\""
+                for p in img_pieces
+            )
+            prompt = (
+                "You are verifying a sheet music database. "
+                "This image is a photograph of sheet music materials (folders, covers, spines, or scores).\n\n"
+                f"The following pieces are recorded in the database as coming from this image:\n{piece_list}\n\n"
+                "For EACH listed piece:\n"
+                "1. Is it actually visible/readable in this image? (found: true/false)\n"
+                "2. Does the title look correct from what you can see? If wrong, provide the correct title.\n"
+                "3. Does the composer look correct from what you can see? If wrong, provide the correct composer.\n"
+                "4. Does the arranger look correct from what you can see? If wrong or newly visible, provide the correct arranger.\n"
+                "5. Rate your confidence (0.0–1.0).\n\n"
+                "ALSO list any pieces you can clearly see in the image that are NOT in the list above.\n\n"
+                "Return ONLY valid JSON (no markdown fences):\n"
+                "{\n"
+                '  "pieces": [\n'
+                '    {"id": <id>, "found": true/false, "confidence": 0.0-1.0,\n'
+                '     "suggested_title": "<corrected title or null>",\n'
+                '     "suggested_composer": "<corrected composer or null>",\n'
+                '     "suggested_arranger": "<corrected arranger or null>",\n'
+                '     "note": "<optional brief explanation>"}\n'
+                "  ],\n"
+                '  "missing_from_db": [\n'
+                '    {"title": "<title>", "composer": "<composer or empty>", "arranger": "<arranger or empty>", "note": "<context>"}\n'
+                "  ]\n"
+                "}"
+            )
+
+            primary_result = self._call_llm_vision(
+                prompt, img_dict, current_model, github_key, anthropic_key
+            )
+
+            if primary_result is None:
+                self.after(0, self._log_msg, "  LLM call failed. Skipping this image.")
+                continue
+
+            # Cross-check low-confidence pieces with backup models
+            low_conf_ids = {
+                p["id"] for p in primary_result.get("pieces", [])
+                if p.get("confidence", 1.0) < 0.7 or p.get("found") is False
+            }
+            if low_conf_ids:
+                self.after(0, self._log_msg,
+                           f"  Low confidence on {len(low_conf_ids)} piece(s) — cross-checking...")
+                backup_results = self._cross_check(
+                    prompt, img_dict, current_model, github_key, anthropic_key
+                )
+                primary_result = self._merge_results(primary_result, backup_results)
+
+            _EXTRA_FIELDS = [
+                "suggested_title", "suggested_composer", "suggested_arranger",
+                "suggested_genre", "suggested_key_signature", "suggested_time_signature",
+                "suggested_difficulty", "suggested_ensemble_type",
+            ]
+
+            # Log summary
+            for p in primary_result.get("pieces", []):
+                conf = p.get("confidence", 1.0)
+                found = p.get("found", True)
+                pid = p.get("id")
+                orig = next((x for x in img_pieces if x["id"] == pid), {})
+                title = orig.get("title", f"ID {pid}")
+                has_suggestions = any(p.get(f) for f in _EXTRA_FIELDS)
+                if not found:
+                    self.after(0, self._log_msg,
+                               f"  NOT FOUND: \"{title}\" (conf={conf:.0%})")
+                elif has_suggestions:
+                    self.after(0, self._log_msg,
+                               f"  CORRECTION: \"{title}\" → see suggestions (conf={conf:.0%})")
+                else:
+                    self.after(0, self._log_msg,
+                               f"  OK: \"{title}\" (conf={conf:.0%})")
+
+            # Filter "missing" pieces against the FULL database
+            raw_missing = primary_result.get("missing_from_db", [])
+            truly_missing = []
+            already_in_db = []
+            for m in raw_missing:
+                if self._norm(m.get("title", "")) in db_titles_norm:
+                    already_in_db.append(m)
+                else:
+                    truly_missing.append(m)
+
+            if already_in_db:
+                self.after(0, self._log_msg,
+                           f"  Already in DB (skipped): {len(already_in_db)} piece(s)")
+                for m in already_in_db:
+                    self.after(0, self._log_msg,
+                               f"    \"{m.get('title','')}\" — already tracked in database")
+
+            if truly_missing:
+                self.after(0, self._log_msg,
+                           f"  FOUND IN IMAGE BUT NOT IN DB: {len(truly_missing)} piece(s)")
+                for m in truly_missing:
+                    self.after(0, self._log_msg,
+                               f"    \"{m.get('title','')}\" by {m.get('composer','')}")
+
+            # Collect suggestions
+            for p in primary_result.get("pieces", []):
+                pid = p.get("id")
+                orig = next((x for x in img_pieces if x["id"] == pid), {})
+                if not p.get("found", True):
+                    all_suggestions.append({
+                        "type": "not_found",
+                        "id": pid,
+                        "title": orig.get("title", ""),
+                        "composer": orig.get("composer", ""),
+                        "note": p.get("note", ""),
+                        "confidence": p.get("confidence", 0.5),
+                        "image": os.path.basename(img_path),
+                    })
+                elif any(p.get(f) for f in _EXTRA_FIELDS):
+                    all_suggestions.append({
+                        "type": "correction",
+                        "id": pid,
+                        "current_title": orig.get("title", ""),
+                        "current_composer": orig.get("composer", ""),
+                        "current_arranger": orig.get("arranger", ""),
+                        "current_genre": orig.get("genre", ""),
+                        "current_key_signature": orig.get("key_signature", ""),
+                        "current_time_signature": orig.get("time_signature", ""),
+                        "current_difficulty": orig.get("difficulty", ""),
+                        "current_ensemble_type": orig.get("ensemble_type", ""),
+                        "suggested_title": p.get("suggested_title"),
+                        "suggested_composer": p.get("suggested_composer"),
+                        "suggested_arranger": p.get("suggested_arranger"),
+                        "suggested_genre": p.get("suggested_genre"),
+                        "suggested_key_signature": p.get("suggested_key_signature"),
+                        "suggested_time_signature": p.get("suggested_time_signature"),
+                        "suggested_difficulty": p.get("suggested_difficulty"),
+                        "suggested_ensemble_type": p.get("suggested_ensemble_type"),
+                        "note": p.get("note", ""),
+                        "confidence": p.get("confidence", 0.8),
+                        "image": os.path.basename(img_path),
+                    })
+
+            for m in truly_missing:
+                all_suggestions.append({
+                    "type": "missing",
+                    "title": m.get("title", ""),
+                    "composer": m.get("composer", ""),
+                    "arranger": m.get("arranger", ""),
+                    "note": m.get("note", ""),
+                    "image": os.path.basename(img_path),
+                    "image_path": img_path,
+                })
+
+            self.after(0, self._log_msg, "")
+
+        # Location: always "Chinook Middle School" — only ever changed manually.
+        # Suggest correction for any piece not already set to this value.
+        _DEFAULT_LOCATION = "Chinook Middle School"
+        loc_count = 0
+        for p in self.pieces:
+            if (p.get("location") or "").strip() != _DEFAULT_LOCATION:
+                all_suggestions.append({
+                    "type": "correction",
+                    "id": p["id"],
+                    "current_title": p.get("title", ""),
+                    "current_composer": p.get("composer", ""),
+                    "current_arranger": p.get("arranger", ""),
+                    "current_genre": p.get("genre", ""),
+                    "current_key_signature": p.get("key_signature", ""),
+                    "current_time_signature": p.get("time_signature", ""),
+                    "current_difficulty": p.get("difficulty", ""),
+                    "current_ensemble_type": p.get("ensemble_type", ""),
+                    "suggested_location": _DEFAULT_LOCATION,
+                    "note": "Location auto-filled (all music is at Chinook Middle School)",
+                    "confidence": 1.0,
+                    "image": "",
+                })
+                loc_count += 1
+        if loc_count:
+            self.after(0, self._log_msg,
+                       f"Location: {loc_count} piece(s) not set to 'Chinook Middle School' — will suggest correction")
+
+        # Text-based enrichment: for pieces missing metadata fields, query the LLM
+        # by title/composer to fill in difficulty, key, time sig, genre, ensemble, arranger
+        _ENRICH_TRIGGER = ["difficulty", "key_signature", "time_signature", "genre", "ensemble_type"]
+        pieces_to_enrich = [
+            p for p in self.pieces
+            if any(not (p.get(f) or "").strip() for f in _ENRICH_TRIGGER)
+        ]
+        if pieces_to_enrich:
+            self.after(0, self._log_msg, "")
+            self.after(0, self._log_msg,
+                       f"Text enrichment: looking up metadata for {len(pieces_to_enrich)} piece(s)...")
+            try:
+                from ui.music_importer import _enrich_piece
+            except ImportError:
+                _enrich_piece = None
+
+            if _enrich_piece:
+                _CONF_MAP = {"high": 0.9, "medium": 0.7, "low": 0.4}
+                _ENRICH_FIELDS = [
+                    ("suggested_title",          "title"),
+                    ("suggested_composer",        "composer"),
+                    ("suggested_arranger",        "arranger"),
+                    ("suggested_genre",           "genre"),
+                    ("suggested_key_signature",   "key_signature"),
+                    ("suggested_time_signature",  "time_signature"),
+                    ("suggested_difficulty",      "difficulty"),
+                    ("suggested_ensemble_type",   "ensemble_type"),
+                ]
+                for i, p in enumerate(pieces_to_enrich):
+                    pct = int(90 + i / len(pieces_to_enrich) * 9)
+                    self.after(0, self._set_progress, pct,
+                               f"Enriching {i+1}/{len(pieces_to_enrich)}")
+                    self.after(0, self._log_msg,
+                               f"  [{i+1}/{len(pieces_to_enrich)}] \"{p.get('title','')}\"")
+                    try:
+                        enriched = _enrich_piece(p, self.base_dir)
+                        conf_str = str(enriched.get("confidence", "")).lower()
+                        conf_val = _CONF_MAP.get(conf_str, 0.7)
+                        sug = {
+                            "type": "correction",
+                            "id": p["id"],
+                            "current_title": p.get("title", ""),
+                            "current_composer": p.get("composer", ""),
+                            "current_arranger": p.get("arranger", ""),
+                            "current_genre": p.get("genre", ""),
+                            "current_key_signature": p.get("key_signature", ""),
+                            "current_time_signature": p.get("time_signature", ""),
+                            "current_difficulty": p.get("difficulty", ""),
+                            "current_ensemble_type": p.get("ensemble_type", ""),
+                            "note": f"Text enrichment (LLM knowledge base, confidence: {conf_str or 'unknown'})",
+                            "confidence": conf_val,
+                            "image": "",
+                        }
+                        has_changes = False
+                        for skey, dbkey in _ENRICH_FIELDS:
+                            enriched_val = str(enriched.get(dbkey) or "").strip()
+                            current_val = str(p.get(dbkey) or "").strip()
+                            # Only suggest if enriched has a value AND it differs from current
+                            if enriched_val and enriched_val != current_val:
+                                sug[skey] = enriched_val
+                                has_changes = True
+                        if has_changes:
+                            all_suggestions.append(sug)
+                            filled = [lbl for skey, dbkey in _ENRICH_FIELDS
+                                      if sug.get(skey)
+                                      for lbl in [dbkey]]
+                            self.after(0, self._log_msg,
+                                       f"    → suggestions: {', '.join(filled)}")
+                        else:
+                            self.after(0, self._log_msg, "    → no new data found")
+                    except Exception as e:
+                        self.after(0, self._log_msg, f"    → enrichment error: {e}")
+
+        self._suggestions = all_suggestions
+        self.after(0, self._on_done)
+
+    def _call_llm_vision(self, prompt, img_dict, model, github_key, anthropic_key):
+        """Call the LLM with vision and parse JSON. Returns dict or None."""
+        import llm_client, re, json as _json
+
+        def _parse(text):
+            # Strip markdown fences if present
+            text = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
+            m = re.search(r"\{[\s\S]+\}", text)
+            if m:
+                try:
+                    return _json.loads(m.group(0))
+                except Exception:
+                    pass
+            return None
+
+        try:
+            if llm_client._is_anthropic_model(model):
+                if not anthropic_key:
+                    return None
+                text = llm_client._query_with_images_anthropic(
+                    self.base_dir, model, prompt, [img_dict]
+                )
+            else:
+                if not github_key:
+                    return None
+                text = llm_client.query_with_images(self.base_dir, prompt, [img_dict])
+            return _parse(text)
+        except Exception as e:
+            self.after(0, self._log_msg, f"  LLM error: {e}")
+            return None
+
+    def _cross_check(self, prompt, img_dict, current_model, github_key, anthropic_key):
+        """Run 1–2 backup model checks, return list of result dicts."""
+        import llm_client
+        results = []
+        for backup in self._BACKUP_MODELS:
+            if backup == current_model:
+                continue
+            if llm_client._is_anthropic_model(backup) and not anthropic_key:
+                continue
+            if not llm_client._is_anthropic_model(backup) and not github_key:
+                continue
+            # Temporarily call with explicit model
+            try:
+                if llm_client._is_anthropic_model(backup):
+                    import llm_client as _lc
+                    text = _lc._query_with_images_anthropic(
+                        self.base_dir, backup, prompt, [img_dict]
+                    )
+                else:
+                    from openai import OpenAI
+                    client = OpenAI(base_url=llm_client.ENDPOINT, api_key=github_key)
+                    content = [{"type": "text", "text": prompt}]
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{img_dict['mime_type']};base64,{img_dict['data']}"},
+                    })
+                    resp = client.chat.completions.create(
+                        model=backup,
+                        messages=[{"role": "user", "content": content}],
+                        max_tokens=2048,
+                        temperature=0.2,
+                    )
+                    text = resp.choices[0].message.content
+                import re, json as _json
+                text = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
+                m = re.search(r"\{[\s\S]+\}", text)
+                if m:
+                    r = _json.loads(m.group(0))
+                    results.append(r)
+            except Exception:
+                pass
+        return results
+
+    def _merge_results(self, primary: dict, backups: list[dict]) -> dict:
+        """Merge backup checks into primary result, boosting/dampening confidence."""
+        if not backups:
+            return primary
+        all_results = [primary] + backups
+        merged_pieces = {}
+        for result in all_results:
+            for p in result.get("pieces", []):
+                pid = p.get("id")
+                if pid not in merged_pieces:
+                    merged_pieces[pid] = []
+                merged_pieces[pid].append(p)
+
+        merged = dict(primary)
+        new_pieces = []
+        for pid, versions in merged_pieces.items():
+            if len(versions) == 1:
+                new_pieces.append(versions[0])
+                continue
+            # Average confidence; if majority say "found=False", keep that
+            avg_conf = sum(v.get("confidence", 0.8) for v in versions) / len(versions)
+            found_votes = sum(1 for v in versions if v.get("found", True))
+            found = found_votes > len(versions) / 2
+            # Use the primary's suggested fields unless all backups agree on different
+            base = versions[0].copy()
+            base["confidence"] = round(avg_conf, 2)
+            base["found"] = found
+            new_pieces.append(base)
+
+        merged["pieces"] = new_pieces
+        # Union of missing_from_db across all results (dedupe by title)
+        seen_titles = set()
+        all_missing = []
+        for result in all_results:
+            for m in result.get("missing_from_db", []):
+                t = (m.get("title") or "").lower().strip()
+                if t and t not in seen_titles:
+                    seen_titles.add(t)
+                    all_missing.append(m)
+        merged["missing_from_db"] = all_missing
+        return merged
+
+    def _on_done(self):
+        self._set_progress(100, "Done")
+        n = len(self._suggestions)
+        if n == 0:
+            self._log_msg("No suggestions — everything looks correct!")
+        else:
+            self._log_msg(f"Found {n} suggestion(s). Click 'Review Suggestions' to apply fixes.")
+            self._review_btn.config(state=NORMAL)
+
+    def _open_review(self):
+        if not self._suggestions:
+            return
+        dlg = _FixSuggestionsDialog(
+            self.winfo_toplevel(), self.db, self.base_dir, self._suggestions
+        )
+        self.wait_window(dlg)
+        if getattr(dlg, "changes_made", False):
+            self.changes_made = True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Fix Suggestions Dialog
+# ══════════════════════════════════════════════════════════════════════════════
+
+class _FixSuggestionsDialog(ttk.Toplevel):
+    """Shows LLM validation suggestions grouped by type with apply options."""
+
+    def __init__(self, parent, db, base_dir: str, suggestions: list[dict]):
+        super().__init__(parent)
+        self.db = db
+        self.base_dir = base_dir
+        self.suggestions = suggestions
+        self.changes_made = False
+        self._check_vars: list[tk.BooleanVar] = []
+
+        self.title("LLM Validation Suggestions")
+        self.geometry("820x640")
+        self.resizable(True, True)
+        self.grab_set()
+
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() - 820) // 2
+        y = (self.winfo_screenheight() - 640) // 2
+        self.geometry(f"+{x}+{y}")
+
+        self._build()
+
+    def _build(self):
+        hdr = ttk.Frame(self, bootstyle=SUCCESS)
+        hdr.pack(fill=X)
+        ttk.Label(
+            hdr,
+            text=f"  {len(self.suggestions)} Suggestion(s) — Review and Apply",
+            font=("Segoe UI", 11, "bold"),
+            bootstyle=(INVERSE, SUCCESS),
+        ).pack(pady=10, padx=16, anchor=W)
+
+        # Scrollable suggestion list
+        canvas_frame = ttk.Frame(self)
+        canvas_frame.pack(fill=BOTH, expand=True, padx=12, pady=(8, 4))
+
+        canvas = tk.Canvas(canvas_frame, borderwidth=0, highlightthickness=0)
+        vsb = ttk.Scrollbar(canvas_frame, orient=VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=RIGHT, fill=Y)
+        canvas.pack(side=LEFT, fill=BOTH, expand=True)
+
+        inner = ttk.Frame(canvas)
+        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.itemconfig(inner_id, width=canvas.winfo_width())
+
+        inner.bind("<Configure>", _on_configure)
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(inner_id, width=e.width))
+
+        def _on_wheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind_all("<MouseWheel>", _on_wheel)
+        self.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        # Group suggestions
+        groups = [
+            ("not_found",  "Pieces NOT found in image", DANGER),
+            ("correction", "Suggested title / composer corrections", WARNING),
+            ("missing",    "Pieces found in image but missing from database", INFO),
+        ]
+
+        self._check_vars.clear()
+        self._suggestion_meta: list[dict] = []  # parallel to _check_vars
+
+        for gtype, glabel, gstyle in groups:
+            items = [s for s in self.suggestions if s["type"] == gtype]
+            if not items:
+                continue
+
+            ttk.Label(inner, text=glabel,
+                      font=("Segoe UI", 10, "bold"),
+                      bootstyle=gstyle).pack(anchor=W, padx=8, pady=(12, 2))
+            ttk.Separator(inner, orient=HORIZONTAL).pack(fill=X, padx=8, pady=(0, 4))
+
+            for s in items:
+                row = ttk.Frame(inner)
+                row.pack(fill=X, padx=8, pady=2)
+
+                var = tk.BooleanVar(value=True)
+                self._check_vars.append(var)
+                self._suggestion_meta.append(s)
+
+                cb = ttk.Checkbutton(row, variable=var, bootstyle=gstyle)
+                cb.pack(side=LEFT, padx=(0, 6))
+
+                if gtype == "not_found":
+                    desc = (
+                        f"NOT FOUND  \"{s.get('title','')}\" by {s.get('composer','')}\n"
+                        f"  Image: {s.get('image','')}  Confidence: {s.get('confidence',0):.0%}"
+                    )
+                    if s.get("note"):
+                        desc += f"\n  Note: {s['note']}"
+                    action_lbl = "Deactivate in DB"
+                elif gtype == "correction":
+                    _FIELD_LABELS = [
+                        ("suggested_title",          "current_title",          "Title"),
+                        ("suggested_composer",        "current_composer",       "Composer"),
+                        ("suggested_arranger",        "current_arranger",       "Arranger"),
+                        ("suggested_genre",           "current_genre",          "Genre"),
+                        ("suggested_key_signature",   "current_key_signature",  "Key"),
+                        ("suggested_time_signature",  "current_time_signature", "Time Sig"),
+                        ("suggested_difficulty",      "current_difficulty",     "Difficulty"),
+                        ("suggested_ensemble_type",   "current_ensemble_type",  "Ensemble"),
+                        ("suggested_location",        None,                     "Location"),
+                    ]
+                    lines = [f"CORRECTION  \"{s.get('current_title','')}\""]
+                    for skey, ckey, label in _FIELD_LABELS:
+                        sval = s.get(skey)
+                        cval = s.get(ckey, "") if ckey else ""
+                        if sval and sval != cval:
+                            lines.append(f"  {label}: \"{cval}\" → \"{sval}\"")
+                    if s.get("image"):
+                        lines.append(f"  Image: {s['image']}  Confidence: {s.get('confidence',0):.0%}")
+                    if s.get("note"):
+                        lines.append(f"  Note: {s['note']}")
+                    desc = "\n".join(lines)
+                    action_lbl = "Apply correction"
+                else:  # missing
+                    by_parts = [s.get("composer", "")]
+                    if s.get("arranger"):
+                        by_parts.append(f"arr. {s['arranger']}")
+                    by_str = ", ".join(p for p in by_parts if p)
+                    desc = (
+                        f"MISSING  \"{s.get('title','')}\" by {by_str}\n"
+                        f"  Image: {s.get('image','')}"
+                    )
+                    if s.get("note"):
+                        desc += f"\n  Note: {s['note']}"
+                    action_lbl = "Add to database"
+
+                text_frame = ttk.Frame(row)
+                text_frame.pack(side=LEFT, fill=X, expand=True)
+                ttk.Label(text_frame, text=desc, font=("Segoe UI", 8),
+                          justify=LEFT, anchor=W, wraplength=600).pack(anchor=W)
+                ttk.Label(text_frame, text=f"Action: {action_lbl}",
+                          font=("Segoe UI", 8, "italic"),
+                          foreground=muted_fg()).pack(anchor=W)
+
+                ttk.Separator(inner, orient=HORIZONTAL).pack(fill=X, padx=8, pady=2)
+
+        # Bottom controls
+        ctrl = ttk.Frame(inner)
+        ctrl.pack(fill=X, padx=8, pady=8)
+        ttk.Button(ctrl, text="Select All", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: [v.set(True) for v in self._check_vars]).pack(side=LEFT, padx=2)
+        ttk.Button(ctrl, text="Deselect All", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: [v.set(False) for v in self._check_vars]).pack(side=LEFT, padx=2)
+
+        # Footer buttons
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill=X, padx=16, pady=(0, 12))
+        ttk.Button(btn_frame, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn_frame, text="Apply Selected", bootstyle=SUCCESS,
+                   command=self._apply_selected).pack(side=RIGHT, padx=4)
+
+    def _apply_selected(self):
+        applied = 0
+        errors = []
+        for var, s in zip(self._check_vars, self._suggestion_meta):
+            if not var.get():
+                continue
+            try:
+                if s["type"] == "not_found":
+                    self.db.deactivate_sheet_music(s["id"])
+                    applied += 1
+                elif s["type"] == "correction":
+                    piece = self.db.get_sheet_music(s["id"])
+                    if piece:
+                        data = dict(piece)
+                        for skey, dbkey in [
+                            ("suggested_title",          "title"),
+                            ("suggested_composer",       "composer"),
+                            ("suggested_arranger",       "arranger"),
+                            ("suggested_genre",          "genre"),
+                            ("suggested_key_signature",  "key_signature"),
+                            ("suggested_time_signature", "time_signature"),
+                            ("suggested_difficulty",     "difficulty"),
+                            ("suggested_ensemble_type",  "ensemble_type"),
+                            ("suggested_location",       "location"),
+                        ]:
+                            val = s.get(skey)
+                            if val:
+                                data[dbkey] = val
+                        self.db.update_sheet_music(s["id"], data)
+                        applied += 1
+                elif s["type"] == "missing":
+                    self.db.add_sheet_music({
+                        "title": s.get("title", ""),
+                        "composer": s.get("composer", ""),
+                        "arranger": s.get("arranger", ""),
+                        "genre": "Jazz",
+                        "ensemble_type": "Jazz Ensemble",
+                        "source_file": s.get("image_path", ""),
+                    })
+                    applied += 1
+            except Exception as e:
+                errors.append(str(e))
+
+        self.changes_made = applied > 0
+        msg = f"Applied {applied} fix(es)."
+        if errors:
+            msg += f"\n{len(errors)} error(s):\n" + "\n".join(errors[:3])
+        Messagebox.show_info(msg, title="Done", parent=self.winfo_toplevel())
+        self.destroy()

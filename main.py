@@ -19,8 +19,11 @@ sys.path.insert(0, APP_DIR)
 from database import Database
 from ui.main_menu import MainMenu
 
-PROFILES_DIR = os.path.join(APP_DIR, "profiles")
-PROFILES_JSON = os.path.join(APP_DIR, "profiles.json")
+# User data lives in AppData so app-folder updates never touch it
+_LOCALAPPDATA = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+APP_DATA_DIR  = os.path.join(_LOCALAPPDATA, "RokasResonance")
+PROFILES_DIR  = os.path.join(APP_DATA_DIR, "profiles")
+PROFILES_JSON = os.path.join(APP_DATA_DIR, "profiles.json")
 CHARMS_DIR = os.path.dirname(APP_DIR)  # Parent of RokasResonance folder
 
 # Files/dirs that belong to a profile (moved during migration)
@@ -51,6 +54,25 @@ def _load_profiles():
 def _save_profiles(profiles: list[str], last_used: str | None = None):
     with open(PROFILES_JSON, "w", encoding="utf-8") as f:
         json.dump({"profiles": profiles, "last_used": last_used}, f, indent=2)
+
+
+def _migrate_to_appdata():
+    """One-time migration: move profiles from the app folder to AppData.
+    Runs silently on the first launch after an update that introduced AppData storage.
+    """
+    old_json = os.path.join(APP_DIR, "profiles.json")
+    old_profiles_dir = os.path.join(APP_DIR, "profiles")
+
+    # Nothing to do if already migrated, or no old data exists
+    if os.path.exists(PROFILES_JSON) or not os.path.exists(old_json):
+        return
+
+    os.makedirs(APP_DATA_DIR, exist_ok=True)
+
+    if os.path.exists(old_profiles_dir):
+        shutil.move(old_profiles_dir, PROFILES_DIR)
+
+    shutil.move(old_json, PROFILES_JSON)
 
 
 def _migrate_legacy_data():
@@ -334,6 +356,16 @@ def _load_profile(app, profile_name: str):
     db.backup()
     db.relink_checkouts_to_students()
 
+    # External backup (if configured) — non-fatal, errors go to console only
+    from ui.settings_dialog import load_settings as _load_settings
+    _ext_path = (_load_settings(data_dir).get("backup") or {}).get("external_path", "").strip()
+    if _ext_path:
+        try:
+            db.backup_to_external(_ext_path, profile_name)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
     app.title(f"Roka's Resonance — {profile_name}")
 
     # Run first-time import if needed
@@ -362,6 +394,8 @@ def _resolve_startup_display(profiles, last_used):
 
 
 def main():
+    # Move profiles to AppData if coming from an older version
+    _migrate_to_appdata()
     # Migrate legacy (pre-profile) data if needed
     _migrate_legacy_data()
 
