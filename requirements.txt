@@ -6,4 +6,6 @@ pypdf>=4.0.0
 music21>=9.1.0
 pymupdf>=1.24.0
 homr>=0.4.0
+openai>=1.0.0
+anthropic>=0.20.0
 certifi

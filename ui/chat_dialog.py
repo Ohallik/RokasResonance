@@ -12,6 +12,117 @@ from collections import Counter
 from datetime import date
 
 
+UI_GUIDE = """\
+=== APPLICATION UI REFERENCE ===
+
+MAIN MENU
+  Stats bar shows: Total Instruments, Available, Checked Out, In Repair.
+  Buttons: Manage Instrument Inventory, Manage Students, Active Checkouts, Music Manager.
+  Footer links: Switch Profile (change teacher), Settings (API keys and model).
+
+INSTRUMENT INVENTORY MANAGER
+  Toolbar buttons:
+    Add Instrument — opens dialog to create a new instrument record (category,
+      description, brand, model, barcode, district #, serial #, condition, value, notes).
+    Edit — opens edit dialog for selected instrument (also double-click a row).
+    Check Out — assigns selected instrument to a student; student autocomplete from roster;
+      set date, due date, and notes.
+    Check In — returns a checked-out instrument to Available; shows who had it.
+    Add Repair — logs a repair record (description, cost, shop/technician).
+    Upload Invoice — parses a purchase invoice PDF to pre-fill instrument data.
+    Generate Form — creates a Bellevue SD Equipment Loan Form PDF for the active checkout.
+    Refresh — reloads data.
+    Show Inactive toggle — shows deactivated instruments in gray.
+  Filters: Search (live text), Status (All/Available/Checked Out), Category.
+  Columns button — show/hide individual columns; preferences saved per profile.
+  List columns: status dot (green=available, brown=checked out), Category, Instrument,
+    Brand, Model, Barcode, District #, Serial #, Condition, Assigned To, Est. Value.
+  Detail panel tabs: Details (all fields), Checkout History (all checkouts with dates),
+    Repairs (all repairs with costs and running total).
+  Ask Reginald button (bottom right) — opens chat with selected instrument as context.
+
+STUDENT MANAGER
+  Buttons: Add Student (manual entry), Edit Student, Import CSV (district export,
+    up to 10 files, auto-deduplicates by student ID and school year).
+  Show Inactive toggle — shows deactivated students.
+  Filters: Search, School Year, Grade.
+  Detail panel: Details tab (all fields including parent contacts),
+    Checkout History tab (all instruments ever checked out by this student).
+
+ACTIVE CHECKOUTS
+  Read-only list of every currently checked-out instrument: student, instrument,
+  barcode, date assigned, due date, notes. To check in, use the Inventory Manager.
+
+MUSIC MANAGER
+  Toolbar buttons:
+    Add Music — manually add a single piece (title, composer, arranger, genre,
+      ensemble type, difficulty 1-6, key signature, time signature, publisher,
+      location, notes, attached file).
+    Import Music — AI-powered importer: select photos of sheet music covers,
+      AI reads title/composer/arranger from images and looks up metadata;
+      review then import.
+    Edit — opens edit dialog for selected piece (also double-click non-source-file column).
+    Delete — removes selected piece(s); supports multi-select.
+    Process OMR — runs Optical Music Recognition on the piece's attached PDF,
+      converting notation to MusicXML. Requires Audiveris or homr.
+    Export MusicXML — saves the OMR output file; only enabled after successful OMR.
+    Validate with LLM — AI validation pass on selected pieces (see below).
+    Refresh — reloads data.
+  Filters: Search (live), Genre, Location. Columns button to show/hide columns.
+  List columns: Title, Composer, Arranger, Ensemble, Genre, Difficulty, Key, Time Sig,
+    Location, Last Played, Type, Source File (hidden by default; double-click to open image).
+  Status bar (bottom left): total pieces; when pieces selected, also shows selection count.
+  Detail panel tabs: Details, OMR Results (last OMR run status and errors),
+    Job History (all OMR attempts with timestamps).
+  Ask Reginald button (bottom right) — opens chat with selected piece as context.
+
+VALIDATE WITH LLM (music manager feature)
+  Select pieces then click Validate with LLM. Four phases:
+    1. Image Validation — AI checks source photos, verifies title/composer/arranger
+       visible on covers, gives confidence scores. Low confidence (<85%) triggers
+       a second-model cross-check. Content filter errors auto-retry on the other API.
+    2. Duplicate Detection — checks only titles involved in this run for duplicates;
+       AI determines which are real distinct published arrangements vs. data errors.
+    3. Location Check — flags any piece not set to Chinook Middle School.
+    4. Text Enrichment — for missing metadata fields (difficulty, key, time sig, genre,
+       ensemble type), and for pieces whose identity was corrected in phase 1, the AI
+       fills in values from its knowledge base.
+  After completion: click Review Suggestions. Suggestions are grouped by type
+  (CORRECTION, MISSING, NOT FOUND, DUPLICATE) and sorted by confidence within
+  each group (lowest first = review manually first). Apply or skip each suggestion.
+
+IMPORT MUSIC (music importer)
+  Add Images button — select JPG/PNG photos of sheet music covers.
+  One image can contain multiple pieces laid out on a surface.
+  Run Import — AI processes images, identifies pieces, looks up metadata.
+  Already-in-database pieces are automatically skipped.
+  Review results, edit any field, then click Import Selected.
+
+ASK REGINALD
+  Opens a chat window with Reginald Pemberton III, AI inventory assistant.
+  He has full context of your inventory, students, and sheet music library.
+  Selecting an instrument or piece before opening gives Reginald specific context.
+  Requires API key in Settings. Press Enter or click Send to submit.
+
+SETTINGS
+  LLM tab:
+    GitHub API Key — Personal Access Token from github.com (no permissions needed).
+    Anthropic API Key — API key from console.anthropic.com.
+    Model dropdown — select GitHub Models (openai/gpt-4o, gpt-4o-mini, etc.) or
+      Anthropic Claude models (claude-haiku-4-5-20251001, claude-sonnet-4-6,
+      claude-opus-4-6). Program routes to the correct API automatically.
+    Fetch GitHub Models — downloads current model catalog from GitHub.
+    Test Connection — sends a test message to confirm the key and model work.
+  Save / Cancel — Save writes settings to disk; per-profile, in AppData.
+
+GENERAL UI TIPS
+  Click any column header to sort; click again to reverse.
+  Double-click a row to open its edit dialog.
+  Ctrl+click or Shift+click to select multiple rows (Music Manager).
+  Columns button to show/hide columns; preferences saved.
+  Data stored in %LOCALAPPDATA%\\RokasResonance\\profiles\\[ProfileName]\\.
+"""
+
 SYSTEM_PROMPT_TEMPLATE = """\
 You are Reginald Pemberton III, assistant for Roka's Resonance at Chinook \
 Middle School. You were once a promising oboist who performed with the Puget \
@@ -443,7 +554,7 @@ class ChatDialog(ttk.Toplevel):
                 system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
                     date=date.today().strftime("%B %d, %Y"),
                     inventory_summary=summary,
-                )
+                ) + "\n\n" + UI_GUIDE
                 user_prompt = self._build_user_prompt(message)
                 from llm_client import query
                 reply = query(self.base_dir, user_prompt, system_prompt)

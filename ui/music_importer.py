@@ -301,7 +301,7 @@ def _enrich_piece(piece: dict, base_dir: str, on_retry=None) -> dict:
     """Text-only LLM call to fill in difficulty, key, genre, comments."""
     from llm_client import query
 
-    title = piece.get("title", "").strip()
+    title = (piece.get("title") or "").strip()
     if not title:
         return piece
 
@@ -312,7 +312,7 @@ def _enrich_piece(piece: dict, base_dir: str, on_retry=None) -> dict:
         ("time_signature", "Time signature visible"),
         ("visible_notes", "Other visible info"),
     ]:
-        val = piece.get(key, "").strip()
+        val = (piece.get(key) or "").strip()
         if val:
             context_lines.append(f"{label}: {val}")
 

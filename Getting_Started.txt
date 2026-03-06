@@ -1,0 +1,211 @@
+===============================================================
+  ROKA'S RESONANCE — GETTING STARTED GUIDE
+  Chinook Middle School Band Inventory Manager
+===============================================================
+
+OVERVIEW
+--------
+Roka's Resonance manages your band program's instrument inventory,
+student records, and sheet music library. It also includes "Ask
+Reginald," an AI assistant who can answer questions about your
+inventory and repertoire.
+
+This guide walks you through setup from scratch, assuming you are
+starting a brand-new profile with no existing data.
+
+
+STEP 1 — SYSTEM REQUIREMENTS
+-----------------------------
+  - Windows 10 or 11
+  - Python 3.10 or newer
+      Download from: https://python.org
+      IMPORTANT: During installation, check the box that says
+      "Add Python to PATH" before clicking Install.
+
+  - An internet connection (required for AI features and the
+    initial download of OMR music-recognition models, ~200 MB)
+
+
+STEP 2 — INSTALL DEPENDENCIES
+------------------------------
+  1. Open File Explorer and navigate to the RokasResonance folder.
+  2. Double-click  setup.bat
+  3. A command window will open, install all required packages,
+     and then launch the program automatically.
+
+  After the first run you can use  run.bat  to launch the program
+  without reinstalling packages.
+
+  If setup.bat fails, open a Command Prompt (cmd.exe) in the
+  RokasResonance folder and run:
+      python -m pip install -r requirements.txt
+
+
+STEP 3 — CREATE YOUR PROFILE
+-----------------------------
+  When the program starts, you will see the "Teacher Profiles"
+  dialog.
+
+  1. Click  "New Profile"
+  2. Type your name (e.g., "Jane Smith") and click OK.
+  3. Your profile is created. Click  "Open"  to enter it.
+
+  Each teacher has their own separate profile with their own
+  instrument database, student roster, and sheet music library.
+  You can create multiple profiles and switch between them at
+  any time using the "Switch Profile" link on the main menu.
+
+
+STEP 4 — CONFIGURE AI SETTINGS (OPTIONAL BUT RECOMMENDED)
+----------------------------------------------------------
+  The AI assistant (Reginald) and the Music Import feature both
+  require an API key to work. You need at least one of:
+
+  Option A — GitHub Models (free, easiest to set up):
+    1. Sign in at https://github.com
+    2. Go to Settings > Developer settings > Personal access tokens
+       (or go to https://github.com/settings/tokens)
+    3. Generate a new token. No special permissions are needed.
+    4. Copy the token.
+    5. In Roka's Resonance, click "Settings" at the bottom of the
+       main menu.
+    6. In the LLM tab, paste the token into the "GitHub API Key"
+       field.
+    7. Select a model (e.g., openai/gpt-4o) from the dropdown.
+    8. Click "Test Connection" to verify it works, then Save.
+
+  Option B — Anthropic API (Claude models):
+    1. Create an account at https://console.anthropic.com
+    2. Go to API Keys and create a new key.
+    3. Copy the key.
+    4. In Settings > LLM tab, paste into "Anthropic API Key."
+    5. Select a Claude model (e.g., claude-haiku-4-5-20251001
+       for fast/cheap, claude-sonnet-4-6 for best quality).
+    6. Click "Test Connection," then Save.
+
+  You can configure both keys. The program uses whichever
+  matches the currently selected model.
+
+
+STEP 5 — ADD YOUR INSTRUMENTS
+------------------------------
+  Option A — Add instruments one at a time:
+    1. From the main menu, click "Manage Instrument Inventory."
+    2. Click "Add Instrument" in the toolbar.
+    3. Fill in the instrument details (type, brand, barcode, etc.)
+       and click Save.
+
+  Option B — Import from an Excel spreadsheet:
+    If you have your instrument data in a spreadsheet (.xlsx):
+    1. Make sure your spreadsheet has these column names (the
+       importer looks for them by name, case-insensitive):
+         Type / Make / Model / Serial# / Barcode / Condition /
+         Condition comment / Year purchased / Purchase price /
+         Assigned member first name / Assigned member last name /
+         Notes
+    2. From the Instrument Inventory screen, click "Upload Invoice"
+       — or contact your administrator about using the
+       reset_and_import_xlsx.py utility for a bulk initial import.
+
+  After adding instruments, they will appear in the inventory
+  list with a green dot (Available) or brown dot (Checked Out).
+
+
+STEP 6 — ADD YOUR STUDENTS
+---------------------------
+  Option A — Add students one at a time:
+    1. From the main menu, click "Manage Students."
+    2. Click "Add Student" and fill in their details.
+
+  Option B — Import from a CSV file (district export):
+    1. From the main menu, click "Manage Students."
+    2. Click "Import CSV" and select your district-exported
+       CSV file(s). You can import up to 10 files at once.
+    3. The importer handles duplicate entries automatically.
+
+  Students are organized by school year (e.g., "2024-2025").
+  You can filter by year and grade in the Students screen.
+
+
+STEP 7 — CHECK OUT AN INSTRUMENT
+---------------------------------
+  1. In the Instrument Inventory screen, click on an instrument
+     to select it.
+  2. Click "Check Out" in the toolbar.
+  3. Start typing a student's name — the autocomplete list will
+     show matching students from your roster.
+  4. Select the student, set the date, add notes if needed,
+     and click Check Out.
+  5. The instrument's dot will turn brown and show the student's
+     name in the "Assigned To" column.
+
+  To return an instrument: select it and click "Check In."
+
+
+STEP 8 — ADD YOUR SHEET MUSIC (OPTIONAL)
+-----------------------------------------
+  1. From the main menu, click "Music Manager."
+  2. Click "Add Music" to add a single piece manually, or
+  3. Click "Import Music" to use the AI-powered importer.
+     - Take photos of your sheet music covers and select the
+       image files (JPG, PNG).
+     - The AI reads the title, composer, arranger, and other
+       details from the photos automatically.
+     - Review the imported pieces and click Import to add them.
+
+  Once pieces are in the library, you can run "Validate with LLM"
+  to check for missing metadata, verify titles against photos,
+  and detect duplicate entries.
+
+
+STEP 9 — ASK REGINALD
+----------------------
+  Reginald is your AI inventory assistant. He has access to your
+  complete instrument inventory, student roster, and sheet music
+  library and can answer questions like:
+
+    "Which instruments are available right now?"
+    "What is Jimmy checked out?"
+    "Do we have any pieces in F major at grade 2?"
+    "List all concert band pieces by difficulty."
+
+  To open Reginald:
+    - In the Instrument Inventory screen: click "Ask Reginald"
+      at the bottom right.
+    - In the Music Manager: click "Ask Reginald" at the
+      bottom right.
+    - Selecting an instrument or piece before opening Reginald
+      gives him additional context about that specific item.
+
+  Note: Reginald requires an API key configured in Settings
+  (see Step 4 above).
+
+
+TIPS
+----
+  - Your data is stored in:
+      C:\Users\[YourName]\AppData\Local\RokasResonance\profiles\
+    This folder is separate from the program files, so updating
+    the program will never overwrite your data.
+
+  - Use "Switch Profile" (bottom of main menu) to move between
+    teacher profiles without restarting.
+
+  - All column headers in the inventory and music lists are
+    clickable — click once to sort ascending, again to sort
+    descending.
+
+  - Use the "Columns" dropdown in the filter bar to show or
+    hide columns you don't need.
+
+  - Double-click any row in the inventory or music list to
+    open the edit dialog for that item.
+
+
+GETTING HELP
+------------
+  Open the program and ask Reginald — he knows the full UI.
+  For technical issues, refer to User_Guide.txt for a complete
+  description of every screen and button in the application.
+
+===============================================================

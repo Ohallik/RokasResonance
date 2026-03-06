@@ -1,0 +1,643 @@
+===============================================================
+  ROKA'S RESONANCE — USER GUIDE
+  Complete Reference for All Screens and Features
+===============================================================
+
+TABLE OF CONTENTS
+-----------------
+  1. Main Menu
+  2. Instrument Inventory Manager
+  3. Student Manager
+  4. Active Checkouts
+  5. Music Manager
+  6. Music Importer (Import Music)
+  7. LLM Validation (Validate with LLM)
+  8. Ask Reginald (AI Assistant)
+  9. Settings
+  10. PDF Equipment Loan Forms
+  11. Keyboard Shortcuts and Tips
+
+
+================================================================
+1. MAIN MENU
+================================================================
+
+The main menu is the hub of the application. It shows a live
+summary of your program and provides access to all features.
+
+STATS BAR
+  Displayed across the top of the main menu:
+    Total Instruments  — total active instruments in the database
+    Available          — instruments not currently checked out
+    Checked Out        — instruments currently assigned to students
+    In Repair          — instruments marked as in-repair
+
+  These numbers update automatically when you return to the
+  main menu after making changes.
+
+NAVIGATION BUTTONS
+  Manage Instrument Inventory
+    Opens the full instrument inventory screen where you can
+    add, edit, check out, check in, and track all instruments.
+
+  Manage Students
+    Opens the student roster. Add students manually or import
+    them from a district-exported CSV file.
+
+  Active Checkouts
+    Shows a list of every instrument currently checked out,
+    who has it, and when it was assigned.
+
+  Music Manager
+    Opens the sheet music library. Manage pieces, run OMR
+    (optical music recognition), and validate metadata with AI.
+
+FOOTER LINKS
+  Switch Profile
+    Opens the profile selector so you can switch to a different
+    teacher's profile without restarting the application.
+    Each profile has its own completely separate database.
+
+  Settings
+    Opens the Settings dialog to configure your AI API keys,
+    select your LLM model, and adjust application preferences.
+
+
+================================================================
+2. INSTRUMENT INVENTORY MANAGER
+================================================================
+
+Accessed via: Main Menu > "Manage Instrument Inventory"
+
+TOOLBAR BUTTONS
+  Add Instrument
+    Opens the Add Instrument dialog. Fill in any combination of:
+      Category    — instrument family (Woodwind, Brass, etc.)
+      Description — instrument name (e.g., "Alto Saxophone")
+      Brand       — manufacturer name
+      Model       — specific model name
+      Barcode     — school barcode label number
+      District #  — district-assigned asset number
+      Serial #    — manufacturer serial number
+      Condition   — Excellent / Good / Fair / Poor / Damaged
+      Condition Comment — free-text notes on condition
+      Year Purchased / Purchase Price / Est. Value
+      Notes       — any other relevant notes
+
+  Edit
+    Opens the Edit Instrument dialog for the currently selected
+    instrument. You can also double-click a row to open this.
+
+  Check Out
+    Assigns the selected instrument to a student.
+    - Start typing a name in the Student field to see
+      autocomplete suggestions from your student roster.
+    - Set the assignment date (defaults to today).
+    - Optionally set a due date and add notes.
+    - Click Check Out to confirm.
+
+  Check In
+    Returns a checked-out instrument to Available status.
+    You will see the student name and assignment date before
+    confirming. Any notes from the checkout are shown.
+
+  Add Repair
+    Logs a repair record for the selected instrument.
+    Enter the repair description, estimated cost, and
+    the repair shop or technician name.
+
+  Upload Invoice
+    Parses a purchase invoice to pre-fill instrument details.
+    Supports PDF invoices from common music suppliers.
+
+  Generate Form
+    Generates a PDF Equipment Loan Form (Bellevue School
+    District format) for the selected instrument's active
+    checkout. The form includes student name, instrument
+    details, and the loan agreement text. The PDF is saved
+    to the checkout_forms folder and opened automatically.
+
+  Refresh
+    Reloads all data from the database. Use this if data
+    appears out of date.
+
+  Show Inactive (toggle)
+    When on, instruments that have been deactivated (deleted
+    from active inventory) are shown in gray. This lets you
+    view historical records without cluttering the main list.
+
+SEARCH AND FILTER BAR
+  Search
+    Type any text to filter instruments by name, brand, model,
+    barcode, serial number, or student name. Results update
+    live as you type.
+
+  Status filter
+    All / Available / Checked Out
+    Filters instruments by their current checkout status.
+
+  Category filter
+    Filters by instrument category (e.g., Woodwind, Brass,
+    Percussion). Categories are populated from your data.
+
+  Columns dropdown
+    Show or hide individual columns. Your preferences are
+    saved and restored the next time you open the screen.
+
+  Count label (right side)
+    Shows how many instruments match the current filters
+    vs. the total in the database.
+
+INSTRUMENT LIST (LEFT PANEL)
+  Columns:
+    ●           Colored dot: green = Available, brown = Checked Out
+    Category    Instrument family
+    Instrument  Full instrument description
+    Brand       Manufacturer
+    Model       Model name
+    Barcode     School barcode
+    District #  District asset number
+    Serial #    Manufacturer serial
+    Condition   Current condition rating
+    Assigned To Student name if checked out
+    Est. Value  Estimated dollar value
+
+  Click any column header to sort. Click again to reverse.
+  Click a row to select it and view details in the right panel.
+  Double-click a row to open the Edit dialog.
+
+DETAIL PANEL (RIGHT PANEL)
+  Three tabs:
+
+  Details tab
+    Shows all fields for the selected instrument in a
+    read-only view. Includes the full condition comment
+    and notes field.
+
+  Checkout History tab
+    Shows every checkout record for this instrument:
+    student name, dates assigned and returned, and any
+    notes recorded at checkout time.
+
+  Repairs tab
+    Shows all repair records: description, cost, shop,
+    and date. Running total of repair costs is displayed.
+
+ASK REGINALD BUTTON (bottom right)
+  Opens the AI chat assistant (see Section 8). The currently
+  selected instrument is automatically passed as context so
+  Reginald can answer specific questions about that instrument.
+
+
+================================================================
+3. STUDENT MANAGER
+================================================================
+
+Accessed via: Main Menu > "Manage Students"
+
+TOOLBAR BUTTONS
+  Add Student
+    Opens a dialog to add a single student manually.
+    Fields: First Name, Last Name, Grade, School Year,
+    Student ID, Phone, Parent/Guardian name and contact.
+
+  Edit Student
+    Opens the edit dialog for the selected student.
+
+  Import CSV
+    Imports students from one or more district-exported
+    CSV files (up to 10 at once). The importer handles
+    the district's format where each student may have
+    multiple rows (one per parent/guardian). Students are
+    deduplicated by Student ID and school year — if a
+    student already exists in the database with that ID
+    and year, the record is skipped.
+
+  Show Inactive (toggle)
+    Shows or hides students who have been deactivated.
+
+SEARCH AND FILTER BAR
+  Search       — filter by name or student ID
+  School Year  — filter to a specific year (e.g., 2024-2025)
+  Grade        — filter by grade level
+
+STUDENT LIST
+  Columns: Last Name, First Name, Grade, School Year,
+           Student ID, Phone
+
+  Click a student to view their details and checkout history
+  in the right panel.
+
+DETAIL PANEL
+  Details tab
+    All fields for the selected student including all
+    parent/guardian contacts.
+
+  Checkout History tab
+    Every instrument this student has ever checked out,
+    with dates and return status.
+
+
+================================================================
+4. ACTIVE CHECKOUTS
+================================================================
+
+Accessed via: Main Menu > "Active Checkouts"
+
+Shows a complete list of every instrument currently checked out
+in your program. Each row shows:
+  Student name
+  Instrument description and barcode
+  Date assigned
+  Due date (if set)
+  Notes
+
+This view is read-only. To check in an instrument, go to the
+Instrument Inventory screen, find the instrument, and use
+the "Check In" button.
+
+
+================================================================
+5. MUSIC MANAGER
+================================================================
+
+Accessed via: Main Menu > "Music Manager"
+
+The Music Manager is the hub for your sheet music library.
+
+TOOLBAR BUTTONS
+  Add Music
+    Opens the Add Sheet Music dialog to add a single piece
+    manually. Fields:
+      Title, Composer, Arranger, Genre, Ensemble Type,
+      Difficulty (1-6 grade scale), Key Signature,
+      Time Signature, Publisher, Location, Notes
+      File — attach the actual sheet music file (PDF, etc.)
+
+  Import Music
+    Opens the AI-powered Music Importer (see Section 6).
+    Use this to add multiple pieces at once by photographing
+    your sheet music covers.
+
+  Edit
+    Opens the Edit dialog for the selected piece.
+    Also accessible by double-clicking a row (unless you
+    click the Source File column — that opens the image file).
+
+  Delete
+    Removes the selected piece(s) from the library.
+    You can select multiple pieces (Ctrl+click or Shift+click)
+    and delete them all at once.
+
+  Process OMR
+    Runs Optical Music Recognition on the selected piece's
+    attached PDF file. OMR converts the printed music notation
+    into a MusicXML file that can be used in notation software.
+    Requires either Audiveris (separate install) or the homr
+    Python package (installed automatically via requirements.txt).
+
+  Export MusicXML
+    Exports the MusicXML file generated by OMR processing for
+    the selected piece. Only enabled after a successful OMR run.
+
+  Validate with LLM
+    Runs an AI-powered validation pass on the selected piece(s).
+    See Section 7 for a full description.
+
+  Refresh
+    Reloads all music data from the database.
+
+SEARCH AND FILTER BAR
+  Search         — filter by title, composer, arranger, genre,
+                   ensemble type, key signature, time signature,
+                   or location. Updates live as you type.
+  Genre filter   — filter by genre (Jazz, Classical, Pop/Rock, etc.)
+  Location filter— filter by physical storage location
+  Columns dropdown — show/hide individual columns
+
+  Count label (right side)
+    Shows matching pieces vs. total in library.
+
+MUSIC LIST (LEFT PANEL)
+  Columns:
+    Title         Piece title (sortable)
+    Composer      Composer name
+    Arranger      Arranger name (if applicable)
+    Ensemble      Ensemble type (Concert Band, Jazz Band, etc.)
+    Genre         Musical genre
+    Difficulty    Numeric grade level (1=easiest, 6=hardest)
+    Key           Key signature
+    Time Sig      Time signature
+    Location      Physical storage location (default: Chinook Middle School)
+    Last Played   Date of most recent performance record
+    Type          File type (PDF, etc.) if a file is attached
+    Source File   Filename of the photo used to import this piece
+                  (hidden by default; enable via Columns dropdown)
+                  Double-click a row in this column to open
+                  the source image file.
+
+  Click any column header to sort.
+  Double-click a row to open the Edit dialog (except on the
+  Source File column, which opens the image).
+
+  Status bar (bottom left): shows total pieces in library.
+  When pieces are selected: shows "X pieces in inventory • Y selected."
+
+DETAIL PANEL (RIGHT PANEL)
+  Three tabs:
+
+  Details tab
+    All metadata for the selected piece in read-only form.
+
+  OMR Results tab
+    Shows the result of the last OMR processing run:
+    status (completed/failed), any validation errors found,
+    and any automatic corrections that were applied.
+
+  Job History tab
+    Full history of all OMR processing attempts for this
+    piece, with timestamps and status for each run.
+
+ASK REGINALD BUTTON (bottom right)
+  Opens the AI chat assistant with the selected piece as context.
+
+
+================================================================
+6. MUSIC IMPORTER (IMPORT MUSIC)
+================================================================
+
+Accessed via: Music Manager > "Import Music"
+
+The Music Importer uses AI vision to read sheet music cover
+photos and extract metadata (title, composer, arranger, etc.)
+automatically.
+
+HOW TO USE IT
+  1. Click "Add Images" to select one or more photos of your
+     sheet music covers (JPG, PNG, HEIC accepted).
+     - One image can contain multiple pieces laid out on a surface.
+     - Photos should be well-lit and show the cover text clearly.
+  2. The image list shows all selected photos with a preview.
+  3. Click "Run Import" to start processing.
+     - The AI reads each image and identifies every piece visible.
+     - For each piece found, it looks up additional metadata
+       (genre, difficulty, key, time signature) using its
+       knowledge base.
+     - Pieces already in your database are skipped automatically.
+  4. When complete, the results panel shows the extracted pieces
+     with all their detected fields.
+  5. Review the results. You can edit any field before importing.
+  6. Click "Import Selected" to add the pieces to your library.
+
+TIPS
+  - If a piece is not recognized, check that the cover is clearly
+    visible in the photo without glare or obstruction.
+  - The importer is most accurate with standard printed covers.
+    Handwritten or heavily stylized covers may need manual review.
+  - "Easy Jazz Ensemble," "Concert Band," etc. shown large on
+    a cover are publisher series names, not piece titles.
+    The actual piece title is typically smaller text below.
+
+
+================================================================
+7. LLM VALIDATION (VALIDATE WITH LLM)
+================================================================
+
+Accessed via: Music Manager > select pieces > "Validate with LLM"
+
+This feature uses AI to audit your selected pieces against their
+source photos and fill in missing metadata.
+
+WHAT IT DOES
+  Phase 1 — Image Validation (if source photos are available)
+    For each source image, the AI is shown the photo and the
+    list of pieces in your database that are supposed to come
+    from that image. It checks:
+      - Is each piece actually visible in the photo? (found/not found)
+      - Is the title correct as it appears on the cover?
+      - Is the composer/arranger correct?
+      - Confidence score for each match (0–100%)
+    Pieces with low confidence (<85%) are cross-checked with a
+    second AI model. If the models disagree, both opinions are
+    shown in the suggestions.
+
+  Phase 2 — Duplicate Detection
+    Checks only the titles involved in this validation run for
+    duplicate entries. Uses AI to determine which duplicates
+    are real distinct published arrangements vs. data entry
+    errors. Suggests which entries to remove.
+
+  Phase 3 — Location Check
+    Any piece not already set to "Chinook Middle School" as its
+    location will get a suggestion to correct it.
+
+  Phase 4 — Text Enrichment
+    For pieces missing fields like difficulty, key signature,
+    time signature, genre, or ensemble type — and for any piece
+    whose title/composer/arranger was corrected in Phase 1 —
+    the AI looks up the metadata from its knowledge base and
+    suggests filling in the blanks.
+
+REVIEWING SUGGESTIONS
+  When validation completes, click "Review Suggestions" to open
+  the Fix Suggestions dialog.
+
+  Suggestions are grouped by type:
+    CORRECTION   — a field value that looks wrong or incomplete
+    MISSING      — a required field that is blank
+    NOT FOUND    — piece was not visible in its source photo
+    DUPLICATE    — an entry that appears to be a data error
+
+  Within each group, suggestions are sorted by confidence
+  (lowest confidence first) so you know which ones to
+  manually verify before applying.
+
+  For each suggestion you can:
+    Apply     — write the suggested value to the database
+    Skip      — ignore this suggestion
+    Apply All — accept all suggestions in the current group
+
+VALIDATION LOG
+  The scrollable log shows detailed progress as each image is
+  processed. After completion it remains visible so you can
+  review what was checked.
+
+
+================================================================
+8. ASK REGINALD (AI ASSISTANT)
+================================================================
+
+Accessed via: "Ask Reginald" button at the bottom right of
+the Instrument Inventory screen or Music Manager.
+
+Reginald Pemberton III is your AI inventory assistant with
+full knowledge of your current instrument inventory, student
+roster, and sheet music library. He is a retired oboist
+and grumpy butler who will answer your questions accurately
+and with minimal patience for small talk.
+
+WHAT REGINALD KNOWS
+  - Every instrument in your inventory, its condition, and
+    who has it checked out
+  - Every student in your roster and what they have
+  - Every piece in your sheet music library with full metadata
+
+EXAMPLE QUESTIONS
+  Inventory:
+    "Which flutes are available?"
+    "How many instruments are checked out?"
+    "What is Maria checked out?"
+    "List all instruments in poor condition."
+
+  Sheet music:
+    "What concert band pieces do we have at grade 3?"
+    "List jazz pieces in F major."
+    "What's a good piece to program for a winter concert?"
+    "Do we have any pieces by Michael Sweeney?"
+
+  General:
+    "How many students do we have this year?"
+    "Which students are in 8th grade?"
+
+CONTEXT
+  If you select an instrument before clicking "Ask Reginald,"
+  Reginald receives that instrument's full details and can
+  answer specific questions about it ("When was this checked
+  out?" "What is the condition of this trumpet?").
+
+  If you select a sheet music piece before clicking
+  "Ask Reginald," he knows all the metadata for that piece.
+
+REQUIREMENTS
+  An API key must be configured in Settings (see Section 9).
+  Without a key, Reginald will display an error message.
+
+
+================================================================
+9. SETTINGS
+================================================================
+
+Accessed via: Main Menu footer > "Settings"
+
+LLM TAB
+  GitHub API Key
+    A Personal Access Token from github.com used to access
+    GitHub Models (OpenAI-compatible models: GPT-4o, etc.).
+    No special token permissions are required.
+    Click the eye icon to show/hide the key.
+
+  Anthropic API Key
+    An API key from console.anthropic.com used to access
+    Claude models (Haiku, Sonnet, Opus).
+    Click the eye icon to show/hide the key.
+
+  Model
+    The AI model to use for all LLM features (Reginald,
+    Music Importer, Validation).
+
+    GitHub Models (use with GitHub API Key):
+      openai/gpt-4o          — most capable, best for vision
+      openai/gpt-4o-mini     — faster, lower cost
+      openai/gpt-4.1         — latest GPT-4 generation
+
+    Claude / Anthropic Models (use with Anthropic API Key):
+      claude-haiku-4-5-20251001  — fastest, lowest cost
+      claude-sonnet-4-6          — balanced speed and quality
+      claude-opus-4-6            — most capable Claude model
+
+    The program routes API calls automatically based on the
+    selected model — no manual switching required.
+
+  Fetch GitHub Models button
+    Downloads the current list of available models from the
+    GitHub Models catalog and populates the dropdown.
+    Claude models are always listed at the top.
+
+  Test Connection button
+    Sends a short test message to the AI and displays the
+    response. Confirms your API key and model are working.
+    Routes to the correct API based on the selected model.
+
+  Save / Cancel
+    Save writes your settings to disk.
+    Cancel closes without saving.
+
+WHERE SETTINGS ARE STORED
+  Settings are saved in:
+    C:\Users\[YourName]\AppData\Local\RokasResonance\profiles\
+                         [ProfileName]\settings.json
+  They are per-profile, so each teacher can have their own
+  model and API key preferences.
+
+
+================================================================
+10. PDF EQUIPMENT LOAN FORMS
+================================================================
+
+Accessed via: Instrument Inventory > select checked-out
+              instrument > "Generate Form"
+
+Generates a Bellevue School District Equipment Loan Form as
+a PDF file. The form includes:
+  - Student name and school year
+  - Instrument description, brand, model, serial number
+  - Barcode and district number
+  - Date assigned and due date (if set)
+  - Instrument-specific accessory checklist (reeds, mouthpiece,
+    case, strap, bow, rosin, etc. based on instrument type)
+  - Loan agreement text
+
+The PDF is saved automatically to the checkout_forms folder
+in your profile directory and opened with your default PDF
+viewer. You can then print it for the student to sign.
+
+Note: A current checkout must exist for the selected
+instrument before a form can be generated.
+
+
+================================================================
+11. KEYBOARD SHORTCUTS AND TIPS
+================================================================
+
+GENERAL
+  Enter       Send message in Ask Reginald
+  Double-click  Open edit dialog for a selected row
+               (Instrument Inventory and Music Manager)
+
+MUSIC MANAGER ONLY
+  Double-click (Source File column)
+              Opens the source image file in your default viewer
+  Ctrl+click  Select multiple pieces (non-contiguous)
+  Shift+click Select a range of pieces
+
+SORTING AND FILTERING
+  Click any column header   Sort by that column (ascending)
+  Click again               Reverse sort (descending)
+  Search box                Filters live as you type
+  All dropdowns             Filter by that field value
+
+COLUMNS
+  Use the "Columns" dropdown button to show or hide columns.
+  Your column choices are saved per-profile and restored on
+  the next launch.
+
+DATA SAFETY
+  - Your database is stored in AppData (not the program folder)
+    so reinstalling or updating the program will not affect it.
+  - Profile data location:
+      %LOCALAPPDATA%\RokasResonance\profiles\[ProfileName]\
+  - Back up this folder regularly to protect your data.
+
+OMR (OPTICAL MUSIC RECOGNITION)
+  - Requires either Audiveris (free, separate Java-based install)
+    or the homr Python package (included in requirements.txt).
+  - homr downloads ML models (~200MB) on first use.
+  - Audiveris generally produces higher-quality MusicXML output
+    but requires Java and a separate installation step.
+  - OMR results are validated automatically using music21 to
+    check measure durations, pitch ranges, and empty parts.
+
+===============================================================
+  End of User Guide
+  For further assistance, ask Reginald.
+===============================================================

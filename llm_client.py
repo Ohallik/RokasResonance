@@ -170,7 +170,7 @@ def _query_anthropic(base_dir: str, model: str, user_prompt: str,
 
 def _query_with_images_anthropic(base_dir: str, model: str, user_prompt: str,
                                   images: list, system_prompt: str = None,
-                                  on_retry=None) -> str:
+                                  on_retry=None, max_tokens: int = 2048) -> str:
     """Send a vision query via the Anthropic API."""
     try:
         from anthropic import Anthropic, RateLimitError, APIStatusError
@@ -199,7 +199,7 @@ def _query_with_images_anthropic(base_dir: str, model: str, user_prompt: str,
 
     kwargs = dict(
         model=model,
-        max_tokens=2048,
+        max_tokens=max_tokens,
         messages=[{"role": "user", "content": content}],
     )
     if system_prompt:
@@ -306,6 +306,7 @@ def query_with_images(
     images: list,
     system_prompt: str = None,
     on_retry=None,
+    max_tokens: int = 2048,
 ) -> str:
     """
     Send a query with one or more images to the LLM (vision).
@@ -318,7 +319,7 @@ def query_with_images(
     """
     model = _get_model(base_dir)
     if _is_anthropic_model(model):
-        return _query_with_images_anthropic(base_dir, model, user_prompt, images, system_prompt, on_retry)
+        return _query_with_images_anthropic(base_dir, model, user_prompt, images, system_prompt, on_retry, max_tokens)
 
     from openai import RateLimitError, APIStatusError
 
@@ -352,7 +353,7 @@ def query_with_images(
                 model=model,
                 messages=messages,
                 temperature=0.2,
-                max_tokens=2048,
+                max_tokens=max_tokens,
             )
             return response.choices[0].message.content
 

@@ -193,7 +193,7 @@ class MusicManager(ttk.Frame):
                              minwidth=40, stretch=col in _STRETCH)
 
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
-        self.tree.bind("<Double-1>", lambda e: self._edit_music())
+        self.tree.bind("<Double-1>", self._on_dbl_click)
 
         # Right: Detail Panel
         detail_frame = ttk.Frame(paned, width=320)
@@ -227,6 +227,9 @@ class MusicManager(ttk.Frame):
             bootstyle=(DARK, OUTLINE),
             command=self._open_chat,
         ).pack(side=RIGHT, padx=10, pady=5)
+        self._status_label = ttk.Label(footer, text="", foreground=muted_fg(),
+                                       font=("Segoe UI", 9))
+        self._status_label.pack(side=LEFT, padx=12, pady=5)
 
     def _build_detail_tab(self):
         outer = ttk.Frame(self._detail_tab)
@@ -531,6 +534,7 @@ class MusicManager(ttk.Frame):
         self._count_label.config(
             text=f"{len(visible)} of {len(self._all_rows)} pieces"
         )
+        self._update_status_label()
 
     def _populate_tree(self, rows):
         reverse = not self._sort_asc
@@ -589,6 +593,8 @@ class MusicManager(ttk.Frame):
         self._delete_btn.config(state=multi_state)
         self._validate_btn.config(state=multi_state)
 
+        self._update_status_label()
+
         if not sel:
             self._omr_btn.config(state=DISABLED)
             self._export_btn.config(state=DISABLED)
@@ -612,9 +618,54 @@ class MusicManager(ttk.Frame):
                 dict(piece) if piece else None
             )
 
+    def _on_dbl_click(self, event):
+        """Double-click: open source file if that column was clicked, else open edit dialog."""
+        col_id = self.tree.identify_column(event.x)  # "#1", "#2", etc.
+        display_cols = self.tree["displaycolumns"]
+        if not display_cols or display_cols == ("all",):
+            display_cols = TREEVIEW_COLS
+        try:
+            col_name = display_cols[int(col_id.lstrip("#")) - 1]
+        except (ValueError, IndexError):
+            col_name = ""
+        if col_name == "source_file":
+            self._open_selected_source_file()
+        else:
+            self._edit_music()
+
+    def _open_selected_source_file(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        pid = int(sel[0])
+        piece = next((p for p in self._all_rows if p["id"] == pid), None)
+        if not piece:
+            return
+        path = (piece.get("source_file") or "").strip()
+        if not path:
+            messagebox.showinfo("No Source File", "This piece has no source file set.", parent=self)
+            return
+        resolved = _resolve_source_file(path, self.base_dir)
+        if not resolved:
+            messagebox.showwarning("File Not Found", f"Cannot find:\n{path}", parent=self)
+            return
+        try:
+            os.startfile(resolved)
+        except Exception as e:
+            messagebox.showerror("Cannot Open File", str(e), parent=self)
+
     def _get_selected_ids(self) -> list[int]:
         """Return list of all selected music IDs."""
         return [int(iid) for iid in self.tree.selection()]
+
+    def _update_status_label(self):
+        total = len(self._all_rows)
+        sel = len(self.tree.selection())
+        if sel:
+            text = f"{total} pieces in inventory  •  {sel} selected"
+        else:
+            text = f"{total} pieces in inventory"
+        self._status_label.config(text=text)
 
     def _load_detail(self, music_id: int):
         piece = self.db.get_sheet_music(music_id)
@@ -1346,19 +1397,29 @@ def _resolve_source_file(path: str, base_dir: str) -> str | None:
 
 
 def _load_image_b64(path: str) -> dict | None:
-    """Load an image file as a base64 dict for LLM vision calls."""
+    """Load an image file as a base64 dict for LLM vision calls.
+
+    Saves as JPEG (not PNG) so photos stay well under the 5 MB API limit.
+    Steps down quality until the encoded size fits if needed.
+    """
     try:
         import base64, io
         from PIL import Image
         img = Image.open(path).convert("RGB")
         w, h = img.size
-        scale = min(1.0, 1800 / max(w, h))
+        scale = min(1.0, 3000 / max(w, h))
         if scale < 1.0:
             img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        _MAX_BYTES = 4_500_000
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        for quality in (92, 80, 65, 50):
+            buf.seek(0)
+            buf.truncate()
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+            if buf.tell() <= _MAX_BYTES:
+                break
         return {
-            "mime_type": "image/png",
+            "mime_type": "image/jpeg",
             "data": base64.b64encode(buf.getvalue()).decode(),
         }
     except Exception:
@@ -1474,8 +1535,13 @@ class _LLMValidateDialog(ttk.Toplevel):
         anthropic_key = llm_client._get_anthropic_key(self.base_dir)
 
         # Build full-DB title set for "missing" filtering
-        all_db_rows = self.db.get_all_sheet_music()
+        all_db_rows = [dict(r) for r in self.db.get_all_sheet_music()]
         db_titles_norm = {self._norm(r["title"]) for r in all_db_rows if r["title"]}
+
+        # Tracks pieces whose identity (title/composer/arranger) was corrected by
+        # image validation — those pieces will be re-enriched using the corrected values.
+        # Maps piece_id → piece dict with corrections applied.
+        identity_corrected: dict[int, dict] = {}
 
         # Group pieces by source_file
         by_image: dict[str, list[dict]] = {}
@@ -1518,17 +1584,46 @@ class _LLMValidateDialog(ttk.Toplevel):
                 f"composer=\"{p.get('composer','')}\", arranger=\"{p.get('arranger','')}\""
                 for p in img_pieces
             )
+            system_prompt = (
+                "You are a meticulous music librarian verifying a school band sheet music inventory "
+                "using photographs. Your primary job is accurate visual text recognition.\n\n"
+                "KEY RULES:\n"
+                "- Music covers use many fonts: script, italic, decorative, hand-lettered, embossed, "
+                "  outlined, shadowed. Read ALL text regardless of style.\n"
+                "- A piece is found=true if the SAME MUSICAL WORK is visible, even if the exact "
+                "  spelling or subtitle differs slightly from the database record.\n"
+                "- Only mark found=false when you have examined the entire image carefully and the "
+                "  work is genuinely absent — not merely hard to read.\n"
+                "- When uncertain between found=true and found=false, choose found=true and lower "
+                "  your confidence score instead.\n"
+                "- Your note field must explain your reasoning, especially for found=false.\n\n"
+                "PUBLISHER SERIES vs. PIECE TITLE:\n"
+                "- 'Easy Jazz Ensemble', 'Jazz Ensemble', 'Discovery Jazz', 'Jazz Band', "
+                "'Concert Band', 'Flex-Band', 'Young Band' etc. are PUBLISHER SERIES NAMES — "
+                "they are NOT the piece title.\n"
+                "- The actual piece title is typically the SMALLER text printed above, below, "
+                "or alongside the series branding.\n"
+                "- 'Words and Music by ...', 'Arranged by ...', 'arr. ...' identify the "
+                "composer/arranger — they are not part of the title.\n"
+                "- Publisher names (Hal Leonard, Carl Fischer, Alfred, Kendor, etc.) are also "
+                "not titles."
+            )
             prompt = (
-                "You are verifying a sheet music database. "
-                "This image is a photograph of sheet music materials (folders, covers, spines, or scores).\n\n"
-                f"The following pieces are recorded in the database as coming from this image:\n{piece_list}\n\n"
-                "For EACH listed piece:\n"
-                "1. Is it actually visible/readable in this image? (found: true/false)\n"
-                "2. Does the title look correct from what you can see? If wrong, provide the correct title.\n"
-                "3. Does the composer look correct from what you can see? If wrong, provide the correct composer.\n"
-                "4. Does the arranger look correct from what you can see? If wrong or newly visible, provide the correct arranger.\n"
-                "5. Rate your confidence (0.0–1.0).\n\n"
-                "ALSO list any pieces you can clearly see in the image that are NOT in the list above.\n\n"
+                "Examine this photograph of sheet music materials carefully.\n\n"
+                f"These pieces are recorded in our database as coming from this image:\n{piece_list}\n\n"
+                "Step 1 — Read all visible text in the image: covers, spines, stickers, stamps, "
+                "labels, and any handwriting. Note every title and name you can make out.\n\n"
+                "Step 2 — For EACH listed piece, determine:\n"
+                "1. Is this work visible anywhere in the image? (found: true/false)\n"
+                "   Tip: compare against every title you read in Step 1. "
+                "   Match even if font is decorative, cursive, or stylized.\n"
+                "2. Does the title look correct? If you can read a different title, provide it.\n"
+                "3. Does the composer look correct? If you can read a different name, provide it.\n"
+                "4. Does the arranger look correct? If visible and different, provide it.\n"
+                "5. Confidence (0.0–1.0): 0.95+ means you directly read the title clearly; "
+                "   0.8 = fairly sure; 0.6 = partly obscured but recognisable; "
+                "   below 0.6 = very uncertain.\n\n"
+                "Step 3 — List any musical works visible in the image that are NOT in the list above.\n\n"
                 "Return ONLY valid JSON (no markdown fences):\n"
                 "{\n"
                 '  "pieces": [\n'
@@ -1536,16 +1631,17 @@ class _LLMValidateDialog(ttk.Toplevel):
                 '     "suggested_title": "<corrected title or null>",\n'
                 '     "suggested_composer": "<corrected composer or null>",\n'
                 '     "suggested_arranger": "<corrected arranger or null>",\n'
-                '     "note": "<optional brief explanation>"}\n'
+                '     "note": "<explain what you saw and why found=true/false>"}\n'
                 "  ],\n"
                 '  "missing_from_db": [\n'
-                '    {"title": "<title>", "composer": "<composer or empty>", "arranger": "<arranger or empty>", "note": "<context>"}\n'
+                '    {"title": "<title>", "composer": "<composer or empty>", "arranger": "<arranger or empty>", "note": "<where you saw it>"}\n'
                 "  ]\n"
                 "}"
             )
 
             primary_result = self._call_llm_vision(
-                prompt, img_dict, current_model, github_key, anthropic_key
+                prompt, img_dict, current_model, github_key, anthropic_key,
+                system_prompt=system_prompt,
             )
 
             if primary_result is None:
@@ -1555,13 +1651,14 @@ class _LLMValidateDialog(ttk.Toplevel):
             # Cross-check low-confidence pieces with backup models
             low_conf_ids = {
                 p["id"] for p in primary_result.get("pieces", [])
-                if p.get("confidence", 1.0) < 0.7 or p.get("found") is False
+                if p.get("confidence", 1.0) < 0.85 or p.get("found") is False
             }
             if low_conf_ids:
                 self.after(0, self._log_msg,
                            f"  Low confidence on {len(low_conf_ids)} piece(s) — cross-checking...")
                 backup_results = self._cross_check(
-                    prompt, img_dict, current_model, github_key, anthropic_key
+                    prompt, img_dict, current_model, github_key, anthropic_key,
+                    system_prompt=system_prompt,
                 )
                 primary_result = self._merge_results(primary_result, backup_results)
 
@@ -1651,6 +1748,20 @@ class _LLMValidateDialog(ttk.Toplevel):
                         "confidence": p.get("confidence", 0.8),
                         "image": os.path.basename(img_path),
                     })
+                    # If identity fields were corrected, build an updated piece dict
+                    # so text enrichment re-checks all other fields under the new identity.
+                    if pid and any(p.get(f) for f in (
+                        "suggested_title", "suggested_composer", "suggested_arranger"
+                    )):
+                        corrected = dict(orig)
+                        for skey, dbkey in [
+                            ("suggested_title",    "title"),
+                            ("suggested_composer", "composer"),
+                            ("suggested_arranger", "arranger"),
+                        ]:
+                            if p.get(skey):
+                                corrected[dbkey] = p[skey]
+                        identity_corrected[pid] = corrected
 
             for m in truly_missing:
                 all_suggestions.append({
@@ -1664,6 +1775,177 @@ class _LLMValidateDialog(ttk.Toplevel):
                 })
 
             self.after(0, self._log_msg, "")
+
+        # Duplicate detection: only check titles touched by this validation run —
+        # the selected pieces' original titles, plus any corrected titles suggested above.
+        self.after(0, self._log_msg, "Checking for duplicate entries in database...")
+        _SCORE_FIELDS = [
+            "composer", "arranger", "genre", "difficulty",
+            "key_signature", "time_signature", "ensemble_type", "location",
+        ]
+
+        def _detail_score(p):
+            return sum(1 for f in _SCORE_FIELDS if (p.get(f) or "").strip())
+
+        # Collect normalized titles from selected pieces (original + any suggested corrections)
+        touched_titles: set[str] = set()
+        for p in self.pieces:
+            t = self._norm(p.get("title", ""))
+            if t:
+                touched_titles.add(t)
+        for s in all_suggestions:
+            for key in ("suggested_title", "title"):
+                t = self._norm(s.get(key, ""))
+                if t:
+                    touched_titles.add(t)
+
+        title_groups: dict[str, list] = {}
+        for row in all_db_rows:
+            key = self._norm(row.get("title", ""))
+            if key and key in touched_titles:
+                title_groups.setdefault(key, []).append(row)
+
+        dup_groups = {k: v for k, v in title_groups.items() if len(v) >= 2}
+        dup_count = 0
+
+        if not dup_groups:
+            self.after(0, self._log_msg, "No duplicate titles found.")
+        else:
+            self.after(0, self._log_msg,
+                       f"  {len(dup_groups)} title(s) with multiple entries — validating with LLM...")
+
+        import llm_client as _lc, re as _re, json as _json
+
+        for gi, (norm_title, group) in enumerate(dup_groups.items()):
+            ref = group[0]
+            ref_title = ref.get("title", "")
+            composer_str = (ref.get("composer") or "").strip() or "unknown composer"
+            self.after(0, self._log_msg,
+                       f"  [{gi+1}/{len(dup_groups)}] \"{ref_title}\" — {len(group)} entries")
+
+            # Build entry summary for the LLM
+            entry_lines = []
+            for e in group:
+                parts = [f"ID {e['id']}:"]
+                for f in ("arranger", "ensemble_type", "genre", "difficulty",
+                          "key_signature", "time_signature"):
+                    v = (e.get(f) or "").strip()
+                    parts.append(f'{f}="{v}"' if v else f'{f}=(blank)')
+                entry_lines.append("  " + "  ".join(parts))
+
+            dup_prompt = (
+                "You are a music librarian validating a school band sheet music inventory.\n\n"
+                f"The following {len(group)} database entries all share the title "
+                f'"{ref_title}" by {composer_str}. Some may be legitimate distinct published '
+                "arrangements; others may be duplicate or erroneous entries.\n\n"
+                "Entries:\n" + "\n".join(entry_lines) + "\n\n"
+                "Using your knowledge of published band and jazz ensemble music:\n"
+                "1. Identify each entry as VALID (a real published arrangement) or "
+                "DUPLICATE/INVALID (erroneously entered, blank arranger that duplicates "
+                "another, or an arranger who never published this piece).\n"
+                "2. If two entries are the same arrangement entered twice, mark the one "
+                "with fewer details as duplicate_of the better one.\n"
+                "3. If an arranger name looks misspelled or incomplete, provide the correction.\n\n"
+                "Return ONLY valid JSON (no markdown fences):\n"
+                '{"entries":[\n'
+                '  {"id":<id>,"valid":true/false,'
+                '"suggested_arranger":"<corrected name or null>",'
+                '"duplicate_of":<id or null>,'
+                '"note":"<brief reasoning>"}\n'
+                "]}"
+            )
+
+            result = None
+            try:
+                raw = _lc.query(self.base_dir, dup_prompt)
+                raw = _re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
+                m = _re.search(r"\{[\s\S]+\}", raw)
+                if m:
+                    result = _json.loads(m.group(0))
+            except Exception as e:
+                self.after(0, self._log_msg, f"    LLM error: {e} — using field-count fallback")
+
+            if result:
+                for er in result.get("entries", []):
+                    eid = er.get("id")
+                    orig = next((x for x in group if x["id"] == eid), None)
+                    if not orig:
+                        continue
+                    is_valid = er.get("valid", True)
+                    dup_of = er.get("duplicate_of")
+                    sugg_arr = (er.get("suggested_arranger") or "").strip() or None
+                    note = er.get("note", "")
+
+                    if not is_valid or dup_of:
+                        keeper = next((x for x in group if x["id"] == dup_of), None)
+                        all_suggestions.append({
+                            "type": "duplicate",
+                            "id": eid,
+                            "keeper_id": dup_of,
+                            "title": orig.get("title", ""),
+                            "composer": orig.get("composer", ""),
+                            "keeper_title": keeper.get("title", "") if keeper else "",
+                            "keeper_composer": keeper.get("composer", "") if keeper else "",
+                            "dup_score": _detail_score(orig),
+                            "keeper_score": _detail_score(keeper) if keeper else 0,
+                            "missing_fields": [],
+                            "confidence": 0.85,
+                            "note": note,
+                        })
+                        dup_count += 1
+                        self.after(0, self._log_msg, f"    DUPLICATE ID {eid}: {note}")
+                    else:
+                        # Valid — check if arranger needs correcting
+                        if sugg_arr and sugg_arr != (orig.get("arranger") or "").strip():
+                            all_suggestions.append({
+                                "type": "correction",
+                                "id": eid,
+                                "current_title": orig.get("title", ""),
+                                "current_composer": orig.get("composer", ""),
+                                "current_arranger": orig.get("arranger", ""),
+                                "current_genre": orig.get("genre", ""),
+                                "current_key_signature": orig.get("key_signature", ""),
+                                "current_time_signature": orig.get("time_signature", ""),
+                                "current_difficulty": orig.get("difficulty", ""),
+                                "current_ensemble_type": orig.get("ensemble_type", ""),
+                                "suggested_arranger": sugg_arr,
+                                "note": f"From duplicate analysis: {note}",
+                                "confidence": 0.8,
+                                "image": "",
+                            })
+                            self.after(0, self._log_msg,
+                                       f"    VALID ID {eid} — arranger correction: → {sugg_arr}")
+                        else:
+                            self.after(0, self._log_msg, f"    VALID ID {eid}: {note}")
+            else:
+                # LLM unavailable — fall back to field-count scoring
+                scored = sorted(group, key=_detail_score, reverse=True)
+                keeper = scored[0]
+                for dup in scored[1:]:
+                    missing = [
+                        f for f in _SCORE_FIELDS
+                        if (keeper.get(f) or "").strip() and not (dup.get(f) or "").strip()
+                    ]
+                    all_suggestions.append({
+                        "type": "duplicate",
+                        "id": dup["id"],
+                        "keeper_id": keeper["id"],
+                        "title": dup.get("title", ""),
+                        "composer": dup.get("composer", ""),
+                        "keeper_title": keeper.get("title", ""),
+                        "keeper_composer": keeper.get("composer", ""),
+                        "dup_score": _detail_score(dup),
+                        "keeper_score": _detail_score(keeper),
+                        "missing_fields": missing,
+                        "confidence": 0.5,
+                        "note": "LLM unavailable — based on field count only, verify manually",
+                    })
+                    dup_count += 1
+
+        if dup_count:
+            self.after(0, self._log_msg,
+                       f"Found {dup_count} duplicate/invalid entry(s) — see suggestions")
+        self.after(0, self._log_msg, "")
 
         # Location: always "Chinook Middle School" — only ever changed manually.
         # Suggest correction for any piece not already set to this value.
@@ -1692,12 +1974,14 @@ class _LLMValidateDialog(ttk.Toplevel):
             self.after(0, self._log_msg,
                        f"Location: {loc_count} piece(s) not set to 'Chinook Middle School' — will suggest correction")
 
-        # Text-based enrichment: for pieces missing metadata fields, query the LLM
-        # by title/composer to fill in difficulty, key, time sig, genre, ensemble, arranger
+        # Text-based enrichment: for pieces missing metadata fields OR whose identity
+        # (title/composer/arranger) was corrected by image validation — re-verify all
+        # other fields using the (possibly corrected) title/composer as the lookup key.
         _ENRICH_TRIGGER = ["difficulty", "key_signature", "time_signature", "genre", "ensemble_type"]
         pieces_to_enrich = [
             p for p in self.pieces
             if any(not (p.get(f) or "").strip() for f in _ENRICH_TRIGGER)
+            or p["id"] in identity_corrected
         ]
         if pieces_to_enrich:
             self.after(0, self._log_msg, "")
@@ -1724,10 +2008,14 @@ class _LLMValidateDialog(ttk.Toplevel):
                     pct = int(90 + i / len(pieces_to_enrich) * 9)
                     self.after(0, self._set_progress, pct,
                                f"Enriching {i+1}/{len(pieces_to_enrich)}")
+                    # Use corrected identity if available
+                    piece_for_enrich = identity_corrected.get(p["id"], p)
+                    label = piece_for_enrich.get("title") or p.get("title", "")
+                    reason = " (identity corrected)" if p["id"] in identity_corrected else ""
                     self.after(0, self._log_msg,
-                               f"  [{i+1}/{len(pieces_to_enrich)}] \"{p.get('title','')}\"")
+                               f"  [{i+1}/{len(pieces_to_enrich)}] \"{label}\"{reason}")
                     try:
-                        enriched = _enrich_piece(p, self.base_dir)
+                        enriched = _enrich_piece(piece_for_enrich, self.base_dir)
                         conf_str = str(enriched.get("confidence", "")).lower()
                         conf_val = _CONF_MAP.get(conf_str, 0.7)
                         sug = {
@@ -1768,7 +2056,8 @@ class _LLMValidateDialog(ttk.Toplevel):
         self._suggestions = all_suggestions
         self.after(0, self._on_done)
 
-    def _call_llm_vision(self, prompt, img_dict, model, github_key, anthropic_key):
+    def _call_llm_vision(self, prompt, img_dict, model, github_key, anthropic_key,
+                         system_prompt=None):
         """Call the LLM with vision and parse JSON. Returns dict or None."""
         import llm_client, re, json as _json
 
@@ -1783,23 +2072,75 @@ class _LLMValidateDialog(ttk.Toplevel):
                     pass
             return None
 
+        def _is_content_filter_error(e) -> bool:
+            msg = str(e).lower()
+            return "content filter" in msg or "content_filter" in msg or "content filtering" in msg
+
         try:
-            if llm_client._is_anthropic_model(model):
-                if not anthropic_key:
-                    return None
-                text = llm_client._query_with_images_anthropic(
-                    self.base_dir, model, prompt, [img_dict]
-                )
-            else:
-                if not github_key:
-                    return None
-                text = llm_client.query_with_images(self.base_dir, prompt, [img_dict])
-            return _parse(text)
+            try:
+                if llm_client._is_anthropic_model(model):
+                    if not anthropic_key:
+                        self.after(0, self._log_msg,
+                                   "  No Anthropic API key configured — skipping.")
+                        return None
+                    text = llm_client._query_with_images_anthropic(
+                        self.base_dir, model, prompt, [img_dict],
+                        system_prompt=system_prompt, max_tokens=4096,
+                    )
+                else:
+                    if not github_key:
+                        self.after(0, self._log_msg,
+                                   "  No GitHub API key configured — skipping.")
+                        return None
+                    text = llm_client.query_with_images(
+                        self.base_dir, prompt, [img_dict],
+                        system_prompt=system_prompt, max_tokens=4096,
+                    )
+            except Exception as e:
+                if not _is_content_filter_error(e):
+                    raise
+                # Content filter blocked — try the other backend
+                if llm_client._is_anthropic_model(model) and github_key:
+                    fallback = "openai/gpt-4o"
+                    self.after(0, self._log_msg,
+                               f"  Content filter blocked — retrying with {fallback}...")
+                    from openai import OpenAI
+                    msgs = []
+                    if system_prompt:
+                        msgs.append({"role": "system", "content": system_prompt})
+                    msgs.append({"role": "user", "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {
+                            "url": f"data:{img_dict['mime_type']};base64,{img_dict['data']}"
+                        }},
+                    ]})
+                    text = OpenAI(base_url=llm_client.ENDPOINT, api_key=github_key)\
+                        .chat.completions.create(
+                            model=fallback, messages=msgs,
+                            max_tokens=4096, temperature=0.2,
+                        ).choices[0].message.content
+                elif not llm_client._is_anthropic_model(model) and anthropic_key:
+                    fallback = llm_client.ANTHROPIC_MODELS[1]  # claude-sonnet
+                    self.after(0, self._log_msg,
+                               f"  Content filter blocked — retrying with {fallback}...")
+                    text = llm_client._query_with_images_anthropic(
+                        self.base_dir, fallback, prompt, [img_dict],
+                        system_prompt=system_prompt, max_tokens=4096,
+                    )
+                else:
+                    raise  # no fallback available
+            result = _parse(text)
+            if result is None:
+                preview = text[:200].replace("\n", " ") if text else "(empty)"
+                self.after(0, self._log_msg,
+                           f"  Could not parse JSON from response: {preview}")
+            return result
         except Exception as e:
             self.after(0, self._log_msg, f"  LLM error: {e}")
             return None
 
-    def _cross_check(self, prompt, img_dict, current_model, github_key, anthropic_key):
+    def _cross_check(self, prompt, img_dict, current_model, github_key, anthropic_key,
+                     system_prompt=None):
         """Run 1–2 backup model checks, return list of result dicts."""
         import llm_client
         results = []
@@ -1815,19 +2156,24 @@ class _LLMValidateDialog(ttk.Toplevel):
                 if llm_client._is_anthropic_model(backup):
                     import llm_client as _lc
                     text = _lc._query_with_images_anthropic(
-                        self.base_dir, backup, prompt, [img_dict]
+                        self.base_dir, backup, prompt, [img_dict],
+                        system_prompt=system_prompt,
                     )
                 else:
                     from openai import OpenAI
                     client = OpenAI(base_url=llm_client.ENDPOINT, api_key=github_key)
+                    messages = []
+                    if system_prompt:
+                        messages.append({"role": "system", "content": system_prompt})
                     content = [{"type": "text", "text": prompt}]
                     content.append({
                         "type": "image_url",
                         "image_url": {"url": f"data:{img_dict['mime_type']};base64,{img_dict['data']}"},
                     })
+                    messages.append({"role": "user", "content": content})
                     resp = client.chat.completions.create(
                         model=backup,
-                        messages=[{"role": "user", "content": content}],
+                        messages=messages,
                         max_tokens=2048,
                         temperature=0.2,
                     )
@@ -1970,7 +2316,8 @@ class _FixSuggestionsDialog(ttk.Toplevel):
         # Group suggestions
         groups = [
             ("not_found",  "Pieces NOT found in image", DANGER),
-            ("correction", "Suggested title / composer corrections", WARNING),
+            ("duplicate",  "Possible duplicate entries", WARNING),
+            ("correction", "Suggested corrections", WARNING),
             ("missing",    "Pieces found in image but missing from database", INFO),
         ]
 
@@ -1978,7 +2325,10 @@ class _FixSuggestionsDialog(ttk.Toplevel):
         self._suggestion_meta: list[dict] = []  # parallel to _check_vars
 
         for gtype, glabel, gstyle in groups:
-            items = [s for s in self.suggestions if s["type"] == gtype]
+            items = sorted(
+                (s for s in self.suggestions if s["type"] == gtype),
+                key=lambda s: s.get("confidence", 1.0),
+            )
             if not items:
                 continue
 
@@ -2006,6 +2356,21 @@ class _FixSuggestionsDialog(ttk.Toplevel):
                     if s.get("note"):
                         desc += f"\n  Note: {s['note']}"
                     action_lbl = "Deactivate in DB"
+                elif gtype == "duplicate":
+                    missing = s.get("missing_fields", [])
+                    lines = [
+                        f"DUPLICATE  \"{s.get('title','')}\"  (ID {s.get('id','')})",
+                        f"  Keep: ID {s.get('keeper_id','')} \"{s.get('keeper_title','')}\" "
+                        f"({s.get('keeper_score',0)} fields filled)",
+                        f"  This entry: {s.get('dup_score',0)} fields filled  "
+                        f"Confidence: {s.get('confidence',0):.0%}",
+                    ]
+                    if missing:
+                        lines.append(f"  Missing vs keeper: {', '.join(missing)}")
+                    if s.get("note"):
+                        lines.append(f"  ⚠ {s['note']}")
+                    desc = "\n".join(lines)
+                    action_lbl = "Deactivate duplicate"
                 elif gtype == "correction":
                     _FIELD_LABELS = [
                         ("suggested_title",          "current_title",          "Title"),
@@ -2077,6 +2442,9 @@ class _FixSuggestionsDialog(ttk.Toplevel):
                 continue
             try:
                 if s["type"] == "not_found":
+                    self.db.deactivate_sheet_music(s["id"])
+                    applied += 1
+                elif s["type"] == "duplicate":
                     self.db.deactivate_sheet_music(s["id"])
                     applied += 1
                 elif s["type"] == "correction":
