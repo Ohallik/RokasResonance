@@ -3,6 +3,7 @@ ui/music_dialog.py - Add / Edit sheet music dialog
 """
 
 import os
+import threading
 import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
@@ -42,12 +43,27 @@ FILE_TYPES = [
     ("All files", "*.*"),
 ]
 
+CHOIR_GENRE_OPTIONS = [
+    "Sacred", "Secular", "Gospel", "Folk", "Classical", "Pop/Rock",
+    "Holiday", "Show/Musical", "World", "Warm-Up", "Other",
+]
+
+VOICING_OPTIONS = [
+    "SATB", "SSA", "SAB", "TTBB", "Unison", "2-Part", "3-Part Mixed",
+    "4-Part Mixed", "SSATB", "SSAA", "Other",
+]
+
+ACCOMPANIMENT_OPTIONS = [
+    "Piano", "A Cappella", "Organ", "Orchestra", "Band", "Guitar", "None",
+]
+
 
 class MusicDialog(ttk.Toplevel):
-    def __init__(self, parent, db, base_dir: str, music_id=None, prefill_data=None):
+    def __init__(self, parent, db, base_dir: str, music_id=None, prefill_data=None, mode: str = "band"):
         super().__init__(parent)
         self.db = db
         self.base_dir = base_dir
+        self._mode = mode
         self.music_id = music_id
         self._result = None
         self._source_file = None  # Path selected by user before save
@@ -93,6 +109,12 @@ class MusicDialog(ttk.Toplevel):
             ttk.Button(btn_frame, text="Mark Inactive",
                        bootstyle=(DANGER, OUTLINE),
                        command=self._mark_inactive).pack(side=LEFT, padx=4)
+            self._enrich_btn = ttk.Button(
+                btn_frame, text="Enrich with LLM",
+                bootstyle=(INFO, OUTLINE),
+                command=self._enrich_with_llm,
+            )
+            self._enrich_btn.pack(side=LEFT, padx=4)
 
         ttk.Button(btn_frame, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
                    command=self.destroy).pack(side=RIGHT, padx=4)
@@ -154,21 +176,42 @@ class MusicDialog(ttk.Toplevel):
         cls = ttk.Frame(parent)
         cls.pack(fill=X, padx=16, pady=(0, 8))
 
-        row2 = ttk.Frame(cls)
-        row2.pack(fill=X, pady=2)
-        self._field(row2, "Genre", "genre", widget="combobox",
-                    options=GENRE_OPTIONS, side=LEFT, width=18)
-        self._field(row2, "Ensemble", "ensemble_type", widget="combobox",
-                    options=ENSEMBLE_OPTIONS, side=LEFT, width=18)
-        self._field(row2, "Difficulty", "difficulty", widget="combobox",
-                    options=DIFFICULTY_OPTIONS, side=LEFT, width=14)
+        if self._mode == "choir":
+            row2 = ttk.Frame(cls)
+            row2.pack(fill=X, pady=2)
+            self._field(row2, "Genre", "genre", widget="combobox",
+                        options=CHOIR_GENRE_OPTIONS, side=LEFT, width=18)
+            self._field(row2, "Voicing", "voicing", widget="combobox",
+                        options=VOICING_OPTIONS, side=LEFT, width=18)
+            self._field(row2, "Difficulty", "difficulty", widget="combobox",
+                        options=DIFFICULTY_OPTIONS, side=LEFT, width=14)
 
-        row3 = ttk.Frame(cls)
-        row3.pack(fill=X, pady=2)
-        self._field(row3, "Key Signature(s)  (e.g. Bb Major, G Minor)", "key_signature",
-                    widget="entry", side=LEFT, width=32)
-        self._field(row3, "Time Signature", "time_signature", widget="combobox",
-                    options=TIME_SIGNATURE_OPTIONS, side=LEFT, width=10)
+            row2b = ttk.Frame(cls)
+            row2b.pack(fill=X, pady=2)
+            self._field(row2b, "Language", "language", widget="entry", side=LEFT, width=24)
+            self._field(row2b, "Accompaniment", "accompaniment", widget="combobox",
+                        options=ACCOMPANIMENT_OPTIONS, side=LEFT, width=20)
+
+            row3 = ttk.Frame(cls)
+            row3.pack(fill=X, pady=2)
+            self._field(row3, "Key Signature(s)  (e.g. Bb Major, G Minor)", "key_signature",
+                        widget="entry", side=LEFT, width=32)
+        else:
+            row2 = ttk.Frame(cls)
+            row2.pack(fill=X, pady=2)
+            self._field(row2, "Genre", "genre", widget="combobox",
+                        options=GENRE_OPTIONS, side=LEFT, width=18)
+            self._field(row2, "Ensemble", "ensemble_type", widget="combobox",
+                        options=ENSEMBLE_OPTIONS, side=LEFT, width=18)
+            self._field(row2, "Difficulty", "difficulty", widget="combobox",
+                        options=DIFFICULTY_OPTIONS, side=LEFT, width=14)
+
+            row3 = ttk.Frame(cls)
+            row3.pack(fill=X, pady=2)
+            self._field(row3, "Key Signature(s)  (e.g. Bb Major, G Minor)", "key_signature",
+                        widget="entry", side=LEFT, width=32)
+            self._field(row3, "Time Signature", "time_signature", widget="combobox",
+                        options=TIME_SIGNATURE_OPTIONS, side=LEFT, width=10)
 
         # ── Location ────────────────────────────────────────────────────
         self._section(parent, "Location")
@@ -179,7 +222,7 @@ class MusicDialog(ttk.Toplevel):
         loc_row.pack(fill=X, pady=2)
         self._field(loc_row, "Location", "location", side=LEFT, width=40)
 
-        # ── File ──────────────────────────────────────────────────────────
+        # ── Source File ────────────────────────────────────────────────────
         self._section(parent, "Source File (Optional)")
         file_row = ttk.Frame(parent)
         file_row.pack(fill=X, padx=16, pady=(0, 8))
@@ -192,16 +235,9 @@ class MusicDialog(ttk.Toplevel):
         )
         self._file_label.pack(side=LEFT, fill=X, expand=True)
 
-        # File type + pages inline on same row
-        ttk.Label(file_row, text="Type:", font=("Segoe UI", 8)).pack(side=LEFT, padx=(8, 2))
-        file_type_var = tk.StringVar()
-        self._vars["file_type"] = file_type_var
-        ttk.Entry(file_row, textvariable=file_type_var, width=7).pack(side=LEFT)
-
-        ttk.Label(file_row, text="Pages:", font=("Segoe UI", 8)).pack(side=LEFT, padx=(8, 2))
-        pages_var = tk.StringVar()
-        self._vars["num_pages"] = pages_var
-        ttk.Entry(file_row, textvariable=pages_var, width=5).pack(side=LEFT)
+        # Hidden vars for file_type / num_pages — preserved on save, not shown in UI
+        self._vars["file_type"] = tk.StringVar()
+        self._vars["num_pages"] = tk.StringVar()
 
         # ── Comments ──────────────────────────────────────────────────────
         self._section(parent, "Comments")
@@ -238,32 +274,17 @@ class MusicDialog(ttk.Toplevel):
 
     def _browse_file(self):
         path = filedialog.askopenfilename(
-            title="Select Sheet Music File",
+            title="Select Source Image",
             parent=self,
-            filetypes=FILE_TYPES,
+            filetypes=[
+                ("Images", "*.png *.jpg *.jpeg *.tiff *.tif *.bmp"),
+                ("All files", "*.*"),
+            ],
         )
         if not path:
             return
-
         self._source_file = path
         self._file_label.config(text=os.path.basename(path), foreground=file_selected_fg())
-
-        # Auto-detect file type
-        ext = os.path.splitext(path)[1].lower()
-        type_map = {
-            ".pdf": "PDF", ".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG",
-            ".tiff": "TIFF", ".tif": "TIFF", ".bmp": "BMP",
-        }
-        self._vars["file_type"].set(type_map.get(ext, ext.upper().lstrip(".")))
-
-        # Auto-detect page count for PDFs
-        if ext == ".pdf":
-            try:
-                import pypdf
-                reader = pypdf.PdfReader(path)
-                self._vars["num_pages"].set(str(len(reader.pages)))
-            except Exception:
-                pass
 
     # ───────────────────────────────────────────────────── Data Methods ────
 
@@ -279,9 +300,9 @@ class MusicDialog(ttk.Toplevel):
         self._notes_text.delete("1.0", "end")
         self._notes_text.insert("1.0", notes)
 
-        file_path = row["file_path"] or ""
-        if file_path:
-            self._file_label.config(text=os.path.basename(file_path),
+        source_file = row["source_file"] or ""
+        if source_file:
+            self._file_label.config(text=os.path.basename(source_file),
                                     foreground=file_selected_fg())
 
     def _prefill(self, data: dict):
@@ -322,30 +343,105 @@ class MusicDialog(ttk.Toplevel):
             return
 
         if self.music_id:
-            # Update existing
-            if self._source_file:
-                from omr_engine import import_file
-                dest = import_file(self.base_dir, self.music_id, self._source_file)
-                data["file_path"] = dest
-            else:
-                # Keep existing file_path
-                existing = self.db.get_sheet_music(self.music_id)
-                if existing:
-                    data["file_path"] = existing["file_path"]
+            # Update existing — preserve file_path (OMR PDF), update source_file if changed
+            existing = self.db.get_sheet_music(self.music_id)
+            if existing:
+                data["file_path"] = existing["file_path"] or ""
+            data["source_file"] = self._source_file if self._source_file else (
+                (existing["source_file"] or "") if existing else ""
+            )
             self.db.update_sheet_music(self.music_id, data)
         else:
-            # Create new - save first to get ID, then copy file
+            # Create new
             data["file_path"] = ""
-            new_id = self.db.add_sheet_music(data)
-            if self._source_file:
-                from omr_engine import import_file
-                dest = import_file(self.base_dir, new_id, self._source_file)
-                data["file_path"] = dest
-                data["is_active"] = 1
-                self.db.update_sheet_music(new_id, data)
+            data["source_file"] = self._source_file or ""
+            self.db.add_sheet_music(data)
 
         self._result = "saved"
         self.destroy()
+
+    def _enrich_with_llm(self):
+        answer = Messagebox.yesno(
+            "An LLM will attempt to enrich the Classification fields and add "
+            "Comments. Previous data will be lost. Continue?",
+            title="Enrich with LLM",
+            parent=self,
+        )
+        if answer != "Yes":
+            return
+
+        title = self._vars["title"].get().strip()
+        if not title:
+            Messagebox.show_warning("Title is required to enrich.", title="Enrich with LLM", parent=self)
+            return
+
+        piece = {
+            "title": title,
+            "composer": self._vars["composer"].get().strip(),
+            "arranger": self._vars["arranger"].get().strip(),
+            "publisher": self._vars["publisher"].get().strip(),
+        }
+        if self._mode == "choir":
+            piece["voicing"] = self._vars.get("voicing", tk.StringVar()).get().strip()
+            piece["language"] = self._vars.get("language", tk.StringVar()).get().strip()
+            piece["accompaniment"] = self._vars.get("accompaniment", tk.StringVar()).get().strip()
+
+        self._enrich_btn.config(state=DISABLED, text="Enriching…")
+
+        def _run():
+            try:
+                if self._mode == "choir":
+                    from ui.music_importer import _enrich_piece_choir
+                    enriched = _enrich_piece_choir(piece, self.base_dir)
+                else:
+                    from ui.music_importer import _enrich_piece
+                    enriched = _enrich_piece(piece, self.base_dir)
+            except Exception as e:
+                self.after(0, self._on_enrich_done, None, str(e))
+                return
+            self.after(0, self._on_enrich_done, enriched, None)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _on_enrich_done(self, enriched, error):
+        self._enrich_btn.config(state=NORMAL, text="Enrich with LLM")
+        if error:
+            Messagebox.show_error(f"Enrichment failed:\n{error}", title="Enrich with LLM", parent=self)
+            return
+        if not enriched:
+            Messagebox.show_info("No enrichment data returned.", title="Enrich with LLM", parent=self)
+            return
+
+        # Apply only Classification fields — never touch Basic Information
+        if self._mode == "choir":
+            for form_key, enrich_key in [
+                ("genre",          "genre"),
+                ("voicing",        "voicing"),
+                ("difficulty",     "difficulty"),
+                ("key_signature",  "key_signature"),
+                ("language",       "language"),
+                ("accompaniment",  "accompaniment"),
+            ]:
+                val = str(enriched.get(enrich_key) or "").strip()
+                if val and form_key in self._vars:
+                    self._vars[form_key].set(val)
+        else:
+            for form_key, enrich_key in [
+                ("genre",           "genre"),
+                ("ensemble_type",   "ensemble_type"),
+                ("difficulty",      "difficulty"),
+                ("key_signature",   "key_signature"),
+                ("time_signature",  "time_signature"),
+            ]:
+                val = str(enriched.get(enrich_key) or "").strip()
+                if val:
+                    self._vars[form_key].set(val)
+
+        notes = str(enriched.get("comments") or enriched.get("notes") or "").strip()
+        if notes:
+            notes = notes.replace(" • ", "\n• ")
+            self._notes_text.delete("1.0", "end")
+            self._notes_text.insert("1.0", notes)
 
     def _mark_inactive(self):
         if Messagebox.yesno(

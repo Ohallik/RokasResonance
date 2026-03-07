@@ -13,6 +13,7 @@ from ui.settings_dialog import load_settings
 
 ENDPOINT = "https://models.github.ai/inference"
 DEFAULT_MODEL = "openai/gpt-4o"
+_ENRICH_MODEL = "claude-haiku-4-5-20251001"  # always use for enrichment (cheapest)
 
 ANTHROPIC_MODELS = [
     "claude-haiku-4-5-20251001",
@@ -66,6 +67,19 @@ _MODEL_BASE_DELAYS: dict[str, int] = {
     "gpt-4o-mini": 4,
 }
 _DEFAULT_BASE_DELAY = 6  # conservative fallback for unknown models
+
+# Music reference sites the web-search enrichment tool is allowed to query.
+_ENRICHMENT_SEARCH_DOMAINS = [
+    "windrep.org",
+    "jwpepper.com",
+    "sheetmusicplus.com",
+    "alfred.com",
+    "halleonard.com",
+    "fjhmusic.com",
+    "carlfischer.com",
+    "worldcat.org",
+    "imslp.org",
+]
 
 
 def _retry_delay(exc, attempt: int, model: str) -> float:
@@ -168,6 +182,66 @@ def _query_anthropic(base_dir: str, model: str, user_prompt: str,
     raise last_exc
 
 
+def _query_anthropic_with_search(base_dir: str, model: str, user_prompt: str,
+                                  system_prompt: str = None, on_retry=None,
+                                  max_uses: int = 1) -> str:
+    """Send a query via the Anthropic API with the built-in web search tool enabled.
+
+    The web_search_20250305 tool is executed server-side by Anthropic — no tool-use
+    loop required.  The response may contain multiple text blocks (reasoning, search
+    results, citations, final answer); we concatenate them all.
+    """
+    try:
+        from anthropic import Anthropic, RateLimitError, APIStatusError
+    except ImportError:
+        raise RuntimeError("Install the 'anthropic' package: pip install anthropic")
+
+    api_key = _get_anthropic_key(base_dir)
+    if not api_key:
+        raise ValueError(
+            "No Anthropic API key. Enter one in Settings → LLM (Anthropic API Key field)."
+        )
+
+    client = Anthropic(api_key=api_key)
+    kwargs = dict(
+        model=model,
+        max_tokens=2048,   # higher — search results consume tokens before the answer
+        messages=[{"role": "user", "content": user_prompt}],
+        tools=[{
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "max_uses": max_uses,
+            "allowed_domains": _ENRICHMENT_SEARCH_DOMAINS,
+        }],
+    )
+    if system_prompt:
+        kwargs["system"] = system_prompt
+
+    last_exc = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            resp = client.messages.create(**kwargs)
+            # Concatenate all text blocks (reasoning + citation text + final answer)
+            return "\n".join(
+                block.text for block in resp.content if hasattr(block, "text")
+            )
+        except RateLimitError as e:
+            last_exc = e
+            delay = _retry_delay(e, attempt, model)
+            if delay > 300:
+                raise RuntimeError(
+                    f"Rate limit for '{model}' — retry-after {int(delay)}s. "
+                    "Try later or switch to a different model in Settings."
+                ) from e
+            if attempt < _MAX_RETRIES - 1:
+                if on_retry:
+                    on_retry(attempt + 1, round(delay))
+                time.sleep(delay)
+        except APIStatusError:
+            raise
+    raise last_exc
+
+
 def _query_with_images_anthropic(base_dir: str, model: str, user_prompt: str,
                                   images: list, system_prompt: str = None,
                                   on_retry=None, max_tokens: int = 2048) -> str:
@@ -226,6 +300,69 @@ def _query_with_images_anthropic(base_dir: str, model: str, user_prompt: str,
     raise last_exc
 
 
+def _is_proxy_mode(base_dir: str) -> bool:
+    """True if the user has selected Claude Proxy as the backend."""
+    settings = load_settings(base_dir)
+    return (settings.get("llm") or {}).get("backend", "local") == "proxy"
+
+
+def _get_proxy_endpoint(base_dir: str) -> str:
+    settings = load_settings(base_dir)
+    return (settings.get("llm") or {}).get("proxy_endpoint", "").strip().rstrip("/")
+
+
+def _get_proxy_token(base_dir: str) -> str:
+    settings = load_settings(base_dir)
+    return (settings.get("llm") or {}).get("proxy_token", "").strip()
+
+
+def _query_proxy(base_dir: str, user_prompt: str, system_prompt: str = None,
+                 on_retry=None, images: list = None) -> str:
+    """Send a query through the Claude proxy (POST /api/chat)."""
+    try:
+        import httpx
+    except ImportError:
+        raise RuntimeError("Install the 'httpx' package: pip install httpx")
+
+    endpoint = _get_proxy_endpoint(base_dir)
+    token = _get_proxy_token(base_dir)
+    if not endpoint or not token:
+        raise ValueError(
+            "Claude Proxy not configured. Enter the endpoint and token in Settings → LLM."
+        )
+
+    body = {"message": user_prompt}
+    if system_prompt:
+        body["system"] = system_prompt
+    if images:
+        body["images"] = images  # list of {"mime_type": ..., "data": ...}
+
+    last_exc = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            resp = httpx.post(
+                f"{endpoint}/api/chat",
+                json=body,
+                headers={"x-proxy-token": token},
+                timeout=60,
+            )
+            if resp.status_code == 429:
+                delay = min(60 * (2 ** attempt), 300)
+                last_exc = RuntimeError(resp.json().get("error", "Rate limit exceeded"))
+                if attempt < _MAX_RETRIES - 1:
+                    if on_retry:
+                        on_retry(attempt + 1, round(delay))
+                    time.sleep(delay)
+                continue
+            resp.raise_for_status()
+            return resp.json()["reply"]
+        except Exception as e:
+            if "429" not in str(e):
+                raise
+            last_exc = e
+    raise last_exc
+
+
 def _get_model(base_dir: str) -> str:
     settings = load_settings(base_dir)
     return (settings.get("llm") or {}).get("model", DEFAULT_MODEL)
@@ -240,9 +377,12 @@ def query(base_dir: str, user_prompt: str, system_prompt: str = None, on_retry=N
     """
     Send a single query to the LLM and return the response text.
 
-    Automatically routes to Anthropic API for claude-* models, GitHub Models for all others.
-    Retries up to _MAX_RETRIES times on rate-limit (429) errors.
+    Automatically routes to Claude Proxy, Anthropic API, or GitHub Models
+    based on settings. Retries up to _MAX_RETRIES times on rate-limit errors.
     """
+    if _is_proxy_mode(base_dir):
+        return _query_proxy(base_dir, user_prompt, system_prompt, on_retry)
+
     model = _get_model(base_dir)
     if _is_anthropic_model(model):
         return _query_anthropic(base_dir, model, user_prompt, system_prompt, on_retry)
@@ -300,6 +440,43 @@ def query(base_dir: str, user_prompt: str, system_prompt: str = None, on_retry=N
     raise last_exc
 
 
+def query_with_search(base_dir: str, user_prompt: str,
+                      system_prompt: str = None, on_retry=None) -> str:
+    """
+    Send a query with live web search capability.
+
+    For Anthropic/Claude models: uses the built-in web_search_20250305 tool
+    (server-side, domains restricted to music reference sites).
+    For GitHub Models: falls back to regular query() — no web search available.
+    """
+    model = _get_model(base_dir)
+    if _is_anthropic_model(model):
+        return _query_anthropic_with_search(base_dir, model, user_prompt,
+                                            system_prompt, on_retry)
+    # GitHub Models don't support the Anthropic web search tool
+    return query(base_dir, user_prompt, system_prompt, on_retry)
+
+
+def query_haiku(base_dir: str, user_prompt: str,
+                system_prompt: str = None, on_retry=None) -> str:
+    """Query using Haiku regardless of selected model. Cheapest text-only option.
+    In proxy mode, routes through the proxy instead (model fixed to sonnet on proxy side)."""
+    if _is_proxy_mode(base_dir):
+        return _query_proxy(base_dir, user_prompt, system_prompt, on_retry)
+    return _query_anthropic(base_dir, _ENRICH_MODEL, user_prompt, system_prompt, on_retry)
+
+
+def query_haiku_with_search(base_dir: str, user_prompt: str,
+                             system_prompt: str = None, on_retry=None) -> str:
+    """Haiku + 1 web search. Cheapest web-search option for enrichment.
+    In proxy mode, falls back to plain proxy query (web search not available via proxy)."""
+    if _is_proxy_mode(base_dir):
+        return _query_proxy(base_dir, user_prompt, system_prompt, on_retry)
+    return _query_anthropic_with_search(
+        base_dir, _ENRICH_MODEL, user_prompt, system_prompt, on_retry, max_uses=1
+    )
+
+
 def query_with_images(
     base_dir: str,
     user_prompt: str,
@@ -315,8 +492,11 @@ def query_with_images(
         "mime_type"  - e.g. "image/png", "image/jpeg"
         "data"       - base64-encoded image bytes (str)
 
-    Automatically routes to Anthropic API for claude-* models, GitHub Models for all others.
+    Routes to Claude Proxy, Anthropic API, or GitHub Models based on settings.
     """
+    if _is_proxy_mode(base_dir):
+        return _query_proxy(base_dir, user_prompt, system_prompt, on_retry, images=images)
+
     model = _get_model(base_dir)
     if _is_anthropic_model(model):
         return _query_with_images_anthropic(base_dir, model, user_prompt, images, system_prompt, on_retry, max_tokens)
@@ -382,7 +562,9 @@ def query_with_images(
 
 
 def is_configured(base_dir: str) -> bool:
-    """Return True if an API key is available for the currently selected model."""
+    """Return True if the LLM backend is configured and ready to use."""
+    if _is_proxy_mode(base_dir):
+        return bool(_get_proxy_endpoint(base_dir) and _get_proxy_token(base_dir))
     model = _get_model(base_dir)
     if _is_anthropic_model(model):
         return bool(_get_anthropic_key(base_dir))

@@ -89,9 +89,12 @@ class SettingsDialog(ttk.Toplevel):
         ttk.Label(hdr, text="  Settings", font=("Segoe UI", 13, "bold"),
                   bootstyle=(INVERSE, SECONDARY)).pack(pady=12, padx=16, anchor=W)
 
-        # Notebook — Display tab first
+        # Notebook — Teacher tab first
         nb = ttk.Notebook(self, bootstyle=SECONDARY)
         nb.pack(fill=BOTH, expand=True, padx=12, pady=(10, 0))
+
+        teacher_tab = ttk.Frame(nb)
+        nb.add(teacher_tab, text="  Teacher  ")
 
         display_tab = ttk.Frame(nb)
         nb.add(display_tab, text="  Display  ")
@@ -102,6 +105,7 @@ class SettingsDialog(ttk.Toplevel):
         backup_tab = ttk.Frame(nb)
         nb.add(backup_tab, text="  Backup  ")
 
+        self._build_teacher_tab(teacher_tab)
         self._build_display_tab(display_tab)
         self._build_llm_tab(llm_tab)
         self._build_backup_tab(backup_tab)
@@ -116,16 +120,72 @@ class SettingsDialog(ttk.Toplevel):
         self._test_btn = ttk.Button(btn_frame, text="Test Connection",
                                     bootstyle=(INFO, OUTLINE),
                                     command=self._test_connection)
-        # Show/hide Test Connection based on active tab
+        # Show/hide Test Connection based on active tab (LLM is now index 2)
         def _on_tab_change(event):
             idx = nb.index(nb.select())
-            if idx == 1:  # LLM Configuration tab
+            if idx == 2:  # LLM Configuration tab
                 self._test_btn.pack(side=LEFT, padx=4)
             else:
                 self._test_btn.pack_forget()
         nb.bind("<<NotebookTabChanged>>", _on_tab_change)
         self._nb = nb
-        # Display tab is first — button starts hidden
+        # Teacher tab is first — button starts hidden
+
+    def _build_teacher_tab(self, parent):
+        outer = ttk.Frame(parent)
+        outer.pack(fill=BOTH, expand=True, padx=20, pady=14)
+
+        ttk.Label(outer, text="Program Type",
+                  font=("Segoe UI", 10, "bold")).pack(anchor=W)
+        ttk.Label(
+            outer,
+            text="Select the type of music program you teach. "
+                 "The Music Manager will load the appropriate repertoire library for your program.",
+            font=("Segoe UI", 9), foreground="#888",
+            wraplength=460, justify=LEFT,
+        ).pack(anchor=W, pady=(2, 12))
+
+        self._program_type_var = tk.StringVar(value="band")
+
+        for value, label, desc in [
+            ("band",  "Band",  "Concert band, jazz band, and marching band repertoire."),
+            ("choir", "Choir", "Choral and vocal ensemble repertoire."),
+        ]:
+            row = ttk.Frame(outer)
+            row.pack(fill=X, pady=3)
+            ttk.Radiobutton(
+                row, text=label, value=value,
+                variable=self._program_type_var,
+                bootstyle=PRIMARY,
+            ).pack(side=LEFT, padx=(0, 10))
+            ttk.Label(row, text=desc, font=("Segoe UI", 8),
+                      foreground="#888").pack(side=LEFT)
+
+        ttk.Separator(outer, orient=HORIZONTAL).pack(fill=X, pady=(14, 12))
+
+        ttk.Label(outer, text="External Database",
+                  font=("Segoe UI", 10, "bold")).pack(anchor=W)
+        ttk.Label(
+            outer,
+            text="Select a Roka's Resonance database (.db) from another profile to "
+                 "view its music library as a read-only source in the Band Music Manager.",
+            font=("Segoe UI", 9), foreground="#888",
+            wraplength=460, justify=LEFT,
+        ).pack(anchor=W, pady=(2, 8))
+
+        self._ext_db_var = tk.StringVar()
+        ext_db_row = ttk.Frame(outer)
+        ext_db_row.pack(fill=X, pady=(0, 4))
+        self._ext_db_entry = ttk.Entry(ext_db_row, textvariable=self._ext_db_var,
+                                       state="readonly", width=34)
+        self._ext_db_entry.pack(side=LEFT, fill=X, expand=True)
+        ttk.Button(ext_db_row, text="Browse…", bootstyle=(SECONDARY, OUTLINE),
+                   command=self._browse_external_db).pack(side=LEFT, padx=(6, 0))
+        ttk.Button(ext_db_row, text="Clear", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: self._ext_db_var.set("")).pack(side=LEFT, padx=(4, 0))
+
+        ttk.Label(outer, text="Leave blank to use only your own database.",
+                  font=("Segoe UI", 8), foreground="#aaa").pack(anchor=W, pady=(2, 0))
 
     def _build_display_tab(self, parent):
         from ui.theme import DISPLAY_THEMES, THEME_DESCRIPTIONS
@@ -199,113 +259,153 @@ class SettingsDialog(ttk.Toplevel):
         outer = ttk.Frame(parent)
         outer.pack(fill=BOTH, expand=True, padx=20, pady=14)
 
-        # Description
-        ttk.Label(
-            outer,
-            text="Supports GitHub Models (GPT, Llama, Mistral, Phi) and Anthropic (Claude). "
-                 "Select a model below — the correct backend is used automatically.",
-            font=("Segoe UI", 9),
-            foreground="#555",
-            wraplength=460,
-            justify=LEFT,
-        ).pack(anchor=W, pady=(0, 8))
+        # ── Backend toggle ────────────────────────────────────────────────
+        ttk.Label(outer, text="AI Backend",
+                  font=("Segoe UI", 10, "bold")).pack(anchor=W)
 
-        ttk.Separator(outer, orient=HORIZONTAL).pack(fill=X, pady=(0, 10))
+        self._backend_var = tk.StringVar(value="local")
 
-        # ── GitHub API Key ────────────────────────────────────────────────
-        ttk.Label(outer, text="GitHub API Key  (for GPT, Llama, Mistral, Phi models)",
-                  font=("Segoe UI", 9, "bold")).pack(anchor=W)
+        backend_frame = ttk.Frame(outer)
+        backend_frame.pack(fill=X, pady=(4, 0))
+
+        ttk.Radiobutton(
+            backend_frame, text="Local API Keys",
+            variable=self._backend_var, value="local",
+            bootstyle=PRIMARY,
+            command=self._on_backend_change,
+        ).pack(side=LEFT, padx=(0, 16))
+        ttk.Radiobutton(
+            backend_frame, text="Claude Proxy",
+            variable=self._backend_var, value="proxy",
+            bootstyle=PRIMARY,
+            command=self._on_backend_change,
+        ).pack(side=LEFT)
+
+        ttk.Separator(outer, orient=HORIZONTAL).pack(fill=X, pady=(10, 0))
+
+        # ── Local API Keys section ────────────────────────────────────────
+        self._local_frame = ttk.Frame(outer)
+
+        ttk.Label(self._local_frame,
+                  text="GitHub API Key  (for GPT, Llama, Mistral, Phi models)",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 0))
 
         saved_key = (self._settings.get("llm") or {}).get("api_key", "").strip()
         env_key = os.environ.get("GITHUB_TOKEN", "")
         if saved_key:
-            env_note = "Key saved in settings below."
-            env_color = "#2a7a2a"
+            env_note, env_color = "Key saved in settings below.", "#2a7a2a"
         elif env_key:
-            env_note = f"GITHUB_TOKEN env var is set ({len(env_key)} chars) — used as fallback if field is empty."
+            env_note = f"GITHUB_TOKEN env var is set ({len(env_key)} chars) — used as fallback."
             env_color = "#2a7a2a"
         else:
-            env_note = "No key saved. Enter your GitHub personal access token."
-            env_color = "#888"
+            env_note, env_color = "No key saved. Enter your GitHub personal access token.", "#888"
 
-        ttk.Label(outer, text=env_note, font=("Segoe UI", 8),
+        ttk.Label(self._local_frame, text=env_note, font=("Segoe UI", 8),
                   foreground=env_color, wraplength=460).pack(anchor=W, pady=(0, 4))
 
-        key_row = ttk.Frame(outer)
+        key_row = ttk.Frame(self._local_frame)
         key_row.pack(fill=X, pady=(0, 10))
-
         self._key_var = tk.StringVar()
         self._key_entry = ttk.Entry(key_row, textvariable=self._key_var,
                                     show="•", width=44)
         self._key_entry.pack(side=LEFT, fill=X, expand=True)
-
         self._toggle_btn = ttk.Button(
             key_row, text="Show", bootstyle=(SECONDARY, OUTLINE), width=6,
-            command=self._toggle_key_visibility
-        )
+            command=self._toggle_key_visibility)
         self._toggle_btn.pack(side=LEFT, padx=(6, 0))
 
-        ttk.Separator(outer, orient=HORIZONTAL).pack(fill=X, pady=(0, 10))
+        ttk.Separator(self._local_frame, orient=HORIZONTAL).pack(fill=X, pady=(0, 10))
 
-        # ── Anthropic API Key ─────────────────────────────────────────────
-        ttk.Label(outer, text="Anthropic API Key  (for Claude models)",
+        ttk.Label(self._local_frame, text="Anthropic API Key  (for Claude models)",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W)
 
-        saved_anthropic_key = (self._settings.get("llm") or {}).get("anthropic_api_key", "").strip()
-        anthropic_note = "Key saved in settings below." if saved_anthropic_key else \
+        saved_ak = (self._settings.get("llm") or {}).get("anthropic_api_key", "").strip()
+        ak_note = "Key saved in settings below." if saved_ak else \
             "No key saved. Get a free key at console.anthropic.com (5 RPM free tier)."
-        anthropic_color = "#2a7a2a" if saved_anthropic_key else "#888"
+        ak_color = "#2a7a2a" if saved_ak else "#888"
+        ttk.Label(self._local_frame, text=ak_note, font=("Segoe UI", 8),
+                  foreground=ak_color, wraplength=460).pack(anchor=W, pady=(0, 4))
 
-        ttk.Label(outer, text=anthropic_note, font=("Segoe UI", 8),
-                  foreground=anthropic_color, wraplength=460).pack(anchor=W, pady=(0, 4))
-
-        anthropic_key_row = ttk.Frame(outer)
+        anthropic_key_row = ttk.Frame(self._local_frame)
         anthropic_key_row.pack(fill=X, pady=(0, 10))
-
         self._anthropic_key_var = tk.StringVar()
         self._anthropic_key_entry = ttk.Entry(anthropic_key_row,
                                               textvariable=self._anthropic_key_var,
                                               show="•", width=44)
         self._anthropic_key_entry.pack(side=LEFT, fill=X, expand=True)
-
         self._anthropic_toggle_btn = ttk.Button(
             anthropic_key_row, text="Show", bootstyle=(SECONDARY, OUTLINE), width=6,
-            command=self._toggle_anthropic_key_visibility
-        )
+            command=self._toggle_anthropic_key_visibility)
         self._anthropic_toggle_btn.pack(side=LEFT, padx=(6, 0))
 
-        ttk.Separator(outer, orient=HORIZONTAL).pack(fill=X, pady=(0, 10))
+        ttk.Separator(self._local_frame, orient=HORIZONTAL).pack(fill=X, pady=(0, 10))
 
-        # ── Model section ─────────────────────────────────────────────────
-        ttk.Label(outer, text="Model",
+        ttk.Label(self._local_frame, text="Model",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W)
-
         self._model_hint = ttk.Label(
-            outer,
+            self._local_frame,
             text="Claude models use Anthropic key. All others use GitHub key.",
-            font=("Segoe UI", 8), foreground="#888"
-        )
+            font=("Segoe UI", 8), foreground="#888")
         self._model_hint.pack(anchor=W, pady=(0, 4))
 
-        model_row = ttk.Frame(outer)
+        model_row = ttk.Frame(self._local_frame)
         model_row.pack(fill=X, pady=(0, 14))
-
         all_models = ANTHROPIC_MODELS + GITHUB_MODELS
         self._model_var = tk.StringVar(value=all_models[0])
         self._model_combo = ttk.Combobox(model_row, textvariable=self._model_var,
                                          values=all_models, width=34)
         self._model_combo.pack(side=LEFT)
-
         self._fetch_btn = ttk.Button(
             model_row, text="Fetch GitHub Models", bootstyle=(SECONDARY, OUTLINE),
-            command=self._fetch_models
-        )
+            command=self._fetch_models)
         self._fetch_btn.pack(side=LEFT, padx=(6, 0))
 
-        # Status area
+        # ── Claude Proxy section ──────────────────────────────────────────
+        self._proxy_frame = ttk.Frame(outer)
+
+        ttk.Label(self._proxy_frame,
+                  text="Proxy Endpoint",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 0))
+        ttk.Label(self._proxy_frame,
+                  text="The base URL of your deployed proxy (e.g. https://your-app.railway.app)",
+                  font=("Segoe UI", 8), foreground="#888").pack(anchor=W, pady=(0, 4))
+        self._proxy_endpoint_var = tk.StringVar()
+        ttk.Entry(self._proxy_frame, textvariable=self._proxy_endpoint_var,
+                  width=50).pack(fill=X, pady=(0, 10))
+
+        ttk.Separator(self._proxy_frame, orient=HORIZONTAL).pack(fill=X, pady=(0, 10))
+
+        ttk.Label(self._proxy_frame, text="Proxy Token",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W)
+        ttk.Label(self._proxy_frame,
+                  text="The secret token required by your proxy (x-proxy-token).",
+                  font=("Segoe UI", 8), foreground="#888").pack(anchor=W, pady=(0, 4))
+        proxy_token_row = ttk.Frame(self._proxy_frame)
+        proxy_token_row.pack(fill=X, pady=(0, 14))
+        self._proxy_token_var = tk.StringVar()
+        self._proxy_token_entry = ttk.Entry(proxy_token_row,
+                                            textvariable=self._proxy_token_var,
+                                            show="•", width=44)
+        self._proxy_token_entry.pack(side=LEFT, fill=X, expand=True)
+        self._proxy_token_toggle_btn = ttk.Button(
+            proxy_token_row, text="Show", bootstyle=(SECONDARY, OUTLINE), width=6,
+            command=self._toggle_proxy_token_visibility)
+        self._proxy_token_toggle_btn.pack(side=LEFT, padx=(6, 0))
+        self._show_proxy_token = False
+
+        ttk.Label(self._proxy_frame,
+                  text="Note: Import Music (vision) routes through the proxy when enabled. "
+                       "Text enrichment and chat also use the proxy.",
+                  font=("Segoe UI", 8), foreground="#888",
+                  wraplength=460, justify=LEFT).pack(anchor=W, pady=(0, 8))
+
+        # Status area (shared)
         self._status_frame = ttk.Frame(outer)
-        self._status_frame.pack(fill=X)
+        self._status_frame.pack(fill=X, side=BOTTOM)
         self._refresh_status()
+
+        # Show correct section for current backend
+        self._on_backend_change()
 
     def _build_backup_tab(self, parent):
         outer = ttk.Frame(parent)
@@ -369,6 +469,18 @@ class SettingsDialog(ttk.Toplevel):
 
     # ───────────────────────────────────────────────────── Logic ───────────
 
+    def _browse_external_db(self):
+        path = filedialog.askopenfilename(
+            title="Select External Database",
+            parent=self,
+            initialdir=os.path.expanduser("~"),
+            filetypes=[("Database files", "*.db"), ("All files", "*.*")],
+        )
+        if path:
+            self._ext_db_entry.config(state="normal")
+            self._ext_db_var.set(path)
+            self._ext_db_entry.config(state="readonly")
+
     def _browse_backup_folder(self):
         folder = filedialog.askdirectory(
             title="Choose External Backup Folder",
@@ -423,16 +535,40 @@ class SettingsDialog(ttk.Toplevel):
     def _refresh_status(self):
         for w in self._status_frame.winfo_children():
             w.destroy()
-        saved_key = (self._settings.get("llm") or {}).get("api_key", "").strip()
-        env_key = os.environ.get("GITHUB_TOKEN", "")
-        if saved_key:
-            msg, style = "Custom API key configured.", SUCCESS
-        elif env_key:
-            msg, style = "Using GITHUB_TOKEN from environment.", INFO
+        backend = getattr(self, "_backend_var", None)
+        if backend and backend.get() == "proxy":
+            endpoint = self._proxy_endpoint_var.get().strip()
+            token = self._proxy_token_var.get().strip()
+            if endpoint and token:
+                msg, style = "Claude Proxy configured.", SUCCESS
+            else:
+                msg, style = "Claude Proxy selected — enter endpoint and token.", WARNING
         else:
-            msg, style = "No API key available — AI features disabled.", WARNING
+            saved_key = (self._settings.get("llm") or {}).get("api_key", "").strip()
+            env_key = os.environ.get("GITHUB_TOKEN", "")
+            if saved_key:
+                msg, style = "Custom API key configured.", SUCCESS
+            elif env_key:
+                msg, style = "Using GITHUB_TOKEN from environment.", INFO
+            else:
+                msg, style = "No API key available — AI features disabled.", WARNING
         ttk.Label(self._status_frame, text=msg, font=("Segoe UI", 8),
                   bootstyle=style).pack(anchor=W)
+
+    def _on_backend_change(self):
+        if self._backend_var.get() == "proxy":
+            self._local_frame.pack_forget()
+            self._proxy_frame.pack(fill=X)
+        else:
+            self._proxy_frame.pack_forget()
+            self._local_frame.pack(fill=X)
+        self._refresh_status()
+
+    def _toggle_proxy_token_visibility(self):
+        self._show_proxy_token = not self._show_proxy_token
+        self._proxy_token_entry.config(show="" if self._show_proxy_token else "•")
+        self._proxy_token_toggle_btn.config(
+            text="Hide" if self._show_proxy_token else "Show")
 
     def _toggle_key_visibility(self):
         self._show_key = not self._show_key
@@ -445,10 +581,21 @@ class SettingsDialog(ttk.Toplevel):
         self._anthropic_toggle_btn.config(text="Hide" if self._show_anthropic_key else "Show")
 
     def _load(self):
+        # Teacher settings
+        teacher = self._settings.get("teacher") or {}
+        self._program_type_var.set(teacher.get("program_type", "band"))
+        ext_path = teacher.get("external_db_path", "")
+        self._ext_db_entry.config(state="normal")
+        self._ext_db_var.set(ext_path)
+        self._ext_db_entry.config(state="readonly")
+
         # LLM settings
         llm = self._settings.get("llm") or {}
+        self._backend_var.set(llm.get("backend", "local"))
         self._key_var.set(llm.get("api_key", ""))
         self._anthropic_key_var.set(llm.get("anthropic_api_key", ""))
+        self._proxy_endpoint_var.set(llm.get("proxy_endpoint", ""))
+        self._proxy_token_var.set(llm.get("proxy_token", ""))
         all_models = ANTHROPIC_MODELS + GITHUB_MODELS
         model = llm.get("model", all_models[0])
         current_vals = list(self._model_combo["values"])
@@ -456,6 +603,7 @@ class SettingsDialog(ttk.Toplevel):
             current_vals.insert(0, model)
             self._model_combo["values"] = current_vals
         self._model_var.set(model)
+        self._on_backend_change()
 
         # Display settings
         from ui.theme import DISPLAY_THEMES
@@ -483,11 +631,19 @@ class SettingsDialog(ttk.Toplevel):
         if not model:
             model = (ANTHROPIC_MODELS + GITHUB_MODELS)[0]
 
+        if "teacher" not in self._settings:
+            self._settings["teacher"] = {}
+        self._settings["teacher"]["program_type"] = self._program_type_var.get()
+        self._settings["teacher"]["external_db_path"] = self._ext_db_var.get().strip()
+
         if "llm" not in self._settings:
             self._settings["llm"] = {}
+        self._settings["llm"]["backend"] = self._backend_var.get()
         self._settings["llm"]["api_key"] = api_key
         self._settings["llm"]["anthropic_api_key"] = anthropic_key
         self._settings["llm"]["model"] = model
+        self._settings["llm"]["proxy_endpoint"] = self._proxy_endpoint_var.get().strip().rstrip("/")
+        self._settings["llm"]["proxy_token"] = self._proxy_token_var.get().strip()
 
         # Display settings
         chosen_theme_name = self._theme_var.get()
@@ -609,7 +765,41 @@ class SettingsDialog(ttk.Toplevel):
         )
 
     def _test_connection(self):
-        """Attempt a minimal query using the currently selected model and key."""
+        """Attempt a minimal query using the current backend settings."""
+        import threading
+
+        if self._backend_var.get() == "proxy":
+            endpoint = self._proxy_endpoint_var.get().strip().rstrip("/")
+            token = self._proxy_token_var.get().strip()
+            if not endpoint or not token:
+                Messagebox.show_warning(
+                    "Enter both the proxy endpoint and token.",
+                    title="Missing Fields", parent=self)
+                return
+
+            def _run_proxy():
+                try:
+                    import httpx
+                    resp = httpx.post(
+                        f"{endpoint}/api/chat",
+                        json={"message": "Reply with just the word OK."},
+                        headers={"x-proxy-token": token},
+                        timeout=20,
+                    )
+                    resp.raise_for_status()
+                    reply = resp.json().get("reply", "").strip()
+                    self.after(0, lambda: Messagebox.show_info(
+                        f"Proxy connection successful!\nEndpoint: {endpoint}\nResponse: {reply}",
+                        title="Test Passed", parent=self))
+                except Exception as e:
+                    err = str(e)
+                    self.after(0, lambda: Messagebox.show_error(
+                        f"Proxy connection failed:\n{err}", title="Test Failed", parent=self))
+
+            threading.Thread(target=_run_proxy, daemon=True).start()
+            return
+
+        # Local API key test
         model = self._model_var.get().strip() or (ANTHROPIC_MODELS + GITHUB_MODELS)[0]
         is_claude = model.startswith("claude-")
 
@@ -618,8 +808,7 @@ class SettingsDialog(ttk.Toplevel):
             if not api_key:
                 Messagebox.show_warning(
                     "No Anthropic API key. Enter one in the Anthropic API Key field.",
-                    title="No Key", parent=self
-                )
+                    title="No Key", parent=self)
                 return
         else:
             api_key = self._key_var.get().strip() or os.environ.get("GITHUB_TOKEN", "")
@@ -627,11 +816,8 @@ class SettingsDialog(ttk.Toplevel):
                 Messagebox.show_warning(
                     "No GitHub API key available. Enter a key or set the GITHUB_TOKEN "
                     "environment variable.",
-                    title="No Key", parent=self
-                )
+                    title="No Key", parent=self)
                 return
-
-        import threading
 
         def _run():
             try:
@@ -639,8 +825,7 @@ class SettingsDialog(ttk.Toplevel):
                     from anthropic import Anthropic
                     client = Anthropic(api_key=api_key)
                     resp = client.messages.create(
-                        model=model,
-                        max_tokens=10,
+                        model=model, max_tokens=10,
                         messages=[{"role": "user", "content": "Reply with just the word OK."}],
                     )
                     reply = resp.content[0].text.strip()
@@ -655,12 +840,10 @@ class SettingsDialog(ttk.Toplevel):
                     reply = response.choices[0].message.content.strip()
                 self.after(0, lambda: Messagebox.show_info(
                     f"Connection successful!\nModel: {model}\nResponse: {reply}",
-                    title="Test Passed", parent=self
-                ))
+                    title="Test Passed", parent=self))
             except Exception as e:
                 err = str(e)
                 self.after(0, lambda: Messagebox.show_error(
-                    f"Connection failed:\n{err}", title="Test Failed", parent=self
-                ))
+                    f"Connection failed:\n{err}", title="Test Failed", parent=self))
 
         threading.Thread(target=_run, daemon=True).start()

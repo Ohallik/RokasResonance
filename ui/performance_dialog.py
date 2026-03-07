@@ -13,24 +13,30 @@ ENSEMBLE_OPTIONS = [
     "Small Ensemble", "Solo", "Marching Band", "Other",
 ]
 
+CHOIR_ENSEMBLE_OPTIONS = [
+    "Concert Choir", "Chamber Choir", "Women's Choir", "Men's Choir",
+    "Full Choir", "Small Ensemble", "Solo", "Other",
+]
+
 
 class PerformanceDialog(ttk.Toplevel):
-    def __init__(self, parent, db, music_id: int, performance_id=None):
+    def __init__(self, parent, db, music_id: int, performance_id=None, mode="band"):
         super().__init__(parent)
         self.db = db
         self.music_id = music_id
         self.performance_id = performance_id
+        self._mode = mode
         self.saved = False
 
         title = "Edit Performance" if performance_id else "Add Performance"
         self.title(title)
-        self.geometry("440x380")
+        self.geometry("440x440")
         self.resizable(False, False)
         self.grab_set()
 
         self.update_idletasks()
         x = (self.winfo_screenwidth() - 440) // 2
-        y = (self.winfo_screenheight() - 380) // 2
+        y = (self.winfo_screenheight() - 440) // 2
         self.geometry(f"+{x}+{y}")
 
         self._vars = {}
@@ -61,7 +67,8 @@ class PerformanceDialog(ttk.Toplevel):
         ttk.Label(f, text="Ensemble", font=("Segoe UI", 9)).pack(anchor=W)
         var = tk.StringVar()
         self._vars["ensemble"] = var
-        ttk.Combobox(f, textvariable=var, values=ENSEMBLE_OPTIONS, width=30).pack(
+        opts = CHOIR_ENSEMBLE_OPTIONS if self._mode == "choir" else ENSEMBLE_OPTIONS
+        ttk.Combobox(f, textvariable=var, values=opts, width=30).pack(
             anchor=W, pady=(2, 0)
         )
 

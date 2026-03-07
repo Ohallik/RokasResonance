@@ -9,7 +9,7 @@ TABLE OF CONTENTS
   2. Instrument Inventory Manager
   3. Student Manager
   4. Active Checkouts
-  5. Music Manager
+  5. Music Manager (Band & Choir)
   6. Music Importer (Import Music)
   7. LLM Validation (Validate with LLM)
   8. Ask Reginald (AI Assistant)
@@ -26,11 +26,18 @@ The main menu is the hub of the application. It shows a live
 summary of your program and provides access to all features.
 
 STATS BAR
-  Displayed across the top of the main menu:
-    Total Instruments  — total active instruments in the database
-    Available          — instruments not currently checked out
-    Checked Out        — instruments currently assigned to students
-    In Repair          — instruments marked as in-repair
+  Displayed across the top of the main menu.
+
+  Band mode:
+    Checked Out / Total  — instruments currently checked out
+                           out of total active instruments
+    In Repair            — instruments marked as in-repair
+    Pieces of Music      — total pieces in your music library
+
+  Choir mode:
+    Students (This Year) — total students enrolled in the
+                           current school year
+    Pieces of Music      — total pieces in your choir music library
 
   These numbers update automatically when you return to the
   main menu after making changes.
@@ -49,8 +56,11 @@ NAVIGATION BUTTONS
     who has it, and when it was assigned.
 
   Music Manager
-    Opens the sheet music library. Manage pieces, run OMR
-    (optical music recognition), and validate metadata with AI.
+    Opens the sheet music library for your program type.
+    - Band: tracks ensemble type, genre, key, time signature.
+    - Choir: tracks voicing, language, accompaniment, genre.
+    The window title shows "Music Manager" (band) or
+    "Choir Music Manager" (choir).
 
 FOOTER LINKS
   Switch Profile
@@ -59,8 +69,8 @@ FOOTER LINKS
     Each profile has its own completely separate database.
 
   Settings
-    Opens the Settings dialog to configure your AI API keys,
-    select your LLM model, and adjust application preferences.
+    Opens the Settings dialog to configure your program type,
+    AI API keys, color scheme, and backup folder.
 
 
 ================================================================
@@ -258,21 +268,32 @@ the "Check In" button.
 
 
 ================================================================
-5. MUSIC MANAGER
+5. MUSIC MANAGER (BAND & CHOIR)
 ================================================================
 
 Accessed via: Main Menu > "Music Manager"
 
-The Music Manager is the hub for your sheet music library.
+The Music Manager adapts to your program type. In band mode
+it is titled "Music Manager"; in choir mode it is titled
+"Choir Music Manager." Metadata fields, column labels, and
+AI prompts all change accordingly.
 
 TOOLBAR BUTTONS
   Add Music
     Opens the Add Sheet Music dialog to add a single piece
-    manually. Fields:
+    manually.
+
+    Band fields:
       Title, Composer, Arranger, Genre, Ensemble Type,
       Difficulty (1-6 grade scale), Key Signature,
       Time Signature, Publisher, Location, Notes
       File — attach the actual sheet music file (PDF, etc.)
+
+    Choir fields:
+      Title, Composer, Arranger, Genre, Voicing
+      (SATB / SSA / SAB / TTBB / etc.), Difficulty,
+      Key Signature, Language, Accompaniment,
+      Publisher, Location, Notes, File
 
   Import Music
     Opens the AI-powered Music Importer (see Section 6).
@@ -309,32 +330,24 @@ TOOLBAR BUTTONS
 
 SEARCH AND FILTER BAR
   Search         — filter by title, composer, arranger, genre,
-                   ensemble type, key signature, time signature,
-                   or location. Updates live as you type.
-  Genre filter   — filter by genre (Jazz, Classical, Pop/Rock, etc.)
-  Location filter— filter by physical storage location
+                   key signature, or location. Updates live.
+
+  Band:   Genre filter, Ensemble Type filter
+  Choir:  Genre filter, Voicing filter
+
   Columns dropdown — show/hide individual columns
 
   Count label (right side)
     Shows matching pieces vs. total in library.
 
 MUSIC LIST (LEFT PANEL)
-  Columns:
-    Title         Piece title (sortable)
-    Composer      Composer name
-    Arranger      Arranger name (if applicable)
-    Ensemble      Ensemble type (Concert Band, Jazz Band, etc.)
-    Genre         Musical genre
-    Difficulty    Numeric grade level (1=easiest, 6=hardest)
-    Key           Key signature
-    Time Sig      Time signature
-    Location      Physical storage location (default: Chinook Middle School)
-    Last Played   Date of most recent performance record
-    Type          File type (PDF, etc.) if a file is attached
-    Source File   Filename of the photo used to import this piece
-                  (hidden by default; enable via Columns dropdown)
-                  Double-click a row in this column to open
-                  the source image file.
+  Band columns:
+    Title, Composer, Arranger, Ensemble, Genre, Difficulty,
+    Key, Time Sig, Location, Last Played, Type, Source File
+
+  Choir columns:
+    Title, Composer, Arranger, Voicing, Genre, Difficulty,
+    Key, Language, Location, Last Played, Type, Source File
 
   Click any column header to sort.
   Double-click a row to open the Edit dialog (except on the
@@ -342,6 +355,13 @@ MUSIC LIST (LEFT PANEL)
 
   Status bar (bottom left): shows total pieces in library.
   When pieces are selected: shows "X pieces in inventory • Y selected."
+
+PERFORMANCES TAB (DETAIL PANEL)
+  Record every time a piece was performed:
+  Date, Ensemble/Choir group, Event Name, Notes.
+
+  Band ensemble options: Concert Band, Jazz Band, etc.
+  Choir ensemble options: Concert Choir, Chamber Choir, etc.
 
 DETAIL PANEL (RIGHT PANEL)
   Three tabs:
@@ -360,6 +380,7 @@ DETAIL PANEL (RIGHT PANEL)
 
 ASK REGINALD BUTTON (bottom right)
   Opens the AI chat assistant with the selected piece as context.
+  Reginald is choir-aware in Choir Music Manager mode.
 
 
 ================================================================
@@ -370,7 +391,9 @@ Accessed via: Music Manager > "Import Music"
 
 The Music Importer uses AI vision to read sheet music cover
 photos and extract metadata (title, composer, arranger, etc.)
-automatically.
+automatically. The fields extracted adapt to your program type:
+band extracts ensemble type and time signature; choir extracts
+voicing, language, and accompaniment.
 
 HOW TO USE IT
   1. Click "Add Images" to select one or more photos of your
@@ -381,8 +404,8 @@ HOW TO USE IT
   3. Click "Run Import" to start processing.
      - The AI reads each image and identifies every piece visible.
      - For each piece found, it looks up additional metadata
-       (genre, difficulty, key, time signature) using its
-       knowledge base.
+       from its knowledge base (genre, difficulty, key, voicing
+       for choir or ensemble/time sig for band).
      - Pieces already in your database are skipped automatically.
   4. When complete, the results panel shows the extracted pieces
      with all their detected fields.
@@ -432,11 +455,15 @@ WHAT IT DOES
     location will get a suggestion to correct it.
 
   Phase 4 — Text Enrichment
-    For pieces missing fields like difficulty, key signature,
-    time signature, genre, or ensemble type — and for any piece
-    whose title/composer/arranger was corrected in Phase 1 —
-    the AI looks up the metadata from its knowledge base and
-    suggests filling in the blanks.
+    For pieces missing key fields — and for any piece whose
+    title/composer/arranger was corrected in Phase 1 — the AI
+    looks up the metadata from its knowledge base and suggests
+    filling in the blanks.
+
+    Band: fills difficulty, key signature, time signature,
+          genre, ensemble type.
+    Choir: fills difficulty, key signature, voicing, language,
+           accompaniment, genre.
 
 REVIEWING SUGGESTIONS
   When validation completes, click "Review Suggestions" to open
@@ -481,8 +508,10 @@ WHAT REGINALD KNOWS
     who has it checked out
   - Every student in your roster and what they have
   - Every piece in your sheet music library with full metadata
+  - In Choir mode: full knowledge of the choral library
+    (voicing, language, accompaniment, etc.)
 
-EXAMPLE QUESTIONS
+EXAMPLE QUESTIONS — BAND
   Inventory:
     "Which flutes are available?"
     "How many instruments are checked out?"
@@ -495,9 +524,11 @@ EXAMPLE QUESTIONS
     "What's a good piece to program for a winter concert?"
     "Do we have any pieces by Michael Sweeney?"
 
-  General:
-    "How many students do we have this year?"
-    "Which students are in 8th grade?"
+EXAMPLE QUESTIONS — CHOIR
+    "What SATB pieces do we have at grade 2?"
+    "Do we have anything with Latin text?"
+    "Suggest an SSA piece with piano accompaniment."
+    "List all sacred pieces in the library."
 
 CONTEXT
   If you select an instrument before clicking "Ask Reginald,"
@@ -519,44 +550,96 @@ REQUIREMENTS
 
 Accessed via: Main Menu footer > "Settings"
 
-LLM TAB
+The Settings dialog has four tabs: Teacher, Display,
+LLM Configuration, and Backup.
+
+──────────────────────────────────────────────────────────────
+TEACHER TAB
+──────────────────────────────────────────────────────────────
+  Program Type
+    Band   — Concert band, jazz band, and marching band repertoire.
+             The Music Manager shows Ensemble Type and Time Signature.
+             The stats bar shows instrument checkout counts.
+
+    Choir  — Choral and vocal ensemble repertoire.
+             The Music Manager shows Voicing, Language, and
+             Accompaniment. The stats bar shows student enrollment.
+
+  Change takes effect the next time you open the Music Manager.
+
+──────────────────────────────────────────────────────────────
+DISPLAY TAB
+──────────────────────────────────────────────────────────────
+  Color Scheme
+    Choose between available color themes. Changes take effect
+    immediately after saving — no restart required.
+
+  Display Size
+    Normal  — Default text sizes (recommended for most displays).
+    Large   — 25% larger text for accessibility.
+    Font size changes require restarting the app.
+
+──────────────────────────────────────────────────────────────
+LLM CONFIGURATION TAB
+──────────────────────────────────────────────────────────────
+  AI Backend
+    Select how the app connects to AI services:
+
+    Local API Keys — use your own GitHub and/or Anthropic keys.
+    Claude Proxy   — use a shared proxy server deployed by
+                     your school or administrator.
+
+  ── LOCAL API KEYS ──
+
   GitHub API Key
     A Personal Access Token from github.com used to access
-    GitHub Models (OpenAI-compatible models: GPT-4o, etc.).
+    GitHub Models (GPT, Llama, Mistral, Phi models).
     No special token permissions are required.
-    Click the eye icon to show/hide the key.
+    Click Show/Hide to toggle key visibility.
 
   Anthropic API Key
     An API key from console.anthropic.com used to access
     Claude models (Haiku, Sonnet, Opus).
-    Click the eye icon to show/hide the key.
+    Free tier: 5 requests per minute.
+    Click Show/Hide to toggle key visibility.
 
   Model
     The AI model to use for all LLM features (Reginald,
-    Music Importer, Validation).
+    Music Importer, Validation). The program routes calls
+    automatically based on the selected model.
 
-    GitHub Models (use with GitHub API Key):
-      openai/gpt-4o          — most capable, best for vision
-      openai/gpt-4o-mini     — faster, lower cost
-      openai/gpt-4.1         — latest GPT-4 generation
-
-    Claude / Anthropic Models (use with Anthropic API Key):
+    Claude / Anthropic models (use with Anthropic API Key):
       claude-haiku-4-5-20251001  — fastest, lowest cost
       claude-sonnet-4-6          — balanced speed and quality
       claude-opus-4-6            — most capable Claude model
 
-    The program routes API calls automatically based on the
-    selected model — no manual switching required.
+    GitHub Models (use with GitHub API Key):
+      openai/gpt-4o-mini     — fast, low cost, vision-capable
+      openai/gpt-4.1-mini    — fast, low cost, vision-capable
+      openai/gpt-4o          — high capability, vision-capable
+      openai/gpt-4.1         — latest GPT-4, vision-capable
+      openai/gpt-5           — most capable OpenAI model
+      Meta Llama, Mistral, Phi models also available
 
   Fetch GitHub Models button
     Downloads the current list of available models from the
     GitHub Models catalog and populates the dropdown.
     Claude models are always listed at the top.
 
+  ── CLAUDE PROXY ──
+
+  Proxy Endpoint
+    The base URL of the deployed proxy server.
+    Example: https://your-app.railway.app
+
+  Proxy Token
+    The secret token required by the proxy (x-proxy-token).
+    Click Show/Hide to toggle visibility.
+
   Test Connection button
-    Sends a short test message to the AI and displays the
-    response. Confirms your API key and model are working.
-    Routes to the correct API based on the selected model.
+    Sends a short test message using the current backend
+    settings and displays the response. Routes to the correct
+    API (Anthropic, GitHub, or Proxy) based on the selection.
 
   Save / Cancel
     Save writes your settings to disk.
@@ -568,6 +651,20 @@ WHERE SETTINGS ARE STORED
                          [ProfileName]\settings.json
   They are per-profile, so each teacher can have their own
   model and API key preferences.
+
+──────────────────────────────────────────────────────────────
+BACKUP TAB
+──────────────────────────────────────────────────────────────
+  External Backup Folder
+    Choose a folder on a network drive, OneDrive, or USB drive.
+    A copy of your database is saved here automatically each
+    time the app starts. Up to 30 backups are kept per profile.
+    Leave blank to use only the local backup folder.
+
+  Back Up Now
+    Immediately backs up your database to both the local
+    AppData backup folder and the external folder (if set).
+    A status message confirms success or shows any errors.
 
 
 ================================================================
@@ -626,7 +723,8 @@ DATA SAFETY
     so reinstalling or updating the program will not affect it.
   - Profile data location:
       %LOCALAPPDATA%\RokasResonance\profiles\[ProfileName]\
-  - Back up this folder regularly to protect your data.
+  - Back up this folder regularly, or use Settings > Backup
+    to configure automatic backups to an external drive.
 
 OMR (OPTICAL MUSIC RECOGNITION)
   - Requires either Audiveris (free, separate Java-based install)

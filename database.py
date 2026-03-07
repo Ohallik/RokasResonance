@@ -168,6 +168,13 @@ class Database:
                     conn.commit()
                 except Exception:
                     pass
+            # Migrate: add choir-specific fields
+            for col in ("voicing TEXT", "language TEXT", "accompaniment TEXT"):
+                try:
+                    conn.execute(f"ALTER TABLE sheet_music ADD COLUMN {col}")
+                    conn.commit()
+                except Exception:
+                    pass
             # Migrate: normalize difficulty from "Grade X" to just "X"
             try:
                 conn.execute(
@@ -177,6 +184,18 @@ class Database:
                 conn.commit()
             except Exception:
                 pass
+            # Migrate: add indexes for search performance
+            for idx_sql in [
+                "CREATE INDEX IF NOT EXISTS idx_sm_title ON sheet_music(title COLLATE NOCASE)",
+                "CREATE INDEX IF NOT EXISTS idx_sm_composer ON sheet_music(composer COLLATE NOCASE)",
+                "CREATE INDEX IF NOT EXISTS idx_sm_genre ON sheet_music(genre)",
+                "CREATE INDEX IF NOT EXISTS idx_sm_active ON sheet_music(is_active)",
+            ]:
+                try:
+                    conn.execute(idx_sql)
+                    conn.commit()
+                except Exception:
+                    pass
 
     # ─── Backup ────────────────────────────────────────────────────────────────
 
@@ -526,6 +545,22 @@ class Database:
 
     # ─── Stats / Misc ──────────────────────────────────────────────────────────
 
+    def get_student_count_for_current_year(self) -> tuple[int, str]:
+        """Return (count, school_year) for the most recent school year, or (0, '')."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT school_year FROM students WHERE school_year IS NOT NULL "
+                "ORDER BY school_year DESC LIMIT 1"
+            ).fetchone()
+            if not row:
+                return 0, ""
+            year = row["school_year"]
+            count = conn.execute(
+                "SELECT COUNT(*) FROM students WHERE school_year=? AND is_active=1",
+                (year,)
+            ).fetchone()[0]
+        return count, year
+
     def get_stats(self) -> dict:
         with self._connect() as conn:
             total = conn.execute(
@@ -540,11 +575,15 @@ class Database:
                 """SELECT COUNT(DISTINCT r.instrument_id) FROM repairs r
                    WHERE r.date_repaired IS NULL"""
             ).fetchone()[0]
+            sheet_music = conn.execute(
+                "SELECT COUNT(*) FROM sheet_music WHERE is_active=1"
+            ).fetchone()[0]
         return {
             "total": total,
             "checked_out": checked_out,
             "available": total - checked_out,
             "in_repair": in_repair,
+            "sheet_music": sheet_music,
         }
 
     def import_instrument(self, data: dict) -> int:
@@ -701,6 +740,123 @@ class Database:
                 "SELECT * FROM sheet_music WHERE is_active=1 ORDER BY title"
             ).fetchall()
 
+    def search_sheet_music(
+        self,
+        search: str = "",
+        genre: str = "",
+        location: str = "",
+        voicing: str = "",
+        order_col: str = "title",
+        order_asc: bool = True,
+        limit: int = 200,
+        offset: int = 0,
+    ):
+        """Search sheet music with DB-side filtering and pagination.
+
+        Returns (rows: list[dict], total_count: int).
+        Includes last_played from performances via LEFT JOIN.
+        """
+        params = []
+        where_parts = ["sm.is_active=1"]
+
+        if search:
+            tok = f"%{search}%"
+            where_parts.append(
+                "(sm.title LIKE ? OR sm.composer LIKE ? OR sm.arranger LIKE ? "
+                "OR sm.genre LIKE ? OR sm.ensemble_type LIKE ? "
+                "OR sm.key_signature LIKE ? OR sm.location LIKE ? "
+                "OR COALESCE(sm.voicing,'') LIKE ? OR COALESCE(sm.language,'') LIKE ?)"
+            )
+            params.extend([tok] * 9)
+
+        if genre:
+            where_parts.append("sm.genre=?")
+            params.append(genre)
+
+        if voicing:
+            where_parts.append("sm.voicing=?")
+            params.append(voicing)
+
+        if location:
+            where_parts.append("sm.location=?")
+            params.append(location)
+
+        where_sql = " AND ".join(where_parts)
+
+        valid_cols = {
+            "title", "composer", "arranger", "ensemble_type", "genre",
+            "difficulty", "key_signature", "time_signature", "location",
+            "last_played", "file_type", "voicing", "language",
+        }
+        if order_col not in valid_cols:
+            order_col = "title"
+        direction = "ASC" if order_asc else "DESC"
+
+        if order_col == "last_played":
+            # NULLs always sorted last regardless of direction
+            order_sql = (
+                f"CASE WHEN lp.last_played IS NULL THEN 1 ELSE 0 END, "
+                f"lp.last_played {direction}"
+            )
+        else:
+            order_sql = f"sm.{order_col} {direction}"
+
+        data_sql = f"""
+            SELECT sm.*,
+                   lp.last_played
+            FROM sheet_music sm
+            LEFT JOIN (
+                SELECT music_id, MAX(performance_date) AS last_played
+                FROM performances
+                GROUP BY music_id
+            ) lp ON lp.music_id = sm.id
+            WHERE {where_sql}
+            ORDER BY {order_sql}
+            LIMIT ? OFFSET ?
+        """
+        count_sql = f"SELECT COUNT(*) FROM sheet_music sm WHERE {where_sql}"
+
+        with self._connect() as conn:
+            total = conn.execute(count_sql, params).fetchone()[0]
+            rows = conn.execute(data_sql, params + [limit, offset]).fetchall()
+        return [dict(r) for r in rows], total
+
+    def get_distinct_genres(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT genre FROM sheet_music "
+                "WHERE is_active=1 AND genre IS NOT NULL AND genre != '' "
+                "ORDER BY genre"
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_distinct_locations(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT location FROM sheet_music "
+                "WHERE is_active=1 AND location IS NOT NULL AND location != '' "
+                "ORDER BY location"
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_distinct_voicings(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT voicing FROM sheet_music "
+                "WHERE is_active=1 AND voicing IS NOT NULL AND voicing != '' "
+                "ORDER BY voicing"
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_distinct_languages(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT language FROM sheet_music "
+                "WHERE is_active=1 AND language IS NOT NULL AND language != '' "
+                "ORDER BY language"
+            ).fetchall()
+        return [r[0] for r in rows]
+
     def get_sheet_music(self, music_id: int):
         with self._connect() as conn:
             return conn.execute(
@@ -711,7 +867,8 @@ class Database:
         cols = [
             "title", "composer", "arranger", "genre", "ensemble_type",
             "difficulty", "file_path", "file_type", "num_pages", "notes",
-            "key_signature", "time_signature", "location", "publisher", "source_file"
+            "key_signature", "time_signature", "location", "publisher", "source_file",
+            "voicing", "language", "accompaniment",
         ]
         values = [data.get(c) for c in cols]
         placeholders = ",".join(["?"] * len(cols))
@@ -726,7 +883,8 @@ class Database:
         cols = [
             "title", "composer", "arranger", "genre", "ensemble_type",
             "difficulty", "file_path", "file_type", "num_pages", "notes", "is_active",
-            "key_signature", "time_signature", "location", "publisher", "source_file"
+            "key_signature", "time_signature", "location", "publisher", "source_file",
+            "voicing", "language", "accompaniment",
         ]
         set_clause = ", ".join([f"{c}=?" for c in cols])
         values = [data.get(c) for c in cols] + [music_id]

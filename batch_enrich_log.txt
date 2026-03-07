@@ -1,0 +1,26 @@
+Batch enrichment started: 2026-03-06 10:57:25
+Profile: C:\Users\natem\AppData\Local\RokasResonance\profiles\Meagan R. Mangum
+Total pieces: 19
+
+[  1] OK    [ 303] 1812 Overture  conf=high
+[  2] OK    [ 218] All Ye Young Sailors (Blow the Man Down)  conf=high
+[  3] OK    [ 270] Appalachian Whisper  conf=medium
+[  4] OK    [ 385] Austrian Hymn  conf=high
+[  5] OK    [ 367] Bel Canto Suite  conf=medium
+[  6] OK    [  26] Beyond the Sea  conf=medium
+[  7] OK    [ 368] Breckenridge Overture  conf=medium
+[  8] OK    [ 369] Brookpark  conf=high
+[  9] OK    [ 249] Canto  conf=medium
+[ 10] OK    [  79] Chameleon  conf=high
+[ 11] OK    [ 459] Chorale  conf=low
+[ 12] OK    [ 445] La Plante / All Ye Young Sailors  conf=medium
+[ 13] OK    [ 127] Libertango  conf=high
+[ 14] OK    [  67] Misty  conf=high
+[ 15] OK    [ 340] Sherlock's Gone Home  conf=low
+[ 16] OK    [  36] Sidewinder  conf=medium
+[ 17] OK    [  48] St. Louis Blues  conf=medium
+[ 18] OK    [  72] Take Five  conf=medium
+[ 19] OK    [ 242] The Battle Pavane  conf=high
+
+Done: 2026-03-06 10:59:08
+Succeeded: 19  |  Failed: 0  |  Skipped: 0

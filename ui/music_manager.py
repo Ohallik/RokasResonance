@@ -10,7 +10,7 @@ import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 from datetime import datetime
 from ui.theme import muted_fg
 
@@ -18,13 +18,14 @@ from ui.theme import muted_fg
 _MUSIC_PICS_FOLDERS = ["MusicPics", "music_pics", "musicpics"]
 
 
-TREEVIEW_COLS = (
+# ── Band column configuration ────────────────────────────────────────────────
+BAND_TREEVIEW_COLS = (
     "title", "composer", "arranger",
     "ensemble_type", "genre", "difficulty",
     "key_signature", "time_signature", "location", "last_played", "file_type",
     "source_file",
 )
-COL_HEADERS = {
+BAND_COL_HEADERS = {
     "title":          "Title",
     "composer":       "Composer",
     "arranger":       "Arranger",
@@ -38,7 +39,7 @@ COL_HEADERS = {
     "file_type":      "Type",
     "source_file":    "Source File",
 }
-COL_WIDTHS = {
+BAND_COL_WIDTHS = {
     "title":          220,
     "composer":       140,
     "arranger":       120,
@@ -52,31 +53,203 @@ COL_WIDTHS = {
     "file_type":      50,
     "source_file":    160,
 }
-# Columns hidden by default (user can enable via Columns menu)
-COL_HIDDEN_DEFAULT = {"source_file"}
+BAND_COL_HIDDEN_DEFAULT = {"source_file"}
+
+# ── Choir column configuration ────────────────────────────────────────────────
+CHOIR_TREEVIEW_COLS = (
+    "title", "composer", "arranger",
+    "voicing", "language", "genre", "difficulty",
+    "key_signature", "location", "last_played", "file_type",
+    "source_file",
+)
+CHOIR_COL_HEADERS = {
+    "title":         "Title",
+    "composer":      "Composer",
+    "arranger":      "Arranger",
+    "voicing":       "Voicing",
+    "language":      "Language",
+    "genre":         "Genre",
+    "difficulty":    "Difficulty",
+    "key_signature": "Key",
+    "location":      "Location",
+    "last_played":   "Last Played",
+    "file_type":     "Type",
+    "source_file":   "Source File",
+}
+CHOIR_COL_WIDTHS = {
+    "title":         220,
+    "composer":      140,
+    "arranger":      120,
+    "voicing":       90,
+    "language":      100,
+    "genre":         90,
+    "difficulty":    70,
+    "key_signature": 70,
+    "location":      120,
+    "last_played":   100,
+    "file_type":     50,
+    "source_file":   160,
+}
+CHOIR_COL_HIDDEN_DEFAULT = {"source_file"}
+
+# Keep module-level aliases pointing to band defaults (backward compat)
+TREEVIEW_COLS        = BAND_TREEVIEW_COLS
+COL_HEADERS          = BAND_COL_HEADERS
+COL_WIDTHS           = BAND_COL_WIDTHS
+COL_HIDDEN_DEFAULT   = BAND_COL_HIDDEN_DEFAULT
+
+
+class _WorksCatalogAdapter:
+    """Adapts an external 'works' catalog DB to the sheet_music interface used by MusicManager.
+
+    The works table uses 'grade' for difficulty and lacks location/file fields.
+    This adapter translates queries and row dicts so MusicManager works unchanged.
+    """
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+
+    def _connect(self):
+        import sqlite3
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _row_to_dict(self, row) -> dict:
+        d = dict(row)
+        d["difficulty"] = d.get("grade") or ""
+        d.setdefault("file_path", "")
+        d.setdefault("file_type", "")
+        d.setdefault("source_file", "")
+        d.setdefault("location", "")
+        d.setdefault("last_played", "")
+        d.setdefault("is_active", 1)
+        d.setdefault("notes", d.get("description") or "")
+        return d
+
+    def search_sheet_music(self, search="", genre="", location="", voicing="",
+                           order_col="title", order_asc=True, limit=200, offset=0):
+        params = []
+        where_parts = []
+
+        if search:
+            tok = f"%{search}%"
+            where_parts.append(
+                "(title LIKE ? OR composer LIKE ? OR arranger LIKE ? "
+                "OR genre LIKE ? OR ensemble_type LIKE ? "
+                "OR key_signature LIKE ? OR COALESCE(voicing,'') LIKE ?)"
+            )
+            params.extend([tok] * 7)
+
+        if genre:
+            where_parts.append("genre=?")
+            params.append(genre)
+
+        if voicing:
+            where_parts.append("voicing=?")
+            params.append(voicing)
+
+        # works has no location column — ignore that filter
+        where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+        _col_map = {"difficulty": "grade_numeric", "last_played": "title",
+                    "time_signature": "time_signature", "ensemble_type": "ensemble_type"}
+        actual_col = _col_map.get(order_col, order_col)
+        valid = {"title", "composer", "arranger", "ensemble_type", "genre",
+                 "grade", "grade_numeric", "key_signature", "time_signature", "voicing"}
+        if actual_col not in valid:
+            actual_col = "title"
+        direction = "ASC" if order_asc else "DESC"
+
+        data_sql = (f"SELECT * FROM works {where_sql} "
+                    f"ORDER BY {actual_col} {direction} LIMIT ? OFFSET ?")
+        count_sql = f"SELECT COUNT(*) FROM works {where_sql}"
+
+        with self._connect() as conn:
+            total = conn.execute(count_sql, params).fetchone()[0]
+            rows = conn.execute(data_sql, params + [limit, offset]).fetchall()
+        return [self._row_to_dict(r) for r in rows], total
+
+    def get_distinct_genres(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT genre FROM works "
+                "WHERE genre IS NOT NULL AND genre != '' ORDER BY genre"
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_distinct_voicings(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT voicing FROM works "
+                "WHERE voicing IS NOT NULL AND voicing != '' ORDER BY voicing"
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_distinct_locations(self) -> list:
+        return []
+
+    def get_sheet_music(self, music_id: int):
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM works WHERE id=?", (music_id,)).fetchone()
+        return self._row_to_dict(row) if row else None
+
+    def get_all_sheet_music(self, include_inactive=True):
+        return []
+
+    def get_latest_omr_job(self, music_id):
+        return None
+
+    def get_omr_jobs(self, music_id):
+        return []
+
+    def get_performances(self, music_id):
+        return []
 
 
 class MusicManager(ttk.Frame):
-    def __init__(self, parent, db, base_dir: str):
+    def __init__(self, parent, db, base_dir: str, mode: str = "band"):
         super().__init__(parent)
         self.db = db
+        self._main_db = db   # always the profile's own DB
         self.base_dir = base_dir
-        self._all_rows = []
-        self._omr_status_cache = {}   # music_id -> latest job status
+        self.mode = mode  # "band" or "choir"
+        if mode == "band":
+            self._show_external_var = tk.BooleanVar(value=False)
+
+        # Pick column config for this mode
+        if mode == "choir":
+            self._treeview_cols    = CHOIR_TREEVIEW_COLS
+            self._col_headers      = CHOIR_COL_HEADERS
+            self._col_widths       = CHOIR_COL_WIDTHS
+            self._col_hidden_def   = CHOIR_COL_HIDDEN_DEFAULT
+            self._col_prefs_file   = "choir_column_prefs.json"
+        else:
+            self._treeview_cols    = BAND_TREEVIEW_COLS
+            self._col_headers      = BAND_COL_HEADERS
+            self._col_widths       = BAND_COL_WIDTHS
+            self._col_hidden_def   = BAND_COL_HIDDEN_DEFAULT
+            self._col_prefs_file   = "music_column_prefs.json"
+
+        self._all_rows = []        # current page's rows
         self._selected_id = None
         self._sort_col = "title"
         self._sort_asc = True
+        self._page = 0
+        self._page_size = 200
+        self._total_count = 0
         self._search_var = tk.StringVar()
         self._filter_genre = tk.StringVar(value="All")
+        self._filter_voicing = tk.StringVar(value="All")
         self._filter_location = tk.StringVar(value="All")
-        self._filter_omr = tk.StringVar(value="All")
         self._col_vars = {
-            c: tk.BooleanVar(value=(c not in COL_HIDDEN_DEFAULT))
-            for c in TREEVIEW_COLS
+            c: tk.BooleanVar(value=(c not in self._col_hidden_def))
+            for c in self._treeview_cols
         }
         self._col_popup = None
-        self._last_played_cache = {}  # music_id -> date string
         self._chat_window = None
+        self._search_debounce_id = None
+        self._detail_debounce_id = None
 
         self._build()
         self._load_col_prefs()
@@ -90,27 +263,27 @@ class MusicManager(ttk.Frame):
         toolbar = ttk.Frame(self, bootstyle=LIGHT)
         toolbar.pack(fill=X, padx=0, pady=0)
 
-        ttk.Button(toolbar, text="Add Music", bootstyle=SUCCESS,
-                   command=self._add_music).pack(side=LEFT, padx=6, pady=6)
-        ttk.Button(toolbar, text="Import Music", bootstyle=(SUCCESS, OUTLINE),
-                   command=self._import_music).pack(side=LEFT, padx=2, pady=6)
-        ttk.Button(toolbar, text="Edit", bootstyle=PRIMARY,
-                   command=self._edit_music).pack(side=LEFT, padx=2, pady=6)
+        self._add_btn = ttk.Button(toolbar, text="Add Music", bootstyle=SUCCESS,
+                                   command=self._add_music)
+        self._add_btn.pack(side=LEFT, padx=6, pady=6)
+        self._import_btn = ttk.Button(toolbar, text="Import Music", bootstyle=(SUCCESS, OUTLINE),
+                                      command=self._import_music)
+        self._import_btn.pack(side=LEFT, padx=2, pady=6)
+        self._edit_btn = ttk.Button(toolbar, text="Edit", bootstyle=PRIMARY,
+                                    command=self._edit_music)
+        self._edit_btn.pack(side=LEFT, padx=2, pady=6)
         self._delete_btn = ttk.Button(toolbar, text="Delete", bootstyle=DANGER,
                                       command=self._delete_selected, state=DISABLED)
         self._delete_btn.pack(side=LEFT, padx=2, pady=6)
 
-        ttk.Separator(toolbar, orient=VERTICAL).pack(
-            side=LEFT, fill=Y, padx=8, pady=4)
-
+        # OMR buttons hidden — OMR not currently in use
         self._omr_btn = ttk.Button(toolbar, text="Process OMR", bootstyle=WARNING,
                                    command=self._process_omr, state=DISABLED)
-        self._omr_btn.pack(side=LEFT, padx=2, pady=6)
         self._export_btn = ttk.Button(toolbar, text="Export MusicXML", bootstyle=INFO,
                                       command=self._export_musicxml, state=DISABLED)
-        self._export_btn.pack(side=LEFT, padx=2, pady=6)
+
         self._validate_btn = ttk.Button(toolbar, text="Validate with LLM",
-                                        bootstyle=(SECONDARY, OUTLINE),
+                                        bootstyle=(INFO, OUTLINE),
                                         command=self._validate_with_llm, state=DISABLED)
         self._validate_btn.pack(side=LEFT, padx=2, pady=6)
 
@@ -120,6 +293,19 @@ class MusicManager(ttk.Frame):
         ttk.Button(toolbar, text="Refresh", bootstyle=(SECONDARY, OUTLINE),
                    command=self.refresh).pack(side=LEFT, padx=2, pady=6)
 
+        if self.mode == "band":
+            ttk.Separator(toolbar, orient=VERTICAL).pack(
+                side=LEFT, fill=Y, padx=8, pady=4)
+            ttk.Checkbutton(
+                toolbar, text="Show External Source",
+                variable=self._show_external_var,
+                bootstyle=PRIMARY,
+                command=self._toggle_external_source,
+            ).pack(side=LEFT, padx=2, pady=6)
+            self._ext_source_label = ttk.Label(
+                toolbar, text="", foreground="#888", font=("Segoe UI", 8))
+            self._ext_source_label.pack(side=LEFT, padx=(0, 6), pady=6)
+
         # ── Search / Filter Bar ───────────────────────────────────────────
         filter_bar = ttk.Frame(self)
         filter_bar.pack(fill=X, padx=8, pady=(4, 2))
@@ -128,15 +314,24 @@ class MusicManager(ttk.Frame):
         search_entry = ttk.Entry(filter_bar, textvariable=self._search_var,
                                  width=28)
         search_entry.pack(side=LEFT, padx=(0, 10))
-        self._search_var.trace_add("write", lambda *_: self._apply_filters())
+        self._search_var.trace_add("write", lambda *_: self._debounce_search())
 
-        ttk.Label(filter_bar, text="Genre:").pack(side=LEFT, padx=(0, 4))
-        self._genre_combo = ttk.Combobox(
-            filter_bar, textvariable=self._filter_genre,
-            state="readonly", width=14
-        )
-        self._genre_combo.pack(side=LEFT, padx=(0, 10))
-        self._filter_genre.trace_add("write", lambda *_: self._apply_filters())
+        if self.mode == "choir":
+            ttk.Label(filter_bar, text="Voicing:").pack(side=LEFT, padx=(0, 4))
+            self._voicing_combo = ttk.Combobox(
+                filter_bar, textvariable=self._filter_voicing,
+                state="readonly", width=10
+            )
+            self._voicing_combo.pack(side=LEFT, padx=(0, 10))
+            self._filter_voicing.trace_add("write", lambda *_: self._apply_filters())
+        else:
+            ttk.Label(filter_bar, text="Genre:").pack(side=LEFT, padx=(0, 4))
+            self._genre_combo = ttk.Combobox(
+                filter_bar, textvariable=self._filter_genre,
+                state="readonly", width=14
+            )
+            self._genre_combo.pack(side=LEFT, padx=(0, 10))
+            self._filter_genre.trace_add("write", lambda *_: self._apply_filters())
 
         ttk.Label(filter_bar, text="Location:").pack(side=LEFT, padx=(0, 4))
         self._location_combo = ttk.Combobox(
@@ -169,7 +364,7 @@ class MusicManager(ttk.Frame):
 
         self.tree = ttk.Treeview(
             tree_frame,
-            columns=TREEVIEW_COLS,
+            columns=self._treeview_cols,
             show="headings",
             yscrollcommand=scrollbar_y.set,
             xscrollcommand=scrollbar_x.set,
@@ -179,17 +374,34 @@ class MusicManager(ttk.Frame):
         scrollbar_y.config(command=self.tree.yview)
         scrollbar_x.config(command=self.tree.xview)
 
+        # Pagination bar — packed before tree so it gets fixed height at bottom
+        page_bar = ttk.Frame(tree_frame)
+        self._prev_btn = ttk.Button(
+            page_bar, text="◀ Prev", bootstyle=(PRIMARY, OUTLINE), width=7,
+            command=self._on_prev_page
+        )
+        self._prev_btn.pack(side=LEFT, padx=(4, 2), pady=3)
+        self._next_btn = ttk.Button(
+            page_bar, text="Next ▶", bootstyle=(PRIMARY, OUTLINE), width=7,
+            command=self._on_next_page
+        )
+        self._next_btn.pack(side=LEFT, padx=2, pady=3)
+        self._page_label = ttk.Label(page_bar, text="", foreground=muted_fg(),
+                                     font=("Segoe UI", 8))
+        self._page_label.pack(side=LEFT, padx=8)
+
         scrollbar_y.pack(side=RIGHT, fill=Y)
         scrollbar_x.pack(side=BOTTOM, fill=X)
+        page_bar.pack(side=BOTTOM, fill=X)
         self.tree.pack(fill=BOTH, expand=True)
 
         _STRETCH = {"title", "composer", "arranger", "location"}
-        for col in TREEVIEW_COLS:
+        for col in self._treeview_cols:
             self.tree.heading(
-                col, text=COL_HEADERS[col], anchor=W,
+                col, text=self._col_headers[col], anchor=W,
                 command=lambda c=col: self._sort_by(c)
             )
-            self.tree.column(col, width=COL_WIDTHS[col], anchor=W,
+            self.tree.column(col, width=self._col_widths[col], anchor=W,
                              minwidth=40, stretch=col in _STRETCH)
 
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
@@ -209,8 +421,7 @@ class MusicManager(ttk.Frame):
 
         self._detail_nb.add(self._detail_tab, text="Details")
         self._detail_nb.add(self._perf_tab, text="Performances")
-        self._detail_nb.add(self._omr_tab, text="OMR Results")
-        self._detail_nb.add(self._history_tab, text="Job History")
+        # OMR Results and Job History tabs hidden — OMR not currently in use
 
         self._build_detail_tab()
         self._build_perf_tab()
@@ -231,40 +442,132 @@ class MusicManager(ttk.Frame):
                                        font=("Segoe UI", 9))
         self._status_label.pack(side=LEFT, padx=12, pady=5)
 
+        # ── Resize performance: suppress right-panel cascade during window resize ──
+        # When the window is resized, tkinter cascades Configure events through every
+        # nested widget. The right panel (Notebook → Canvas → ~20 labels) is the slow
+        # path. Hiding it during active resize stops the cascade; it's restored 150ms
+        # after the last resize event.
+        self._resize_restore_id = None
+
+        def _on_resize(e):
+            if e.widget is not self:
+                return
+            if self._resize_restore_id is None:
+                self._detail_nb.pack_forget()
+            else:
+                try:
+                    self.after_cancel(self._resize_restore_id)
+                except Exception:
+                    pass
+            self._resize_restore_id = self.after(150, _restore_detail)
+
+        def _restore_detail():
+            self._resize_restore_id = None
+            self._detail_nb.pack(fill=BOTH, expand=True)
+
+        self.bind("<Configure>", _on_resize)
+
     def _build_detail_tab(self):
-        outer = ttk.Frame(self._detail_tab)
-        outer.pack(fill=BOTH, expand=True, padx=8, pady=8)
+        canvas = tk.Canvas(self._detail_tab, highlightthickness=0)
+        sb = ttk.Scrollbar(self._detail_tab, orient=VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side=RIGHT, fill=Y)
+        canvas.pack(fill=BOTH, expand=True)
+
+        outer = ttk.Frame(canvas)
+        _cw = canvas.create_window((0, 0), window=outer, anchor=NW)
+
+        # Track labels that need dynamic wraplength: (widget, num_columns)
+        self._detail_wrap_info = []
+        self._detail_resize_id = None
+
+        def _do_resize():
+            self._detail_resize_id = None
+            w = canvas.winfo_width()
+            canvas.itemconfig(_cw, width=w)
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            pad = 24
+            for lbl, n in getattr(self, "_detail_wrap_info", []):
+                col_w = max(60, (w - pad) // n - 8)
+                try:
+                    lbl.configure(wraplength=col_w)
+                except tk.TclError:
+                    pass
+
+        def _resize(e=None):
+            if self._detail_resize_id is not None:
+                try:
+                    self.after_cancel(self._detail_resize_id)
+                except Exception:
+                    pass
+            self._detail_resize_id = self.after(16, _do_resize)
+
+        outer.bind("<Configure>", _resize)
+        canvas.bind("<Configure>", _resize)
+
+        def _wheel(e):
+            try:
+                canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+            except tk.TclError:
+                pass
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
         self._detail_labels = {}
-        fields = [
-            ("Title", "title"),
-            ("Composer", "composer"),
-            ("Arranger", "arranger"),
-            ("Publisher", "publisher"),
-            ("Genre", "genre"),
-            ("Ensemble", "ensemble_type"),
-            ("Difficulty", "difficulty"),
-            ("Key", "key_signature"),
-            ("Time Sig", "time_signature"),
-            ("Location", "location"),
-            ("File Type", "file_type"),
-            ("Pages", "num_pages"),
-            ("File", "file_path"),
-            ("Source File", "source_file"),
-            ("Comments", "notes"),
-            ("OMR Status", "_omr_status"),
-            ("Last Processed", "_last_processed"),
-        ]
+        _muted = muted_fg()
 
-        for label, key in fields:
-            row = ttk.Frame(outer)
-            row.pack(fill=X, pady=1)
-            ttk.Label(row, text=f"{label}:", font=("Segoe UI", 8, "bold"),
-                      width=14, anchor=W).pack(side=LEFT)
-            val_lbl = ttk.Label(row, text="", font=("Segoe UI", 8),
-                                anchor=W, wraplength=180, justify=LEFT)
-            val_lbl.pack(side=LEFT, fill=X, expand=True)
-            self._detail_labels[key] = val_lbl
+        def _section(title):
+            f = ttk.Frame(outer)
+            f.pack(fill=X, padx=8, pady=(14, 4))
+            ttk.Label(f, text=title, font=("Segoe UI", 9, "bold"),
+                      bootstyle=PRIMARY).pack(side=LEFT)
+            ttk.Separator(f).pack(side=LEFT, fill=X, expand=True, padx=(6, 2))
+
+        def _row(*pairs):
+            r = ttk.Frame(outer)
+            r.pack(fill=X, padx=10, pady=(0, 10))
+            n = len(pairs)
+            for i in range(n):
+                r.columnconfigure(i, weight=1, uniform="cols")
+            for i, (label, key) in enumerate(pairs):
+                col = ttk.Frame(r)
+                col.grid(row=0, column=i, sticky="new", padx=(0, 8))
+                ttk.Label(col, text=label, font=("Segoe UI", 8, "bold"),
+                          foreground=_muted).pack(anchor=W)
+                fnt = ("Segoe UI", 13) if key == "title" else ("Segoe UI", 10)
+                lbl = ttk.Label(col, text="", font=fnt,
+                                anchor=W, wraplength=280, justify=LEFT)
+                lbl.pack(anchor=W)
+                self._detail_labels[key] = lbl
+                self._detail_wrap_info.append((lbl, n))
+
+        _section("Basic")
+        _row(("Title", "title"))
+        _row(("Composer", "composer"), ("Arranger", "arranger"))
+        _row(("Publisher", "publisher"))
+
+        _section("Classification")
+        if self.mode == "choir":
+            _row(("Genre", "genre"), ("Voicing", "voicing"))
+            _row(("Language", "language"), ("Accompaniment", "accompaniment"))
+            _row(("Difficulty", "difficulty"), ("Key", "key_signature"))
+        else:
+            _row(("Genre", "genre"), ("Ensemble", "ensemble_type"))
+            _row(("Difficulty", "difficulty"), ("Time Sig", "time_signature"))
+            _row(("Key", "key_signature"))
+
+        _section("Details")
+        _row(("Location", "location"))
+        _row(("Source File", "source_file"))
+
+        _section("Comments")
+        cf = ttk.Frame(outer)
+        cf.pack(fill=X, padx=10, pady=(0, 16))
+        notes_lbl = ttk.Label(cf, text="", font=("Segoe UI", 10),
+                              anchor=NW, wraplength=280, justify=LEFT)
+        notes_lbl.pack(anchor=W)
+        self._detail_labels["notes"] = notes_lbl
+        self._detail_wrap_info.append((notes_lbl, 1))
 
     def _build_perf_tab(self):
         frame = ttk.Frame(self._perf_tab)
@@ -352,7 +655,7 @@ class MusicManager(ttk.Frame):
     # ──────────────────────────────────────────── Column Preferences ──────
 
     def _load_col_prefs(self):
-        path = os.path.join(self.base_dir, "music_column_prefs.json")
+        path = os.path.join(self.base_dir, self._col_prefs_file)
         try:
             with open(path) as f:
                 prefs = json.load(f)
@@ -363,7 +666,7 @@ class MusicManager(ttk.Frame):
             pass
 
     def _save_col_prefs(self):
-        path = os.path.join(self.base_dir, "music_column_prefs.json")
+        path = os.path.join(self.base_dir, self._col_prefs_file)
         try:
             with open(path, "w") as f:
                 json.dump({c: v.get() for c, v in self._col_vars.items()}, f, indent=2)
@@ -371,7 +674,7 @@ class MusicManager(ttk.Frame):
             pass
 
     def _apply_col_visibility(self):
-        visible = [c for c in TREEVIEW_COLS if self._col_vars[c].get()]
+        visible = [c for c in self._treeview_cols if self._col_vars[c].get()]
         self.tree["displaycolumns"] = visible
 
     def _show_col_chooser(self, btn):
@@ -396,10 +699,10 @@ class MusicManager(ttk.Frame):
                   font=("Segoe UI", 9, "bold")).pack(anchor=W, padx=10, pady=(8, 2))
         ttk.Separator(outer, orient=HORIZONTAL).pack(fill=X, padx=6, pady=2)
 
-        for col in TREEVIEW_COLS:
+        for col in self._treeview_cols:
             ttk.Checkbutton(
                 outer,
-                text=COL_HEADERS[col],
+                text=self._col_headers[col],
                 variable=self._col_vars[col],
                 command=lambda: (self._apply_col_visibility(), self._save_col_prefs())
             ).pack(anchor=W, padx=10, pady=1)
@@ -448,123 +751,126 @@ class MusicManager(ttk.Frame):
     # ───────────────────────────────────────────────────── Data Loading ────
 
     def refresh(self):
-        self._all_rows = [dict(r) for r in self.db.get_all_sheet_music()]
-        # Cache OMR status and last played date for each piece
-        self._omr_status_cache.clear()
-        self._last_played_cache.clear()
-        for row in self._all_rows:
-            job = self.db.get_latest_omr_job(row["id"])
-            if job:
-                self._omr_status_cache[row["id"]] = dict(job)
-            else:
-                self._omr_status_cache[row["id"]] = None
-            perfs = self.db.get_performances(row["id"])
-            if perfs:
-                self._last_played_cache[row["id"]] = perfs[0]["performance_date"] or ""
-            else:
-                self._last_played_cache[row["id"]] = ""
-        self._update_genre_filter()
+        """Reload filter dropdowns and current page from DB (preserves page/filters)."""
+        if self.mode == "choir":
+            self._update_voicing_filter()
+        else:
+            self._update_genre_filter()
         self._update_location_filter()
-        self._apply_filters()
+        self._load_page()
         if self._selected_id:
             self._restore_selection()
 
     def _update_genre_filter(self):
-        genres = sorted(set(
-            r["genre"] for r in self._all_rows
-            if r["genre"]
-        ))
+        genres = self.db.get_distinct_genres()
         self._genre_combo["values"] = ["All"] + genres
         if self._filter_genre.get() not in ["All"] + genres:
             self._filter_genre.set("All")
 
+    def _update_voicing_filter(self):
+        voicings = self.db.get_distinct_voicings()
+        self._voicing_combo["values"] = ["All"] + voicings
+        if self._filter_voicing.get() not in ["All"] + voicings:
+            self._filter_voicing.set("All")
+
     def _update_location_filter(self):
-        locations = sorted(set(
-            r["location"] for r in self._all_rows
-            if r.get("location")
-        ))
+        locations = self.db.get_distinct_locations()
         self._location_combo["values"] = ["All"] + locations
         if self._filter_location.get() not in ["All"] + locations:
             self._filter_location.set("All")
 
+    def _debounce_search(self):
+        if self._search_debounce_id is not None:
+            self.after_cancel(self._search_debounce_id)
+        self._search_debounce_id = self.after(300, self._apply_filters)
+
     def _apply_filters(self):
-        search = self._search_var.get().lower()
-        genre_f = self._filter_genre.get()
+        """Called when search text or filter dropdowns change — resets to page 0."""
+        self._search_debounce_id = None
+        self._load_page(reset_page=True)
+
+    def _load_page(self, reset_page: bool = False):
+        """Query the DB for the current page and populate the treeview."""
+        if reset_page:
+            self._page = 0
+
+        search = self._search_var.get().strip().lower()
         location_f = self._filter_location.get()
-        omr_f = self._filter_omr.get()
 
-        visible = []
-        for row in self._all_rows:
-            # Genre filter
-            if genre_f != "All" and (row["genre"] or "") != genre_f:
-                continue
+        if self.mode == "choir":
+            voicing_f = self._filter_voicing.get()
+            query_kwargs = dict(
+                search=search,
+                voicing="" if voicing_f == "All" else voicing_f,
+                location="" if location_f == "All" else location_f,
+                order_col=self._sort_col,
+                order_asc=self._sort_asc,
+                limit=self._page_size,
+                offset=self._page * self._page_size,
+            )
+        else:
+            genre_f = self._filter_genre.get()
+            query_kwargs = dict(
+                search=search,
+                genre="" if genre_f == "All" else genre_f,
+                location="" if location_f == "All" else location_f,
+                order_col=self._sort_col,
+                order_asc=self._sort_asc,
+                limit=self._page_size,
+                offset=self._page * self._page_size,
+            )
 
-            # Location filter
-            if location_f != "All" and (row.get("location") or "") != location_f:
-                continue
+        rows, total = self.db.search_sheet_music(**query_kwargs)
 
-            # OMR status filter
-            job = self._omr_status_cache.get(row["id"])
-            job_status = job["status"] if job else None
-            if omr_f == "Processed" and job_status != "completed":
-                continue
-            if omr_f == "Unprocessed" and job_status is not None:
-                continue
-            if omr_f == "Failed" and job_status != "failed":
-                continue
+        self._total_count = total
+        # Clamp page if deletions reduced total below current page
+        max_page = max(0, (total - 1) // self._page_size)
+        if self._page > max_page:
+            self._page = max_page
+            query_kwargs["offset"] = self._page * self._page_size
+            rows, total = self.db.search_sheet_music(**query_kwargs)
 
-            # Search
-            if search:
-                haystack = " ".join([
-                    str(row["title"] or ""),
-                    str(row["composer"] or ""),
-                    str(row["arranger"] or ""),
-                    str(row["genre"] or ""),
-                    str(row["ensemble_type"] or ""),
-                    str(row.get("key_signature") or ""),
-                    str(row.get("time_signature") or ""),
-                    str(row.get("location") or ""),
-                ]).lower()
-                if search not in haystack:
-                    continue
+        self._all_rows = rows
+        self._populate_tree(rows)
 
-            visible.append(row)
+        self._count_label.config(text=f"{total} pieces")
 
-        self._populate_tree(visible)
-        self._count_label.config(
-            text=f"{len(visible)} of {len(self._all_rows)} pieces"
-        )
+        self._update_pagination()
         self._update_status_label()
 
     def _populate_tree(self, rows):
-        reverse = not self._sort_asc
-        try:
-            rows = sorted(
-                rows,
-                key=lambda r: (r.get(self._sort_col) or "").lower()
-                if isinstance(r.get(self._sort_col), str)
-                else str(r.get(self._sort_col) or ""),
-                reverse=reverse
-            )
-        except Exception:
-            pass
-
         self.tree.delete(*self.tree.get_children())
         for row in rows:
-            values = (
-                row["title"] or "",
-                row["composer"] or "",
-                row["arranger"] or "",
-                row["ensemble_type"] or "",
-                row["genre"] or "",
-                row["difficulty"] or "",
-                row.get("key_signature") or "",
-                row.get("time_signature") or "",
-                row.get("location") or "",
-                self._last_played_cache.get(row["id"], ""),
-                row["file_type"] or "",
-                os.path.basename(row.get("source_file") or ""),
-            )
+            if self.mode == "choir":
+                values = (
+                    row.get("title") or "",
+                    row.get("composer") or "",
+                    row.get("arranger") or "",
+                    row.get("voicing") or "",
+                    row.get("language") or "",
+                    row.get("genre") or "",
+                    row.get("difficulty") or "",
+                    row.get("key_signature") or "",
+                    row.get("location") or "",
+                    row.get("last_played") or "",
+                    row.get("file_type") or "",
+                    os.path.basename(row.get("source_file") or ""),
+                )
+            else:
+                values = (
+                    row["title"] or "",
+                    row["composer"] or "",
+                    row["arranger"] or "",
+                    row["ensemble_type"] or "",
+                    row["genre"] or "",
+                    row["difficulty"] or "",
+                    row.get("key_signature") or "",
+                    row.get("time_signature") or "",
+                    row.get("location") or "",
+                    row.get("last_played") or "",
+                    row["file_type"] or "",
+                    os.path.basename(row.get("source_file") or ""),
+                )
             iid = str(row["id"])
             self.tree.insert("", "end", iid=iid, values=values)
 
@@ -588,11 +894,10 @@ class MusicManager(ttk.Frame):
         sel = self.tree.selection()
         n = len(sel)
 
-        # Enable/disable multi-selection buttons
+        # Immediate cheap updates — no DB calls
         multi_state = NORMAL if n >= 1 else DISABLED
         self._delete_btn.config(state=multi_state)
         self._validate_btn.config(state=multi_state)
-
         self._update_status_label()
 
         if not sel:
@@ -600,23 +905,25 @@ class MusicManager(ttk.Frame):
             self._export_btn.config(state=DISABLED)
             return
 
-        # Detail panel shows the last selected item
-        iid = sel[-1]
-        self._selected_id = int(iid)
-        self._load_detail(self._selected_id)
+        self._selected_id = int(sel[-1])
 
-        # Enable/disable OMR buttons based on source file (single-select context)
-        piece = self.db.get_sheet_music(self._selected_id)
-        has_file = bool(piece and piece["file_path"])
+        # Debounce the detail panel — defer DB work until scrolling pauses
+        if self._detail_debounce_id is not None:
+            self.after_cancel(self._detail_debounce_id)
+        self._detail_debounce_id = self.after(150, self._load_detail_deferred)
+
+    def _load_detail_deferred(self):
+        self._detail_debounce_id = None
+        if self._selected_id is None:
+            return
+        piece = next((r for r in self._all_rows if r["id"] == self._selected_id), None)
+        has_file = bool(piece and piece.get("file_path"))
         state = NORMAL if has_file else DISABLED
         self._omr_btn.config(state=state)
         self._export_btn.config(state=state)
-
-        # Keep open chat window in sync with selected piece
         if self._chat_window and self._chat_window.winfo_exists():
-            self._chat_window.update_selected_music(
-                dict(piece) if piece else None
-            )
+            self._chat_window.update_selected_music(piece)
+        self._load_detail(self._selected_id)
 
     def _on_dbl_click(self, event):
         """Double-click: open source file if that column was clicked, else open edit dialog."""
@@ -659,37 +966,24 @@ class MusicManager(ttk.Frame):
         return [int(iid) for iid in self.tree.selection()]
 
     def _update_status_label(self):
-        total = len(self._all_rows)
         sel = len(self.tree.selection())
         if sel:
-            text = f"{total} pieces in inventory  •  {sel} selected"
+            text = f"{self._total_count} pieces in inventory  •  {sel} selected"
         else:
-            text = f"{total} pieces in inventory"
+            text = f"{self._total_count} pieces in inventory"
         self._status_label.config(text=text)
 
     def _load_detail(self, music_id: int):
-        piece = self.db.get_sheet_music(music_id)
+        piece = next((r for r in self._all_rows if r["id"] == music_id), None)
         if not piece:
             return
 
         row = dict(piece)
 
-        # OMR status info
-        job = self._omr_status_cache.get(music_id)
-        if job and job["status"] == "completed":
-            row["_omr_status"] = "Completed"
-            row["_last_processed"] = job.get("completed_at") or job.get("started_at") or ""
-        elif job and job["status"] == "failed":
-            row["_omr_status"] = "Failed"
-            row["_last_processed"] = job.get("started_at") or ""
-        else:
-            row["_omr_status"] = "Not processed"
-            row["_last_processed"] = ""
-
-        # Show just filename for file_path
-        fp = row.get("file_path") or ""
-        if fp:
-            row["file_path"] = os.path.basename(fp)
+        # Show just filename for source_file (full path is too long to display)
+        sf = row.get("source_file") or ""
+        if sf:
+            row["source_file"] = os.path.basename(sf)
 
         for key, lbl in self._detail_labels.items():
             val = row.get(key, "")
@@ -697,27 +991,14 @@ class MusicManager(ttk.Frame):
                 val = ""
             lbl.config(text=str(val))
 
-        # Color OMR status
-        status_lbl = self._detail_labels.get("_omr_status")
-        if status_lbl:
-            s = row.get("_omr_status", "")
-            if s == "Completed":
-                status_lbl.config(foreground="#1a7a1a",
-                                  font=("Segoe UI", 8, "bold"))
-            elif s == "Failed":
-                status_lbl.config(foreground="#CC0000",
-                                  font=("Segoe UI", 8, "bold"))
-            else:
-                status_lbl.config(foreground=muted_fg(),
-                                  font=("Segoe UI", 8))
-
+        job = self.db.get_latest_omr_job(music_id)
+        job = dict(job) if job else None
         self._load_performances(music_id)
-        self._load_omr_results(music_id)
+        self._load_omr_results(music_id, job)
         self._load_job_history(music_id)
 
-    def _load_omr_results(self, music_id: int):
+    def _load_omr_results(self, music_id: int, job=None):
         self._omr_tree.delete(*self._omr_tree.get_children())
-        job = self._omr_status_cache.get(music_id)
 
         if not job:
             self._omr_summary.config(
@@ -806,7 +1087,7 @@ class MusicManager(ttk.Frame):
                                     parent=self.winfo_toplevel())
             return
         from ui.performance_dialog import PerformanceDialog
-        dlg = PerformanceDialog(self.winfo_toplevel(), self.db, self._selected_id)
+        dlg = PerformanceDialog(self.winfo_toplevel(), self.db, self._selected_id, mode=self.mode)
         self.wait_window(dlg)
         if dlg.saved:
             self._load_performances(self._selected_id)
@@ -820,7 +1101,7 @@ class MusicManager(ttk.Frame):
         perf_id = int(sel[0])
         from ui.performance_dialog import PerformanceDialog
         dlg = PerformanceDialog(self.winfo_toplevel(), self.db, self._selected_id,
-                                performance_id=perf_id)
+                                performance_id=perf_id, mode=self.mode)
         self.wait_window(dlg)
         if dlg.saved:
             self._load_performances(self._selected_id)
@@ -841,6 +1122,39 @@ class MusicManager(ttk.Frame):
         self.db.delete_performance(perf_id)
         self._load_performances(self._selected_id)
 
+    # ──────────────────────────────────────────────── Pagination ──────────
+
+    def _on_prev_page(self):
+        if self._page > 0:
+            self._page -= 1
+            self._load_page()
+            self.tree.yview_moveto(0)
+
+    def _on_next_page(self):
+        total_pages = max(1, (self._total_count + self._page_size - 1) // self._page_size)
+        if self._page < total_pages - 1:
+            self._page += 1
+            self._load_page()
+            self.tree.yview_moveto(0)
+
+    def _update_pagination(self):
+        total_pages = max(1, (self._total_count + self._page_size - 1) // self._page_size)
+        current = self._page + 1
+        shown = len(self._all_rows)
+        start = self._page * self._page_size + 1
+        end = start + shown - 1
+
+        if self._total_count == 0:
+            label = "No results"
+        elif total_pages == 1:
+            label = ""   # count label at top already shows it
+        else:
+            label = f"{start}–{end} of {self._total_count}  •  Page {current} of {total_pages}"
+
+        self._page_label.config(text=label)
+        self._prev_btn.config(state=NORMAL if self._page > 0 else DISABLED)
+        self._next_btn.config(state=NORMAL if current < total_pages else DISABLED)
+
     # ──────────────────────────────────────────────── Action Handlers ──────
 
     def _get_selected_music(self):
@@ -856,7 +1170,7 @@ class MusicManager(ttk.Frame):
     def _add_music(self):
         from ui.music_dialog import MusicDialog
         dlg = MusicDialog(self.winfo_toplevel(), self.db,
-                          base_dir=self.base_dir, music_id=None)
+                          base_dir=self.base_dir, music_id=None, mode=self.mode)
         self.wait_window(dlg)
         self.refresh()
 
@@ -892,7 +1206,7 @@ class MusicManager(ttk.Frame):
 
         dlg = BatchImportDialog(
             self.winfo_toplevel(), list(paths), self.base_dir,
-            existing_titles=existing_titles,
+            existing_titles=existing_titles, mode=self.mode,
         )
         self.wait_window(dlg)
 
@@ -918,7 +1232,7 @@ class MusicManager(ttk.Frame):
             return
         from ui.music_dialog import MusicDialog
         dlg = MusicDialog(self.winfo_toplevel(), self.db,
-                          base_dir=self.base_dir, music_id=iid)
+                          base_dir=self.base_dir, music_id=iid, mode=self.mode)
         self.wait_window(dlg)
         self.refresh()
         self._load_detail(iid)
@@ -992,7 +1306,7 @@ class MusicManager(ttk.Frame):
         pieces = [dict(self.db.get_sheet_music(mid)) for mid in ids
                   if self.db.get_sheet_music(mid)]
         dlg = _LLMValidateDialog(
-            self.winfo_toplevel(), self.db, self.base_dir, pieces
+            self.winfo_toplevel(), self.db, self.base_dir, pieces, mode=self.mode
         )
         self.wait_window(dlg)
         if getattr(dlg, "changes_made", False):
@@ -1031,7 +1345,8 @@ class MusicManager(ttk.Frame):
         iid = self._get_selected_music()
         if iid is None:
             return
-        job = self._omr_status_cache.get(iid)
+        _job = self.db.get_latest_omr_job(iid)
+        job = dict(_job) if _job else None
         if not job or job["status"] != "completed" or not job.get("musicxml_path"):
             Messagebox.show_warning(
                 "No completed OMR output to export.\n"
@@ -1081,6 +1396,78 @@ class MusicManager(ttk.Frame):
             )
 
 
+    def _set_action_buttons_state(self, state):
+        """Enable or disable the write-action toolbar buttons."""
+        for btn in (self._add_btn, self._import_btn, self._edit_btn,
+                    self._validate_btn):
+            btn.config(state=state)
+        # Delete and OMR buttons also depend on selection; just disable fully in external mode
+        if state == DISABLED:
+            self._delete_btn.config(state=DISABLED)
+
+    def _toggle_external_source(self):
+        """Switch between the profile's own DB and an external DB."""
+        if not self._show_external_var.get():
+            # Unchecked — revert to main DB
+            self.db = self._main_db
+            self._ext_source_label.config(text="")
+            self._set_action_buttons_state(NORMAL)
+            self.refresh()
+            return
+
+        # Checked — load external DB path from settings
+        from ui.settings_dialog import load_settings
+        settings = load_settings(self.base_dir)
+        ext_path = (settings.get("teacher") or {}).get("external_db_path", "").strip()
+
+        if not ext_path:
+            self._show_external_var.set(False)
+            Messagebox.show_warning(
+                "No external database configured.\n"
+                "Go to Settings → Teacher and select a .db file.",
+                title="No External Database",
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        if not os.path.isfile(ext_path):
+            self._show_external_var.set(False)
+            Messagebox.show_warning(
+                f"External database not found:\n{ext_path}",
+                title="File Not Found",
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        try:
+            import sqlite3
+            _conn = sqlite3.connect(ext_path)
+            _tables = {r[0] for r in _conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            _sheet_count = _conn.execute("SELECT COUNT(*) FROM sheet_music").fetchone()[0] \
+                if "sheet_music" in _tables else 0
+            _works_count = _conn.execute("SELECT COUNT(*) FROM works").fetchone()[0] \
+                if "works" in _tables else 0
+            _conn.close()
+
+            if _works_count > 0 and _sheet_count == 0:
+                self.db = _WorksCatalogAdapter(ext_path)
+            else:
+                from database import Database
+                self.db = Database(ext_path)
+        except Exception as e:
+            self._show_external_var.set(False)
+            Messagebox.show_error(
+                f"Could not open external database:\n{e}",
+                title="Error",
+                parent=self.winfo_toplevel(),
+            )
+            return
+
+        self._ext_source_label.config(text=f"({os.path.basename(ext_path)})")
+        self._set_action_buttons_state(DISABLED)
+        self.refresh()
+
     def _open_chat(self):
         from ui.chat_dialog import ChatDialog
         if self._chat_window and self._chat_window.winfo_exists():
@@ -1094,7 +1481,7 @@ class MusicManager(ttk.Frame):
                 piece = dict(row)
         self._chat_window = ChatDialog(
             self.winfo_toplevel(), self.db, self.base_dir,
-            selected_music=piece,
+            selected_music=piece, mode=self.mode,
         )
 
 
@@ -1439,10 +1826,11 @@ class _LLMValidateDialog(ttk.Toplevel):
 
     _BACKUP_MODELS = ["claude-opus-4-6", "openai/gpt-4o"]
 
-    def __init__(self, parent, db, base_dir: str, pieces: list[dict]):
+    def __init__(self, parent, db, base_dir: str, pieces: list[dict], mode: str = "band"):
         super().__init__(parent)
         self.db = db
         self.base_dir = base_dir
+        self._mode = mode
         self.pieces = pieces  # selected piece dicts
         self.changes_made = False
 
@@ -1584,8 +1972,9 @@ class _LLMValidateDialog(ttk.Toplevel):
                 f"composer=\"{p.get('composer','')}\", arranger=\"{p.get('arranger','')}\""
                 for p in img_pieces
             )
+            _inventory_type = "choir/choral music" if self._mode == "choir" else "band sheet music"
             system_prompt = (
-                "You are a meticulous music librarian verifying a school band sheet music inventory "
+                f"You are a meticulous music librarian verifying a school {_inventory_type} inventory "
                 "using photographs. Your primary job is accurate visual text recognition.\n\n"
                 "KEY RULES:\n"
                 "- Music covers use many fonts: script, italic, decorative, hand-lettered, embossed, "
@@ -1779,10 +2168,16 @@ class _LLMValidateDialog(ttk.Toplevel):
         # Duplicate detection: only check titles touched by this validation run —
         # the selected pieces' original titles, plus any corrected titles suggested above.
         self.after(0, self._log_msg, "Checking for duplicate entries in database...")
-        _SCORE_FIELDS = [
-            "composer", "arranger", "genre", "difficulty",
-            "key_signature", "time_signature", "ensemble_type", "location",
-        ]
+        if self._mode == "choir":
+            _SCORE_FIELDS = [
+                "composer", "arranger", "genre", "difficulty",
+                "key_signature", "voicing", "language", "location",
+            ]
+        else:
+            _SCORE_FIELDS = [
+                "composer", "arranger", "genre", "difficulty",
+                "key_signature", "time_signature", "ensemble_type", "location",
+            ]
 
         def _detail_score(p):
             return sum(1 for f in _SCORE_FIELDS if (p.get(f) or "").strip())
@@ -1827,19 +2222,30 @@ class _LLMValidateDialog(ttk.Toplevel):
             entry_lines = []
             for e in group:
                 parts = [f"ID {e['id']}:"]
-                for f in ("arranger", "ensemble_type", "genre", "difficulty",
-                          "key_signature", "time_signature"):
+                if self._mode == "choir":
+                    dup_fields = ("arranger", "voicing", "language", "genre", "difficulty", "key_signature")
+                else:
+                    dup_fields = ("arranger", "ensemble_type", "genre", "difficulty",
+                                  "key_signature", "time_signature")
+                for f in dup_fields:
                     v = (e.get(f) or "").strip()
                     parts.append(f'{f}="{v}"' if v else f'{f}=(blank)')
                 entry_lines.append("  " + "  ".join(parts))
 
+            if self._mode == "choir":
+                _inv_label = "school choir/choral music inventory"
+                _knowledge_label = "published choral music"
+            else:
+                _inv_label = "school band sheet music inventory"
+                _knowledge_label = "published band and jazz ensemble music"
+
             dup_prompt = (
-                "You are a music librarian validating a school band sheet music inventory.\n\n"
+                f"You are a music librarian validating a {_inv_label}.\n\n"
                 f"The following {len(group)} database entries all share the title "
                 f'"{ref_title}" by {composer_str}. Some may be legitimate distinct published '
                 "arrangements; others may be duplicate or erroneous entries.\n\n"
                 "Entries:\n" + "\n".join(entry_lines) + "\n\n"
-                "Using your knowledge of published band and jazz ensemble music:\n"
+                f"Using your knowledge of {_knowledge_label}:\n"
                 "1. Identify each entry as VALID (a real published arrangement) or "
                 "DUPLICATE/INVALID (erroneously entered, blank arranger that duplicates "
                 "another, or an arranger who never published this piece).\n"
@@ -1977,7 +2383,10 @@ class _LLMValidateDialog(ttk.Toplevel):
         # Text-based enrichment: for pieces missing metadata fields OR whose identity
         # (title/composer/arranger) was corrected by image validation — re-verify all
         # other fields using the (possibly corrected) title/composer as the lookup key.
-        _ENRICH_TRIGGER = ["difficulty", "key_signature", "time_signature", "genre", "ensemble_type"]
+        if self._mode == "choir":
+            _ENRICH_TRIGGER = ["difficulty", "key_signature", "voicing", "language", "genre"]
+        else:
+            _ENRICH_TRIGGER = ["difficulty", "key_signature", "time_signature", "genre", "ensemble_type"]
         pieces_to_enrich = [
             p for p in self.pieces
             if any(not (p.get(f) or "").strip() for f in _ENRICH_TRIGGER)
@@ -1988,22 +2397,38 @@ class _LLMValidateDialog(ttk.Toplevel):
             self.after(0, self._log_msg,
                        f"Text enrichment: looking up metadata for {len(pieces_to_enrich)} piece(s)...")
             try:
-                from ui.music_importer import _enrich_piece
+                if self._mode == "choir":
+                    from ui.music_importer import _enrich_piece_choir as _enrich_fn
+                else:
+                    from ui.music_importer import _enrich_piece as _enrich_fn
             except ImportError:
-                _enrich_piece = None
+                _enrich_fn = None
 
-            if _enrich_piece:
+            if _enrich_fn:
                 _CONF_MAP = {"high": 0.9, "medium": 0.7, "low": 0.4}
-                _ENRICH_FIELDS = [
-                    ("suggested_title",          "title"),
-                    ("suggested_composer",        "composer"),
-                    ("suggested_arranger",        "arranger"),
-                    ("suggested_genre",           "genre"),
-                    ("suggested_key_signature",   "key_signature"),
-                    ("suggested_time_signature",  "time_signature"),
-                    ("suggested_difficulty",      "difficulty"),
-                    ("suggested_ensemble_type",   "ensemble_type"),
-                ]
+                if self._mode == "choir":
+                    _ENRICH_FIELDS = [
+                        ("suggested_title",          "title"),
+                        ("suggested_composer",        "composer"),
+                        ("suggested_arranger",        "arranger"),
+                        ("suggested_genre",           "genre"),
+                        ("suggested_key_signature",   "key_signature"),
+                        ("suggested_voicing",         "voicing"),
+                        ("suggested_language",        "language"),
+                        ("suggested_accompaniment",   "accompaniment"),
+                        ("suggested_difficulty",      "difficulty"),
+                    ]
+                else:
+                    _ENRICH_FIELDS = [
+                        ("suggested_title",          "title"),
+                        ("suggested_composer",        "composer"),
+                        ("suggested_arranger",        "arranger"),
+                        ("suggested_genre",           "genre"),
+                        ("suggested_key_signature",   "key_signature"),
+                        ("suggested_time_signature",  "time_signature"),
+                        ("suggested_difficulty",      "difficulty"),
+                        ("suggested_ensemble_type",   "ensemble_type"),
+                    ]
                 for i, p in enumerate(pieces_to_enrich):
                     pct = int(90 + i / len(pieces_to_enrich) * 9)
                     self.after(0, self._set_progress, pct,
@@ -2015,7 +2440,7 @@ class _LLMValidateDialog(ttk.Toplevel):
                     self.after(0, self._log_msg,
                                f"  [{i+1}/{len(pieces_to_enrich)}] \"{label}\"{reason}")
                     try:
-                        enriched = _enrich_piece(piece_for_enrich, self.base_dir)
+                        enriched = _enrich_fn(piece_for_enrich, self.base_dir)
                         conf_str = str(enriched.get("confidence", "")).lower()
                         conf_val = _CONF_MAP.get(conf_str, 0.7)
                         sug = {
@@ -2381,6 +2806,9 @@ class _FixSuggestionsDialog(ttk.Toplevel):
                         ("suggested_time_signature",  "current_time_signature", "Time Sig"),
                         ("suggested_difficulty",      "current_difficulty",     "Difficulty"),
                         ("suggested_ensemble_type",   "current_ensemble_type",  "Ensemble"),
+                        ("suggested_voicing",         "current_voicing",        "Voicing"),
+                        ("suggested_language",        "current_language",       "Language"),
+                        ("suggested_accompaniment",   "current_accompaniment",  "Accompaniment"),
                         ("suggested_location",        None,                     "Location"),
                     ]
                     lines = [f"CORRECTION  \"{s.get('current_title','')}\""]
@@ -2460,6 +2888,9 @@ class _FixSuggestionsDialog(ttk.Toplevel):
                             ("suggested_time_signature", "time_signature"),
                             ("suggested_difficulty",     "difficulty"),
                             ("suggested_ensemble_type",  "ensemble_type"),
+                            ("suggested_voicing",        "voicing"),
+                            ("suggested_language",       "language"),
+                            ("suggested_accompaniment",  "accompaniment"),
                             ("suggested_location",       "location"),
                         ]:
                             val = s.get(skey)

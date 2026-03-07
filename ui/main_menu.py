@@ -17,8 +17,18 @@ class MainMenu(ttk.Frame):
         self.app_dir = app_dir or base_dir
         self.teacher_name = teacher_name
         self._windows = {}  # key -> Toplevel; tracks open manager windows
+        from ui.settings_dialog import load_settings
+        settings = load_settings(base_dir)
+        self._program_type = (settings.get("teacher") or {}).get("program_type", "band")
+        # Stat label refs — populated in _build(), None for unused slots
+        self._stat_checkedout = None
+        self._stat_repair = None
+        self._stat_students = None
+        self._stat_students_year = None
+        self._stat_music = None
+        self._refresh_after_id = None
         self._build()
-        self._refresh_stats()
+        self._schedule_refresh()
 
     def _raise_or_open(self, key: str) -> ttk.Toplevel | None:
         """If the window for *key* is still open, bring it to front and return it.
@@ -89,7 +99,7 @@ class MainMenu(ttk.Frame):
 
         ttk.Label(
             text_frame,
-            text=f"{self.teacher_name}  •  Instrument Management" if self.teacher_name else "Instrument Management",
+            text=f"{self.teacher_name}  •  Music Management" if self.teacher_name else "Music Management",
             font=("Segoe UI", fs(10)),
             bootstyle=(INVERSE, PRIMARY),
             anchor=CENTER,
@@ -99,77 +109,35 @@ class MainMenu(ttk.Frame):
         stats_outer = ttk.Frame(self, bootstyle=SECONDARY)
         stats_outer.pack(fill=X)
 
-        self._stats_frame = ttk.Frame(stats_outer)
-        self._stats_frame.pack(pady=12)
+        stats_inner = ttk.Frame(stats_outer)
+        stats_inner.pack(pady=10)
 
-        self._stat_total     = self._make_stat(self._stats_frame, "0", "Total Instruments", 0)
-        self._stat_available = self._make_stat(self._stats_frame, "0", "Available", 1)
-        self._stat_checkedout = self._make_stat(self._stats_frame, "0", "Checked Out", 2)
-        self._stat_repair    = self._make_stat(self._stats_frame, "0", "In Repair", 3)
+        # Left stats — rebuilt dynamically when program type changes
+        self._left_stats_container = ttk.Frame(stats_inner)
+        self._left_stats_container.pack(side=LEFT, padx=(24, 28))
+        self._build_left_stats()
 
-        # ── Main Buttons ──────────────────────────────────────────────────────
-        btn_area = ttk.Frame(self)
-        btn_area.pack(fill=BOTH, expand=True, padx=40, pady=(20, 30))
+        # Vertical divider
+        ttk.Separator(stats_inner, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=4, pady=6)
 
-        # ── Instrument Inventory group ───────────────────────────────────────
-        ttk.Label(
-            btn_area,
-            text="Instrument Inventory",
-            font=("Segoe UI", fs(10), "bold"),
-            foreground=muted_fg(),
-        ).pack(anchor=W, pady=(0, 6))
-
-        self._make_main_button(
-            btn_area,
-            text="Manage Instrument Inventory",
-            subtext="View, add, edit, check out & track instruments",
-            icon="🎺",
-            command=self._open_inventory,
-            style=PRIMARY,
-            row=0
-        )
-
-        self._make_main_button(
-            btn_area,
-            text="Manage Students",
-            subtext="View and edit student records by school year",
-            icon="🎓",
-            command=self._open_students,
-            style=INFO,
-            row=1
-        )
-
-        self._make_main_button(
-            btn_area,
-            text="Active Checkouts",
-            subtext="See all instruments currently checked out",
-            icon="📋",
-            command=self._open_active_checkouts,
-            style=WARNING,
-            row=2
-        )
-
-        # ── Sheet Music group ────────────────────────────────────────────────
-        ttk.Separator(btn_area).pack(fill=X, pady=(16, 12))
+        # Right: Music section (same for all program types)
+        music_section = ttk.Frame(stats_inner)
+        music_section.pack(side=LEFT, padx=(28, 24))
 
         ttk.Label(
-            btn_area,
-            text="Sheet Music",
-            font=("Segoe UI", fs(10), "bold"),
+            music_section,
+            text="MUSIC",
+            font=("Segoe UI", fs(7), "bold"),
             foreground=muted_fg(),
-        ).pack(anchor=W, pady=(0, 6))
+            anchor=CENTER,
+        ).pack(fill=X, pady=(0, 6))
 
-        self._make_main_button(
-            btn_area,
-            text="Music Manager",
-            subtext="Manage sheet music library and OMR processing",
-            icon="🎼",
-            command=self._open_music_manager,
-            style=SECONDARY,
-            row=3
-        )
+        music_stats = ttk.Frame(music_section)
+        music_stats.pack()
+        self._stat_music = self._make_stat(music_stats, "—", "Pieces of Music", 0)
 
         # ── Footer ────────────────────────────────────────────────────────────
+        # Pack footer BEFORE btn_area so it reserves bottom space first.
         footer = ttk.Frame(self)
         footer.pack(fill=X, side=BOTTOM)
         ttk.Separator(footer).pack(fill=X)
@@ -218,6 +186,68 @@ class MainMenu(ttk.Frame):
         settings_lbl.pack(side=LEFT)
         settings_lbl.bind("<Button-1>", lambda e: self._open_settings())
 
+        # ── Main Buttons ──────────────────────────────────────────────────────
+        btn_area = ttk.Frame(self)
+        btn_area.pack(fill=BOTH, expand=True, padx=40, pady=(20, 16))
+
+        # ── Instrument Inventory group ───────────────────────────────────────
+        ttk.Label(
+            btn_area,
+            text="Instrument Inventory",
+            font=("Segoe UI", fs(10), "bold"),
+            foreground=muted_fg(),
+        ).pack(anchor=W, pady=(0, 6))
+
+        self._make_main_button(
+            btn_area,
+            text="Manage Instrument Inventory",
+            subtext="View, add, edit, check out & track instruments",
+            icon="🎺",
+            command=self._open_inventory,
+            style=PRIMARY,
+            row=0
+        )
+
+        self._make_main_button(
+            btn_area,
+            text="Active Checkouts",
+            subtext="See all instruments currently checked out",
+            icon="📋",
+            command=self._open_active_checkouts,
+            style=WARNING,
+            row=1
+        )
+
+        self._make_main_button(
+            btn_area,
+            text="Manage Students",
+            subtext="View and edit student records by school year",
+            icon="🎓",
+            command=self._open_students,
+            style=INFO,
+            row=2
+        )
+
+        # ── Sheet Music group ────────────────────────────────────────────────
+        ttk.Separator(btn_area).pack(fill=X, pady=(16, 12))
+
+        ttk.Label(
+            btn_area,
+            text="Sheet Music",
+            font=("Segoe UI", fs(10), "bold"),
+            foreground=muted_fg(),
+        ).pack(anchor=W, pady=(0, 6))
+
+        self._make_main_button(
+            btn_area,
+            text="Music Manager",
+            subtext="Manage sheet music library",
+            icon="🎼",
+            command=self._open_music_manager,
+            style=SECONDARY,
+            row=3
+        )
+
     def _make_stat(self, parent, value: str, label: str, col: int):
         f = ttk.Frame(parent)
         f.grid(row=0, column=col, padx=20)
@@ -246,17 +276,84 @@ class MainMenu(ttk.Frame):
             foreground=muted_fg(),
         ).pack(anchor=W, pady=(2, 0))
 
+    def _build_left_stats(self):
+        """Build (or rebuild) the left stats section for the current program type."""
+        # Reset stat refs
+        self._stat_checkedout = None
+        self._stat_repair = None
+        self._stat_students = None
+        self._stat_students_year = None
+        # Clear existing children
+        for w in self._left_stats_container.winfo_children():
+            w.destroy()
+
+        if self._program_type == "choir":
+            ttk.Label(
+                self._left_stats_container,
+                text="STUDENTS",
+                font=("Segoe UI", fs(7), "bold"),
+                foreground=muted_fg(),
+                anchor=CENTER,
+            ).pack(fill=X, pady=(0, 6))
+            inner = ttk.Frame(self._left_stats_container)
+            inner.pack(anchor=CENTER)
+            f = ttk.Frame(inner)
+            f.grid(row=0, column=0, padx=20)
+            self._stat_students = ttk.Label(f, text="—", font=("Segoe UI", fs(20), "bold"), bootstyle=PRIMARY)
+            self._stat_students.pack()
+            self._stat_students_year = ttk.Label(f, text="This Year", font=("Segoe UI", fs(8)), foreground=muted_fg())
+            self._stat_students_year.pack()
+        else:
+            ttk.Label(
+                self._left_stats_container,
+                text="INSTRUMENTS",
+                font=("Segoe UI", fs(7), "bold"),
+                foreground=muted_fg(),
+                anchor=CENTER,
+            ).pack(fill=X, pady=(0, 6))
+            inner = ttk.Frame(self._left_stats_container)
+            inner.pack(anchor=CENTER)
+            self._stat_checkedout = self._make_stat(inner, "—", "Checked Out", 0)
+            self._stat_repair     = self._make_stat(inner, "—", "In Repair", 1)
+
     def _refresh_stats(self):
+        """Read current settings + DB stats and update the stats bar. Safe to call any time."""
+        # Re-read program type in case settings changed
         try:
-            stats = self.db.get_stats()
-            self._stat_total.config(text=str(stats["total"]))
-            self._stat_available.config(text=str(stats["available"]))
-            self._stat_checkedout.config(text=str(stats["checked_out"]))
-            self._stat_repair.config(text=str(stats["in_repair"]))
+            from ui.settings_dialog import load_settings
+            settings = load_settings(self.base_dir)
+            new_type = (settings.get("teacher") or {}).get("program_type", "band")
+            if new_type != self._program_type:
+                self._program_type = new_type
+                self._build_left_stats()
         except Exception:
             pass
-        # Refresh every 30 seconds
-        self.after(30000, self._refresh_stats)
+        try:
+            stats = self.db.get_stats()
+            if self._program_type == "choir":
+                count, year = self.db.get_student_count_for_current_year()
+                self._stat_students.config(text=str(count))
+                self._stat_students_year.config(text=year if year else "This Year")
+                # Music count comes from the choir DB, not the band DB
+                try:
+                    from database import Database
+                    choir_db = Database(os.path.join(self.base_dir, "choir_music.db"))
+                    music_count = choir_db.get_stats().get("sheet_music", 0)
+                except Exception:
+                    music_count = 0
+            else:
+                co, total = stats["checked_out"], stats["total"]
+                self._stat_checkedout.config(text=f"{co} / {total}")
+                self._stat_repair.config(text=str(stats["in_repair"]))
+                music_count = stats.get("sheet_music", 0)
+            self._stat_music.config(text=str(music_count))
+        except Exception:
+            pass
+
+    def _schedule_refresh(self):
+        """Periodic 30-second refresh loop — only one instance should run at a time."""
+        self._refresh_stats()
+        self._refresh_after_id = self.after(30000, self._schedule_refresh)
 
     def _on_child_close(self, key: str):
         """Clean up window reference and refresh stats when a child window closes."""
@@ -297,10 +394,24 @@ class MainMenu(ttk.Frame):
         if self._raise_or_open("music"):
             return
         from ui.music_manager import MusicManager
+        from ui.settings_dialog import load_settings
+
+        settings = load_settings(self.base_dir)
+        program_type = (settings.get("teacher") or {}).get("program_type", "band")
+
+        if program_type == "choir":
+            from database import Database
+            choir_db_path = os.path.join(self.base_dir, "choir_music.db")
+            music_db = Database(choir_db_path)
+            title = "Choir Music Manager — Roka's Resonance"
+        else:
+            music_db = self.db
+            title = "Music Manager — Roka's Resonance"
+
         win = ttk.Toplevel(self.winfo_toplevel())
-        win.title("Music Manager — Roka's Resonance")
+        win.title(title)
         win.state("zoomed")
-        manager = MusicManager(win, self.db, self.base_dir)
+        manager = MusicManager(win, music_db, self.base_dir, mode=program_type)
         manager.pack(fill=BOTH, expand=True)
         win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("music"))
         self._windows["music"] = win
@@ -357,7 +468,9 @@ class MainMenu(ttk.Frame):
 
     def _open_settings(self):
         from ui.settings_dialog import SettingsDialog
-        SettingsDialog(self.winfo_toplevel(), self.base_dir)
+        dlg = SettingsDialog(self.winfo_toplevel(), self.base_dir)
+        self.winfo_toplevel().wait_window(dlg)  # block until Save/Cancel closes dialog
+        self._refresh_stats()
 
     def _switch_profile(self):
         """Ask main.py to show the profile selector via the callback."""

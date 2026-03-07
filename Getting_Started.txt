@@ -1,14 +1,15 @@
 ===============================================================
   ROKA'S RESONANCE — GETTING STARTED GUIDE
-  Chinook Middle School Band Inventory Manager
+  Chinook Middle School Music Management
 ===============================================================
 
 OVERVIEW
 --------
-Roka's Resonance manages your band program's instrument inventory,
-student records, and sheet music library. It also includes "Ask
-Reginald," an AI assistant who can answer questions about your
-inventory and repertoire.
+Roka's Resonance manages your music program's instrument inventory,
+student records, and sheet music library. It supports both band
+programs (concert band, jazz band) and choir programs (choral and
+vocal ensemble repertoire). It also includes "Ask Reginald," an AI
+assistant who can answer questions about your inventory and repertoire.
 
 This guide walks you through setup from scratch, assuming you are
 starting a brand-new profile with no existing data.
@@ -56,10 +57,25 @@ STEP 3 — CREATE YOUR PROFILE
   any time using the "Switch Profile" link on the main menu.
 
 
-STEP 4 — CONFIGURE AI SETTINGS (OPTIONAL BUT RECOMMENDED)
+STEP 4 — CHOOSE YOUR PROGRAM TYPE
+-----------------------------------
+  Before doing anything else, tell the program whether you teach
+  band or choir. This controls which Music Manager and metadata
+  fields are used.
+
+  1. Click "Settings" at the bottom of the main menu.
+  2. On the Teacher tab, select either Band or Choir.
+  3. Click Save.
+
+  You can change this at any time. The main menu stats bar and
+  Music Manager will update to match your program type.
+
+
+STEP 5 — CONFIGURE AI SETTINGS (OPTIONAL BUT RECOMMENDED)
 ----------------------------------------------------------
   The AI assistant (Reginald) and the Music Import feature both
-  require an API key to work. You need at least one of:
+  require an API key to work. Go to Settings > LLM Configuration.
+  You need at least one of:
 
   Option A — GitHub Models (free, easiest to set up):
     1. Sign in at https://github.com
@@ -67,27 +83,33 @@ STEP 4 — CONFIGURE AI SETTINGS (OPTIONAL BUT RECOMMENDED)
        (or go to https://github.com/settings/tokens)
     3. Generate a new token. No special permissions are needed.
     4. Copy the token.
-    5. In Roka's Resonance, click "Settings" at the bottom of the
-       main menu.
-    6. In the LLM tab, paste the token into the "GitHub API Key"
-       field.
-    7. Select a model (e.g., openai/gpt-4o) from the dropdown.
+    5. Make sure "Local API Keys" is selected at the top of the
+       LLM Configuration tab.
+    6. Paste the token into the "GitHub API Key" field.
+    7. Select a model (e.g., openai/gpt-4o-mini) from the dropdown.
     8. Click "Test Connection" to verify it works, then Save.
 
   Option B — Anthropic API (Claude models):
     1. Create an account at https://console.anthropic.com
     2. Go to API Keys and create a new key.
     3. Copy the key.
-    4. In Settings > LLM tab, paste into "Anthropic API Key."
+    4. In Settings > LLM Configuration, paste into "Anthropic API Key."
     5. Select a Claude model (e.g., claude-haiku-4-5-20251001
        for fast/cheap, claude-sonnet-4-6 for best quality).
     6. Click "Test Connection," then Save.
 
-  You can configure both keys. The program uses whichever
-  matches the currently selected model.
+  Option C — Claude Proxy (shared endpoint):
+    If your school has a deployed Claude proxy server:
+    1. Select "Claude Proxy" at the top of LLM Configuration.
+    2. Enter the proxy Endpoint URL and Token provided by your
+       administrator.
+    3. Click "Test Connection," then Save.
+
+  You can configure both GitHub and Anthropic keys. The program
+  uses whichever matches the currently selected model.
 
 
-STEP 5 — ADD YOUR INSTRUMENTS
+STEP 6 — ADD YOUR INSTRUMENTS
 ------------------------------
   Option A — Add instruments one at a time:
     1. From the main menu, click "Manage Instrument Inventory."
@@ -111,7 +133,7 @@ STEP 5 — ADD YOUR INSTRUMENTS
   list with a green dot (Available) or brown dot (Checked Out).
 
 
-STEP 6 — ADD YOUR STUDENTS
+STEP 7 — ADD YOUR STUDENTS
 ---------------------------
   Option A — Add students one at a time:
     1. From the main menu, click "Manage Students."
@@ -127,7 +149,7 @@ STEP 6 — ADD YOUR STUDENTS
   You can filter by year and grade in the Students screen.
 
 
-STEP 7 — CHECK OUT AN INSTRUMENT
+STEP 8 — CHECK OUT AN INSTRUMENT
 ---------------------------------
   1. In the Instrument Inventory screen, click on an instrument
      to select it.
@@ -142,9 +164,15 @@ STEP 7 — CHECK OUT AN INSTRUMENT
   To return an instrument: select it and click "Check In."
 
 
-STEP 8 — ADD YOUR SHEET MUSIC (OPTIONAL)
+STEP 9 — ADD YOUR SHEET MUSIC (OPTIONAL)
 -----------------------------------------
   1. From the main menu, click "Music Manager."
+     - Band programs: opens the Band Music Manager.
+       Tracks Ensemble Type, Genre, Difficulty, Key, Time Signature.
+     - Choir programs: opens the Choir Music Manager.
+       Tracks Voicing (SATB, SSA, etc.), Language, Accompaniment,
+       Genre, and Difficulty.
+
   2. Click "Add Music" to add a single piece manually, or
   3. Click "Import Music" to use the AI-powered importer.
      - Take photos of your sheet music covers and select the
@@ -158,8 +186,8 @@ STEP 8 — ADD YOUR SHEET MUSIC (OPTIONAL)
   and detect duplicate entries.
 
 
-STEP 9 — ASK REGINALD
-----------------------
+STEP 10 — ASK REGINALD
+-----------------------
   Reginald is your AI inventory assistant. He has access to your
   complete instrument inventory, student roster, and sheet music
   library and can answer questions like:
@@ -168,6 +196,11 @@ STEP 9 — ASK REGINALD
     "What is Jimmy checked out?"
     "Do we have any pieces in F major at grade 2?"
     "List all concert band pieces by difficulty."
+
+  When in Choir mode:
+    "What SATB pieces do we have?"
+    "Do we have anything in Latin for the spring concert?"
+    "Suggest an SSA piece at grade 2 with piano accompaniment."
 
   To open Reginald:
     - In the Instrument Inventory screen: click "Ask Reginald"
@@ -178,7 +211,7 @@ STEP 9 — ASK REGINALD
       gives him additional context about that specific item.
 
   Note: Reginald requires an API key configured in Settings
-  (see Step 4 above).
+  (see Step 5 above).
 
 
 TIPS
@@ -200,6 +233,13 @@ TIPS
 
   - Double-click any row in the inventory or music list to
     open the edit dialog for that item.
+
+  - To change color scheme or text size, go to Settings > Display.
+    Color scheme changes take effect immediately; font size
+    changes require a restart.
+
+  - To set up automatic backups to OneDrive, a network drive,
+    or USB, go to Settings > Backup.
 
 
 GETTING HELP

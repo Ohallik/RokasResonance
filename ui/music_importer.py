@@ -297,10 +297,74 @@ def _extract_toc(images: list[dict], base_dir: str, on_retry=None) -> list[dict]
 
 # ── Enrichment (optional) ──────────────────────────────────────────────────────
 
-def _enrich_piece(piece: dict, base_dir: str, on_retry=None) -> dict:
-    """Text-only LLM call to fill in difficulty, key, genre, comments."""
-    from llm_client import query
+_ENRICH_SYSTEM = (
+    "You are a band director and music librarian with deep knowledge of "
+    "published educational band and ensemble music."
+)
 
+_ENRICH_FIELDS = (
+    "Fields to fill:\n"
+    "- title: exact corrected full title\n"
+    "- composer: full name of original composer\n"
+    "- arranger: full name of arranger (empty if none)\n"
+    "- publisher: publishing house\n"
+    "- difficulty: 1–5 scale. Grade 1→1, Grade 2→2, Grade 3→3, Grade 4→4, "
+    "  Grade 5→4.5, Grade 6→5. "
+    "  1=beginning band, 2=easy middle school, 3=developing middle school, "
+    "  4=strong middle/early high school, 5=advanced.\n"
+    "- key_signature: concert pitch key. Comma-separated if the piece modulates.\n"
+    "- time_signature: primary meter (e.g. '4/4', '3/4', '6/8')\n"
+    "- genre: March, Concert, Pop/Rock, Classical, Jazz, World, Holiday, "
+    "  Warm-Up, Method Book, Chorale, or Other\n"
+    "- ensemble_type: Concert Band, Jazz Band, Percussion Ensemble, "
+    "  Small Ensemble, Solo, Marching Band, or Other\n"
+    "- comments: One sentence describing the piece, then a bullet list of "
+    "  duration, notable features, ideal occasion, challenges, and extras. "
+    "  Omit bullets that duplicate structured fields.\n"
+    "- confidence: high | medium | low — your overall confidence that the "
+    "  above facts are correct for THIS specific published work. "
+    "  high = you know this piece well from a recognised publisher; "
+    "  medium = you are fairly sure but the title is common or details are thin; "
+    "  low = you are inferring or the piece is obscure.\n\n"
+    "Respond ONLY with a JSON object with those exact keys."
+)
+
+
+def _ddg_search(piece: dict) -> str:
+    """Free DuckDuckGo search for a piece. Returns concatenated snippets or ''."""
+    try:
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
+    except ImportError:
+        return ""
+
+    title    = (piece.get("title")    or "").strip()
+    composer = (piece.get("composer") or "").strip()
+    arranger = (piece.get("arranger") or "").strip()
+    names = " ".join(filter(None, [composer, arranger]))
+    query = f'"{title}" {names} band sheet music'.strip()
+
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=5))
+        parts = [
+            f"[{r.get('href', '')}]\n{r.get('body', '').strip()}"
+            for r in results if r.get("body", "").strip()
+        ]
+        return "\n\n".join(parts)
+    except Exception:
+        return ""
+
+
+def _enrich_piece(piece: dict, base_dir: str, on_retry=None) -> dict:
+    """
+    Three-tier enrichment:
+      1. Free DuckDuckGo search → Haiku parses snippets  (~$0)
+      2. Haiku + Anthropic web search, 1 use             (~$0.05/piece)
+      3. Selected model, training knowledge only          (no search cost)
+    """
     title = (piece.get("title") or "").strip()
     if not title:
         return piece
@@ -316,53 +380,104 @@ def _enrich_piece(piece: dict, base_dir: str, on_retry=None) -> dict:
         if val:
             context_lines.append(f"{label}: {val}")
 
-    prompt = (
-        "You are a band director and music librarian with deep knowledge of "
-        "published educational band and ensemble music.\n\n"
-        "Piece:\n" + "\n".join(f"  {l}" for l in context_lines) + "\n\n"
-        "Use your knowledge of this specific published work as the PRIMARY source. "
-        "Cross-reference windrep.org, jwpepper.com, and sheetmusicplus.com. "
-        "If you cannot confidently determine a value, return empty string — do not guess.\n\n"
-        "Fields to fill:\n"
-        "- title: exact corrected full title\n"
-        "- composer: full name of original composer\n"
-        "- arranger: full name of arranger (empty if none)\n"
-        "- publisher: publishing house\n"
-        "- difficulty: 1–5 scale. Grade 1→1, Grade 2→2, Grade 3→3, Grade 4→4, "
-        "  Grade 5→4.5, Grade 6→5. "
-        "  1=beginning band, 2=easy middle school, 3=developing middle school, "
-        "  4=strong middle/early high school, 5=advanced.\n"
-        "- key_signature: concert pitch key. Comma-separated if the piece modulates.\n"
-        "- time_signature: primary meter (e.g. '4/4', '3/4', '6/8')\n"
-        "- genre: March, Concert, Pop/Rock, Classical, Jazz, World, Holiday, "
-        "  Warm-Up, Method Book, Chorale, or Other\n"
-        "- ensemble_type: Concert Band, Jazz Band, Percussion Ensemble, "
-        "  Small Ensemble, Solo, Marching Band, or Other\n"
-        "- comments: One sentence describing the piece, then a bullet list of "
-        "  duration, notable features, ideal occasion, challenges, and extras. "
-        "  Omit bullets that duplicate structured fields.\n"
-        "- confidence: high | medium | low — your overall confidence that the "
-        "  above facts are correct for THIS specific published work. "
-        "  high = you know this piece well from a recognised publisher; "
-        "  medium = you are fairly sure but the title is common or details are thin; "
-        "  low = you are inferring or the piece is obscure.\n\n"
-        "Respond ONLY with a JSON object with those exact keys."
-    )
+    piece_context = "\n".join(f"  {l}" for l in context_lines)
 
-    try:
-        raw = query(base_dir, prompt, on_retry=on_retry)
+    _PLACEHOLDERS = {
+        "unknown", "n/a", "none", "not specified", "not listed",
+        "not available", "not found", "not applicable", "undetermined",
+        "varies", "various", "tbd", "see score", "see parts",
+    }
+
+    def _is_placeholder(v: str) -> bool:
+        vl = v.lower().strip().rstrip(".")
+        return (vl in _PLACEHOLDERS
+                or vl.startswith("not specified")
+                or vl.startswith("not listed")
+                or vl.startswith("not found")
+                or vl.startswith("unknown")
+                or vl.startswith("not available"))
+
+    def _apply(raw):
         enriched = _extract_json(raw)
-        if isinstance(enriched, dict):
-            result = dict(piece)
-            # Only overwrite a field if the enriched value is non-empty,
-            # so extraction-quality data (composer, title etc.) is never
-            # blanked out by an LLM that returned an empty string.
-            for k, v in enriched.items():
-                if v is not None and str(v).strip():
-                    result[k] = v
+        if not isinstance(enriched, dict):
+            return None
+        result = dict(piece)
+        for k, v in enriched.items():
+            if v is None:
+                continue
+            sv = str(v).strip()
+            if not sv or _is_placeholder(sv):
+                continue
+            # Don't overwrite a real existing value with something worse
+            existing = str(result.get(k) or "").strip()
+            if existing and _is_placeholder(sv):
+                continue
+            result[k] = v
+        return result
+
+    # ── Tier 1: Free DuckDuckGo search → Haiku (text-only) ──────────────────
+    tier1_result = None
+    snippets = _ddg_search(piece)
+    if snippets:
+        prompt = (
+            f"Piece:\n{piece_context}\n\n"
+            "Web search results (use as PRIMARY facts where they match this piece):\n"
+            f"{snippets}\n\n"
+            "Use the search results combined with your knowledge to fill in all fields. "
+            "If the search results don't match this piece, rely on your training knowledge.\n\n"
+            + _ENRICH_FIELDS
+        )
+        try:
+            from llm_client import query_haiku
+            result = _apply(query_haiku(base_dir, prompt,
+                                        system_prompt=_ENRICH_SYSTEM, on_retry=on_retry))
+            if result:
+                conf = str(result.get("confidence") or "").strip().lower()
+                if conf != "low":
+                    return result  # confident enough — stop here
+                tier1_result = result  # low confidence — save as fallback, escalate
+        except Exception:
+            pass
+
+    # ── Tier 2: Haiku + Anthropic web search (1 search) ─────────────────────
+    # Runs when: DDG found nothing, Tier 1 threw, or Tier 1 confidence was low.
+    try:
+        from llm_client import query_haiku_with_search
+        prompt = (
+            f"Piece:\n{piece_context}\n\n"
+            "Search for this piece on windrep.org, jwpepper.com, or sheetmusicplus.com. "
+            "Use any data found as PRIMARY facts; fall back to training knowledge for missing fields.\n\n"
+            + _ENRICH_FIELDS
+        )
+        result = _apply(query_haiku_with_search(base_dir, prompt,
+                                                system_prompt=_ENRICH_SYSTEM, on_retry=on_retry))
+        if result:
             return result
     except Exception:
         pass
+
+    # ── Tier 3: Selected model, training knowledge only ──────────────────────
+    # Runs when Tier 2 failed (or wasn't reached). Tier 1 low-confidence data
+    # is not used here — if Tier 2 failed, Tier 1 data is likely unreliable too.
+    try:
+        from llm_client import query
+        prompt = (
+            f"Piece:\n{piece_context}\n\n"
+            "Using your training knowledge and best inference, fill in all fields. "
+            "Do not leave fields empty unless you have no basis to infer a value.\n\n"
+            + _ENRICH_FIELDS
+        )
+        result = _apply(query(base_dir, prompt,
+                              system_prompt=_ENRICH_SYSTEM, on_retry=on_retry))
+        if result:
+            return result
+    except Exception:
+        pass
+
+    # Last resort: use low-confidence Tier 1 data rather than nothing
+    if tier1_result:
+        return tier1_result
+
     return piece
 
 
@@ -375,6 +490,7 @@ def analyze_music_files(
     cancel_flag,
     enrich: bool = False,
     results_list: list | None = None,
+    mode: str = "band",
 ) -> list[dict]:
     """
     Full analysis pipeline. Returns list of piece dicts.
@@ -409,29 +525,46 @@ def analyze_music_files(
                 img_type = _classify_image(images, base_dir, on_retry=_retry_cb)
                 progress_cb(f"  {img_type.replace('_', ' ').title()}")
 
-                if img_type == "FLAT_COVERS":
-                    progress_cb("  Extracting covers...")
-                    pieces = _extract_flat_covers(images, base_dir, on_retry=_retry_cb)
-                elif img_type == "SPINE_SHELF":
-                    progress_cb("  Extracting spines (high-res)...")
-                    hi_res = _file_to_images(path, max_px=2400)
-                    pieces = _extract_spine_shelf(hi_res or images, base_dir, on_retry=_retry_cb)
-                elif img_type == "TABLE_OF_CONTENTS":
-                    progress_cb("  Extracting TOC...")
-                    pieces = _extract_toc(images, base_dir, on_retry=_retry_cb)
+                if mode == "choir":
+                    if img_type == "FLAT_COVERS":
+                        progress_cb("  Extracting covers...")
+                        pieces = _extract_flat_covers_choir(images, base_dir, on_retry=_retry_cb)
+                    elif img_type == "SPINE_SHELF":
+                        progress_cb("  Extracting spines (high-res)...")
+                        hi_res = _file_to_images(path, max_px=2400)
+                        pieces = _extract_spine_shelf_choir(hi_res or images, base_dir, on_retry=_retry_cb)
+                    elif img_type == "TABLE_OF_CONTENTS":
+                        progress_cb("  Extracting TOC...")
+                        pieces = _extract_toc(images, base_dir, on_retry=_retry_cb)
+                    else:
+                        progress_cb("  Extracting piece...")
+                        pieces = _extract_single_piece_choir(path, images, base_dir, on_retry=_retry_cb)
                 else:
-                    progress_cb("  Extracting piece...")
-                    pieces = _extract_single_piece(path, images, base_dir, on_retry=_retry_cb)
+                    if img_type == "FLAT_COVERS":
+                        progress_cb("  Extracting covers...")
+                        pieces = _extract_flat_covers(images, base_dir, on_retry=_retry_cb)
+                    elif img_type == "SPINE_SHELF":
+                        progress_cb("  Extracting spines (high-res)...")
+                        hi_res = _file_to_images(path, max_px=2400)
+                        pieces = _extract_spine_shelf(hi_res or images, base_dir, on_retry=_retry_cb)
+                    elif img_type == "TABLE_OF_CONTENTS":
+                        progress_cb("  Extracting TOC...")
+                        pieces = _extract_toc(images, base_dir, on_retry=_retry_cb)
+                    else:
+                        progress_cb("  Extracting piece...")
+                        pieces = _extract_single_piece(path, images, base_dir, on_retry=_retry_cb)
             else:
                 progress_cb("  Extracting piece...")
-                pieces = _extract_single_piece(path, images, base_dir, on_retry=_retry_cb)
+                if mode == "choir":
+                    pieces = _extract_single_piece_choir(path, images, base_dir, on_retry=_retry_cb)
+                else:
+                    pieces = _extract_single_piece(path, images, base_dir, on_retry=_retry_cb)
 
         except Exception as e:
             progress_cb(f"  Vision failed: {e}")
             t, c = _filename_hints(path)
             pieces = [{"title": t, "composer": c, "arranger": "", "publisher": "",
-                       "ensemble_type": "", "difficulty": "", "time_signature": "",
-                       "visible_notes": ""}]
+                       "difficulty": "", "visible_notes": ""}]
 
         if not pieces:
             progress_cb("  Nothing found")
@@ -450,7 +583,10 @@ def analyze_music_files(
                 title = piece.get("title", "").strip()
                 progress_cb(f"  Enriching: {title[:50]}")
                 try:
-                    piece = _enrich_piece(piece, base_dir, on_retry=_retry_cb)
+                    if mode == "choir":
+                        piece = _enrich_piece_choir(piece, base_dir, on_retry=_retry_cb)
+                    else:
+                        piece = _enrich_piece(piece, base_dir, on_retry=_retry_cb)
                 except Exception as e:
                     progress_cb(f"  Enrichment failed after all retries: {e}")
             all_pieces.append(piece)
@@ -507,6 +643,332 @@ def _dict_to_prefill(d: dict, existing_titles: set[str] | None = None) -> dict:
     return prefill
 
 
+# ── Choir-specific constants ───────────────────────────────────────────────────
+
+_ENRICH_SYSTEM_CHOIR = (
+    "You are a choir director and choral music librarian with deep knowledge of "
+    "published educational and professional choral music."
+)
+
+_ENRICH_FIELDS_CHOIR = (
+    "Fields to fill:\n"
+    "- title: exact corrected full title\n"
+    "- composer: full name of original composer\n"
+    "- arranger: full name of arranger/editor (empty if none)\n"
+    "- publisher: publishing house\n"
+    "- difficulty: 1–5 scale. 1=beginning/unison, 2=easy (SSA/SAB), "
+    "  3=developing (SATB with support), 4=strong SATB, 5=advanced/complex.\n"
+    "- key_signature: concert pitch key. Comma-separated if the piece modulates.\n"
+    "- voicing: e.g. SATB, SSA, SAB, TTBB, Unison, 2-Part, 3-Part Mixed, 4-Part Mixed, "
+    "  or the specific voicing printed on the score.\n"
+    "- language: primary language(s) of the text (e.g. English, Latin, Spanish, French, German).\n"
+    "- accompaniment: Piano, A Cappella, Organ, Orchestra, Band, Guitar, or None.\n"
+    "- genre: Sacred, Secular, Gospel, Folk, Classical, Pop/Rock, Holiday, "
+    "  Show/Musical, World, Warm-Up, or Other\n"
+    "- comments: One sentence describing the piece, then bullet points covering "
+    "  duration, text source, performance occasion, vocal challenges, and extras. "
+    "  Omit bullets that duplicate structured fields.\n"
+    "- confidence: high | medium | low — your overall confidence that the "
+    "  above facts are correct for THIS specific published work.\n\n"
+    "Respond ONLY with a JSON object with those exact keys."
+)
+
+
+# ── Choir extraction: SINGLE_PIECE ────────────────────────────────────────────
+
+def _extract_single_piece_choir(path: str, images: list[dict], base_dir: str, on_retry=None) -> list[dict]:
+    from llm_client import query_with_images
+
+    title_hint, composer_hint = _filename_hints(path)
+    composer_str = f' by "{composer_hint}"' if composer_hint else ""
+
+    _EMPTY = {
+        "title": title_hint, "composer": composer_hint, "arranger": "",
+        "publisher": "", "voicing": "", "difficulty": "",
+        "language": "", "accompaniment": "", "visible_notes": "",
+    }
+
+    if not images:
+        return [_EMPTY]
+
+    if title_hint:
+        intro = f'This image shows ONE choral piece, likely titled "{title_hint}"{composer_str}.'
+        title_instruction = "- title: the piece title (confirm or correct the hint above)\n"
+    else:
+        intro = "This image shows ONE choral piece of sheet music."
+        title_instruction = "- title: the piece title as printed on the cover or score\n"
+
+    prompt = (
+        intro + "\n\n"
+        "Extract everything you can clearly see:\n"
+        + title_instruction +
+        "- composer: full composer name\n"
+        "- arranger: arranger/editor name if visible, else empty\n"
+        "- publisher: publishing house if visible "
+        "(e.g. Hal Leonard, Alfred, G. Schirmer, Shawnee Press, Walton Music, "
+        "Boosey & Hawkes, Mark Foster, Heritage Choral, Earthsongs)\n"
+        "- voicing: e.g. SATB, SSA, SAB, TTBB, Unison, 2-Part, 3-Part Mixed — "
+        "look for voicing printed on the cover or score\n"
+        "- language: language(s) of the text if visible (e.g. English, Latin, Spanish)\n"
+        "- accompaniment: Piano, A Cappella, Organ, Orchestra, Band, or None if visible\n"
+        "- difficulty: grade/level if shown (e.g. 'Grade 2', 'Level 1', 'Easy')\n"
+        "- visible_notes: any other useful text (catalog number, year, series name)\n\n"
+        "Respond ONLY with a single JSON object. Use empty string for anything not visible.\n"
+        '{"title":"","composer":"","arranger":"","publisher":"","voicing":"",'
+        '"language":"","accompaniment":"","difficulty":"","visible_notes":""}'
+    )
+
+    try:
+        raw = query_with_images(base_dir, prompt, images, on_retry=on_retry)
+        result = _extract_json(raw)
+        if isinstance(result, dict):
+            return [result]
+        if isinstance(result, list) and result:
+            return [result[0]]
+    except Exception:
+        pass
+    return [_EMPTY]
+
+
+# ── Choir extraction: FLAT_COVERS ─────────────────────────────────────────────
+
+def _extract_flat_covers_choir(images: list[dict], base_dir: str, on_retry=None) -> list[dict]:
+    from llm_client import query_with_images
+
+    prompt = (
+        "This image shows multiple choral sheet music folders or booklets laid face-up. "
+        "Each folder or booklet is a separate piece.\n\n"
+        "For EACH cover you can clearly read, extract:\n"
+        "- title: piece title exactly as printed on the cover\n"
+        "- composer: composer name if visible\n"
+        "- arranger: arranger/editor name if visible, else empty\n"
+        "- publisher: publishing house if visible. "
+        "Common choral publishers: Hal Leonard, Alfred, G. Schirmer, Shawnee Press, "
+        "Walton Music, Boosey & Hawkes, Mark Foster, Heritage Choral, Earthsongs.\n"
+        "- voicing: e.g. SATB, SSA, SAB, TTBB, Unison — look for voicing on the cover\n"
+        "- language: language(s) of the text if visible\n"
+        "- visible_notes: any other text (catalog number, series, occasion)\n\n"
+        "Include EVERY cover whose title you can read. "
+        "Respond ONLY with a JSON array. Use empty string for anything not visible.\n"
+        '[{"title":"","composer":"","arranger":"","publisher":"","voicing":"",'
+        '"language":"","visible_notes":""}]'
+    )
+
+    try:
+        raw = query_with_images(base_dir, prompt, images, on_retry=on_retry)
+        result = _extract_json(raw)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict):
+            return [result]
+    except Exception:
+        pass
+    return []
+
+
+# ── Choir extraction: SPINE_SHELF ─────────────────────────────────────────────
+
+def _extract_spine_shelf_choir(images: list[dict], base_dir: str, on_retry=None) -> list[dict]:
+    from llm_client import query_with_images
+
+    prompt = (
+        "This image shows choral music binders or folders stored upright on a shelf. "
+        "The title text runs vertically along each spine.\n\n"
+        "Carefully read each visible spine. The text is rotated — tilt your "
+        "perspective. For each piece you can make out:\n"
+        "- title: piece title (read the vertical text carefully)\n"
+        "- composer: composer or arranger name if printed on the spine\n"
+        "- publisher: publisher name if visible. "
+        "Common publishers: Hal Leonard, Alfred, G. Schirmer, Shawnee Press, "
+        "Walton Music, Boosey & Hawkes, Mark Foster.\n"
+        "- voicing: voicing if printed on spine (e.g. SATB, SSA, SAB)\n"
+        "- visible_notes: any other text on that spine (grade level, catalog number)\n\n"
+        "Include EVERY spine you can read, even if partial. "
+        "Respond ONLY with a JSON array. Use empty string for anything not visible.\n"
+        '[{"title":"","composer":"","publisher":"","voicing":"","visible_notes":""}]'
+    )
+
+    try:
+        raw = query_with_images(base_dir, prompt, images, on_retry=on_retry)
+        result = _extract_json(raw)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict):
+            return [result]
+    except Exception:
+        pass
+    return []
+
+
+# ── Choir enrichment ──────────────────────────────────────────────────────────
+
+def _enrich_piece_choir(piece: dict, base_dir: str, on_retry=None) -> dict:
+    """Three-tier choir enrichment (voicing, language, accompaniment, choral genre)."""
+    title = (piece.get("title") or "").strip()
+    if not title:
+        return piece
+
+    context_lines = [f'Title: "{title}"']
+    for key, label in [
+        ("composer", "Composer"), ("arranger", "Arranger"),
+        ("publisher", "Publisher"), ("voicing", "Voicing"),
+        ("language", "Language"), ("accompaniment", "Accompaniment"),
+        ("visible_notes", "Other visible info"),
+    ]:
+        val = (piece.get(key) or "").strip()
+        if val:
+            context_lines.append(f"{label}: {val}")
+
+    piece_context = "\n".join(f"  {l}" for l in context_lines)
+
+    _PLACEHOLDERS = {
+        "unknown", "n/a", "none", "not specified", "not listed",
+        "not available", "not found", "not applicable", "undetermined",
+        "varies", "various", "tbd", "see score", "see parts",
+    }
+
+    def _is_placeholder(v: str) -> bool:
+        vl = v.lower().strip().rstrip(".")
+        return (vl in _PLACEHOLDERS
+                or vl.startswith("not specified")
+                or vl.startswith("not listed")
+                or vl.startswith("not found")
+                or vl.startswith("unknown")
+                or vl.startswith("not available"))
+
+    def _apply(raw):
+        enriched = _extract_json(raw)
+        if not isinstance(enriched, dict):
+            return None
+        result = dict(piece)
+        for k, v in enriched.items():
+            if v is None:
+                continue
+            sv = str(v).strip()
+            if not sv or _is_placeholder(sv):
+                continue
+            existing = str(result.get(k) or "").strip()
+            if existing and _is_placeholder(sv):
+                continue
+            result[k] = v
+        return result
+
+    # Tier 1: Free DuckDuckGo search → Haiku
+    tier1_result = None
+    composer_ = (piece.get("composer") or "").strip()
+    choir_query = f'"{title}" {composer_} choral sheet music'.strip()
+    snippets = ""
+    try:
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
+        with DDGS() as ddgs:
+            results = list(ddgs.text(choir_query, max_results=5))
+        snippets = "\n\n".join(
+            f"[{r.get('href','')}]\n{r.get('body','').strip()}"
+            for r in results if r.get("body", "").strip()
+        )
+    except Exception:
+        pass
+
+    if snippets:
+        prompt = (
+            f"Piece:\n{piece_context}\n\n"
+            "Web search results (use as PRIMARY facts where they match this piece):\n"
+            f"{snippets}\n\n"
+            "Use the search results combined with your knowledge to fill in all fields. "
+            "If the search results don't match this piece, rely on your training knowledge.\n\n"
+            + _ENRICH_FIELDS_CHOIR
+        )
+        try:
+            from llm_client import query_haiku
+            result = _apply(query_haiku(base_dir, prompt,
+                                        system_prompt=_ENRICH_SYSTEM_CHOIR, on_retry=on_retry))
+            if result:
+                conf = str(result.get("confidence") or "").strip().lower()
+                if conf != "low":
+                    return result
+                tier1_result = result
+        except Exception:
+            pass
+
+    # Tier 2: Haiku + Anthropic web search
+    try:
+        from llm_client import query_haiku_with_search
+        prompt = (
+            f"Piece:\n{piece_context}\n\n"
+            "Search for this choral piece on halleonard.com, jwpepper.com, or sheetmusicplus.com. "
+            "Use any data found as PRIMARY facts; fall back to training knowledge for missing fields.\n\n"
+            + _ENRICH_FIELDS_CHOIR
+        )
+        result = _apply(query_haiku_with_search(base_dir, prompt,
+                                                system_prompt=_ENRICH_SYSTEM_CHOIR, on_retry=on_retry))
+        if result:
+            return result
+    except Exception:
+        pass
+
+    # Tier 3: Selected model, training knowledge only
+    try:
+        from llm_client import query
+        prompt = (
+            f"Piece:\n{piece_context}\n\n"
+            "Using your training knowledge and best inference, fill in all fields. "
+            "Do not leave fields empty unless you have no basis to infer a value.\n\n"
+            + _ENRICH_FIELDS_CHOIR
+        )
+        result = _apply(query(base_dir, prompt,
+                              system_prompt=_ENRICH_SYSTEM_CHOIR, on_retry=on_retry))
+        if result:
+            return result
+    except Exception:
+        pass
+
+    if tier1_result:
+        return tier1_result
+    return piece
+
+
+# ── Choir prefill normalisation ────────────────────────────────────────────────
+
+def _dict_to_prefill_choir(d: dict, existing_titles: set[str] | None = None) -> dict:
+    def _s(*keys):
+        for k in keys:
+            v = d.get(k)
+            if v:
+                return str(v).strip()
+        return ""
+
+    diff = _s("difficulty")
+    m = re.search(r"(\d+(?:\.\d+)?)", diff)
+    diff = m.group(1) if m else diff
+
+    title = _clean_title(_s("title"))
+    prefill = {
+        "title":          title,
+        "composer":       _s("composer"),
+        "arranger":       _s("arranger"),
+        "publisher":      _s("publisher"),
+        "genre":          _s("genre"),
+        "voicing":        _s("voicing"),
+        "language":       _s("language"),
+        "accompaniment":  _s("accompaniment"),
+        "difficulty":     diff,
+        "key_signature":  _s("key_signature"),
+        "location":       "Chinook Middle School",
+        "notes":          _s("comments", "visible_notes", "notes"),
+        "_duplicate":     False,
+        "_source_file":   d.get("_source_file", ""),
+        "_confidence":    d.get("confidence", "").strip().lower(),
+    }
+
+    if existing_titles and title:
+        prefill["_duplicate"] = _norm_title(title) in existing_titles
+
+    return prefill
+
+
 # ── Batch Import Dialog ────────────────────────────────────────────────────────
 
 class BatchImportDialog(ttk.Toplevel):
@@ -526,11 +988,21 @@ class BatchImportDialog(ttk.Toplevel):
              "ensemble_type": 100, "difficulty": 40, "publisher": 110,
              "conf": 36, "source": 140}
 
+    _COLS_CHOIR = ("sel", "title", "composer", "arranger", "voicing", "difficulty", "publisher", "conf", "source")
+    _HDR_CHOIR  = {"sel": "", "title": "Title", "composer": "Composer",
+                   "arranger": "Arranger", "voicing": "Voicing",
+                   "difficulty": "Diff", "publisher": "Publisher",
+                   "conf": "Conf", "source": "Source File"}
+    _WID_CHOIR  = {"sel": 28, "title": 200, "composer": 130, "arranger": 110,
+                   "voicing": 100, "difficulty": 40, "publisher": 110,
+                   "conf": 36, "source": 140}
+
     def __init__(self, parent, paths: list[str], base_dir: str,
-                 existing_titles: set[str] | None = None):
+                 existing_titles: set[str] | None = None, mode: str = "band"):
         super().__init__(parent)
         self.paths          = paths
         self.base_dir       = base_dir
+        self._mode          = mode
         self.existing_titles = existing_titles or set()
         self.results        = None          # None=cancelled; list=confirmed pieces
         self._cancel_flag   = [False]
@@ -543,6 +1015,12 @@ class BatchImportDialog(ttk.Toplevel):
         self._edit_notes: tk.Text | None = None
         self._enrich_var    = tk.BooleanVar(value=True)
         self._mousewheel_bound = False
+
+        # Override column config for choir mode
+        if mode == "choir":
+            self._COLS = self._COLS_CHOIR
+            self._HDR  = self._HDR_CHOIR
+            self._WID  = self._WID_CHOIR
 
         self.title("Import Sheet Music")
         self.geometry("1140x600")
@@ -620,6 +1098,7 @@ class BatchImportDialog(ttk.Toplevel):
 
     def _start_analysis(self):
         enrich = self._enrich_var.get()
+        _prefill_fn = _dict_to_prefill_choir if self._mode == "choir" else _dict_to_prefill
 
         def _run():
             try:
@@ -629,8 +1108,9 @@ class BatchImportDialog(ttk.Toplevel):
                     self._cancel_flag,
                     enrich=enrich,
                     results_list=self._partial_pieces,
+                    mode=self._mode,
                 )
-                prefills = [_dict_to_prefill(p, self.existing_titles) for p in raw]
+                prefills = [_prefill_fn(p, self.existing_titles) for p in raw]
                 self.after(0, self._analysis_done, prefills)
             except Exception as e:
                 self.after(0, self._analysis_error, str(e))
@@ -644,7 +1124,8 @@ class BatchImportDialog(ttk.Toplevel):
         if not pieces:
             self._log_line("No pieces found yet — nothing to import.")
             return
-        prefills = [_dict_to_prefill(p, self.existing_titles) for p in pieces]
+        _prefill_fn = _dict_to_prefill_choir if self._mode == "choir" else _dict_to_prefill
+        prefills = [_prefill_fn(p, self.existing_titles) for p in pieces]
         self._log_line(f"\nStopped early — {len(prefills)} piece(s) ready to review.")
         self._prefills = prefills
         self._in_review = True
@@ -797,8 +1278,9 @@ class BatchImportDialog(ttk.Toplevel):
         dup = " ⚠" if p.get("_duplicate") else ""
         conf_sym = {"high": "✓", "medium": "~", "low": "!"}.get(
             p.get("_confidence", ""), "")
+        col4 = p.get("voicing", "") if self._mode == "choir" else p.get("ensemble_type", "")
         return (chk, p.get("title", "") + dup, p.get("composer", ""),
-                p.get("arranger", ""), p.get("ensemble_type", ""),
+                p.get("arranger", ""), col4,
                 p.get("difficulty", ""), p.get("publisher", ""),
                 conf_sym, p.get("_source_file", ""))
 
@@ -832,18 +1314,32 @@ class BatchImportDialog(ttk.Toplevel):
         self._mousewheel_bound = True
         self._canv_ref = canv   # keep ref for unbinding
 
-        FIELDS = [
-            ("Title",        "title"),
-            ("Composer",     "composer"),
-            ("Arranger",     "arranger"),
-            ("Publisher",    "publisher"),
-            ("Ensemble",     "ensemble_type"),
-            ("Difficulty",   "difficulty"),
-            ("Genre",        "genre"),
-            ("Key Sig",      "key_signature"),
-            ("Time Sig",     "time_signature"),
-            ("Location",     "location"),
-        ]
+        if self._mode == "choir":
+            FIELDS = [
+                ("Title",        "title"),
+                ("Composer",     "composer"),
+                ("Arranger",     "arranger"),
+                ("Publisher",    "publisher"),
+                ("Voicing",      "voicing"),
+                ("Language",     "language"),
+                ("Difficulty",   "difficulty"),
+                ("Genre",        "genre"),
+                ("Key Sig",      "key_signature"),
+                ("Location",     "location"),
+            ]
+        else:
+            FIELDS = [
+                ("Title",        "title"),
+                ("Composer",     "composer"),
+                ("Arranger",     "arranger"),
+                ("Publisher",    "publisher"),
+                ("Ensemble",     "ensemble_type"),
+                ("Difficulty",   "difficulty"),
+                ("Genre",        "genre"),
+                ("Key Sig",      "key_signature"),
+                ("Time Sig",     "time_signature"),
+                ("Location",     "location"),
+            ]
         for label, key in FIELDS:
             f = ttk.Frame(inner)
             f.pack(fill=X, padx=8, pady=1)

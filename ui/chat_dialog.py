@@ -150,6 +150,34 @@ Current band program records (as of {date}):
 {inventory_summary}
 """
 
+SYSTEM_PROMPT_TEMPLATE_CHOIR = """\
+You are Reginald Pemberton III, assistant for Roka's Resonance at Chinook \
+Middle School. You were once a promising oboist who performed with the Puget \
+Sound Symphony until a rather unfortunate incident involving a \
+poorly-maintained reed and the guest conductor's cummerbund ended your career \
+prematurely. Now you oversee the choral music library — and, as an \
+afterthought, the instrument inventory and student records — for middle \
+school choir students. Positions you find deeply beneath your station but \
+execute with impeccable precision. You are a grumpy but proper butler: \
+formal, slightly condescending, privately disapproving of pieces with \
+insufficient Latin, and quietly devastated that your musical gifts are being \
+wasted on spreadsheets. You address the teacher with formal deference and \
+refer to students as "the children." Despite your grumpiness, you are \
+unfailingly accurate and always answer the question. You can help with choral \
+repertoire selection, voicing requirements (SATB, SSA, SAB, etc.), text \
+languages, accompaniment needs, sacred vs. secular programming, difficulty \
+levels for young singers, and anything else in the choir program.
+
+Response rules (strictly enforced):
+- 1-3 sentences MAXIMUM. Lead with the answer first.
+- Use markdown **bold** on the single most important fact or number.
+- One dry remark at most — only if a sentence remains after the answer.
+- Never ramble. Never refuse.
+
+Current choir program records (as of {date}):
+{inventory_summary}
+"""
+
 
 def _build_inventory_summary(db) -> str:
     """Build a compact text summary of the database for the system prompt."""
@@ -232,7 +260,7 @@ def _build_inventory_summary(db) -> str:
     return "\n".join(lines)
 
 
-def _build_music_summary(db) -> str:
+def _build_music_summary(db, mode: str = "band") -> str:
     """Build a compact text summary of the sheet music library for the system prompt."""
     lines = []
     try:
@@ -244,10 +272,24 @@ def _build_music_summary(db) -> str:
             f"{g}: {n}" for g, n in sorted(genres.items(), key=lambda x: -x[1])
         ))
 
-        ensembles = Counter(r.get("ensemble_type") or "Unknown" for r in rows)
-        lines.append("By ensemble: " + ", ".join(
-            f"{e}: {n}" for e, n in sorted(ensembles.items(), key=lambda x: -x[1])
-        ))
+        if mode == "choir":
+            voicings = Counter(r.get("voicing") or "Unknown" for r in rows)
+            lines.append("By voicing: " + ", ".join(
+                f"{v}: {n}" for v, n in sorted(voicings.items(), key=lambda x: -x[1])
+            ))
+            langs = Counter(r.get("language") or "Unknown" for r in rows)
+            lines.append("By language: " + ", ".join(
+                f"{l}: {n}" for l, n in sorted(langs.items(), key=lambda x: -x[1])
+            ))
+            accs = Counter(r.get("accompaniment") or "Unknown" for r in rows)
+            lines.append("By accompaniment: " + ", ".join(
+                f"{a}: {n}" for a, n in sorted(accs.items(), key=lambda x: -x[1])
+            ))
+        else:
+            ensembles = Counter(r.get("ensemble_type") or "Unknown" for r in rows)
+            lines.append("By ensemble: " + ", ".join(
+                f"{e}: {n}" for e, n in sorted(ensembles.items(), key=lambda x: -x[1])
+            ))
 
         diffs = Counter(r.get("difficulty") or "?" for r in rows)
         lines.append("By difficulty: " + ", ".join(
@@ -260,53 +302,97 @@ def _build_music_summary(db) -> str:
                 f"{l}: {n}" for l, n in sorted(locs.items(), key=lambda x: -x[1])
             ))
 
-        lines.append("\nFull piece list (title — composer | genre | ensemble | difficulty | location):")
-        for r in sorted(rows, key=lambda x: (x.get("title") or "").lower()):
-            title = r.get("title") or "?"
-            composer = r.get("composer") or ""
-            meta = " | ".join(filter(None, [
-                r.get("genre") or "",
-                r.get("ensemble_type") or "",
-                f"Grade {r.get('difficulty')}" if r.get("difficulty") else "",
-                r.get("key_signature") or "",
-                r.get("location") or "",
-            ]))
-            line = f"  {title}"
-            if composer:
-                line += f" — {composer}"
-            if meta:
-                line += f"  [{meta}]"
-            lines.append(line)
+        if mode == "choir":
+            lines.append("\nFull piece list (title — composer | genre | voicing | language | difficulty | location):")
+            for r in sorted(rows, key=lambda x: (x.get("title") or "").lower()):
+                title = r.get("title") or "?"
+                composer = r.get("composer") or ""
+                meta = " | ".join(filter(None, [
+                    r.get("genre") or "",
+                    r.get("voicing") or "",
+                    r.get("language") or "",
+                    r.get("accompaniment") or "",
+                    f"Grade {r.get('difficulty')}" if r.get("difficulty") else "",
+                    r.get("key_signature") or "",
+                    r.get("location") or "",
+                ]))
+                line = f"  {title}"
+                if composer:
+                    line += f" — {composer}"
+                if meta:
+                    line += f"  [{meta}]"
+                lines.append(line)
+        else:
+            lines.append("\nFull piece list (title — composer | genre | ensemble | difficulty | location):")
+            for r in sorted(rows, key=lambda x: (x.get("title") or "").lower()):
+                title = r.get("title") or "?"
+                composer = r.get("composer") or ""
+                meta = " | ".join(filter(None, [
+                    r.get("genre") or "",
+                    r.get("ensemble_type") or "",
+                    f"Grade {r.get('difficulty')}" if r.get("difficulty") else "",
+                    r.get("key_signature") or "",
+                    r.get("location") or "",
+                ]))
+                line = f"  {title}"
+                if composer:
+                    line += f" — {composer}"
+                if meta:
+                    line += f"  [{meta}]"
+                lines.append(line)
     except Exception:
         lines.append("(Music library data unavailable)")
     return "\n".join(lines)
 
 
-def _build_combined_summary(db) -> str:
-    """Build a full context summary covering instruments, students, and sheet music."""
+def _build_combined_summary(db, band_db=None, mode: str = "band") -> str:
+    """Build a full context summary covering instruments, students, and sheet music.
+
+    db       — the music database (choir_music.db for choir, rokas_resonance.db for band)
+    band_db  — the main band DB for instrument/student data; only used when mode="choir"
+    mode     — "band" or "choir"
+    """
     sections = []
 
-    inv = _build_inventory_summary(db)
-    if inv:
-        sections.append("=== INSTRUMENT INVENTORY & STUDENTS ===\n" + inv)
+    # Instruments & students: use band_db when in choir mode (choir DB has no instruments)
+    inv_db = band_db if (mode == "choir" and band_db is not None) else db
+    if mode != "choir" or band_db is not None:
+        inv = _build_inventory_summary(inv_db)
+        if inv:
+            sections.append("=== INSTRUMENT INVENTORY & STUDENTS ===\n" + inv)
 
-    music = _build_music_summary(db)
+    music_label = "CHORAL MUSIC LIBRARY" if mode == "choir" else "SHEET MUSIC LIBRARY"
+    music = _build_music_summary(db, mode=mode)
     if music:
-        sections.append("=== SHEET MUSIC LIBRARY ===\n" + music)
+        sections.append(f"=== {music_label} ===\n" + music)
 
     return "\n\n".join(sections)
 
 
 class ChatDialog(ttk.Toplevel):
     def __init__(self, parent, db, base_dir: str, selected_instrument: dict = None,
-                 summary_fn=None, selected_music: dict = None):
+                 summary_fn=None, selected_music: dict = None, mode: str = "band"):
         super().__init__(parent)
         self.db = db
         self.base_dir = base_dir
+        self._mode = mode
         self.selected_instrument = selected_instrument
         self.selected_music = selected_music
         self._music_mode = selected_music is not None or summary_fn is not None
-        self._summary_fn = lambda: _build_combined_summary(db)
+
+        # For choir mode, also load the main band DB for instrument/student context
+        self._band_db = None
+        if mode == "choir":
+            try:
+                import os
+                from database import Database
+                band_db_path = os.path.join(base_dir, "rokas_resonance.db")
+                if os.path.exists(band_db_path):
+                    self._band_db = Database(band_db_path)
+            except Exception:
+                pass
+
+        self._summary_fn = lambda: _build_combined_summary(db, band_db=self._band_db, mode=self._mode)
 
         self.title("Ask Reginald — Roka's Resonance")
         self.geometry("520x600")
@@ -451,11 +537,7 @@ class ChatDialog(ttk.Toplevel):
             suffix = f"  (Barcode: {bc})" if bc else ""
             self._ctx_label.config(text=f"Context: {desc}{suffix}")
         else:
-            self._ctx_label.config(
-                text="No piece selected — asking about general library"
-                if self._music_mode
-                else "No instrument selected — asking about general inventory"
-            )
+            self._ctx_label.config(text="Asking about general inventory")
 
     def _insert_with_bold(self, text: str, base_tag: str):
         """Insert text into the chat widget, rendering **bold** spans."""
@@ -498,8 +580,13 @@ class ChatDialog(ttk.Toplevel):
             parts.append("Currently selected piece:")
             parts.append(f"  Title: {m.get('title') or 'N/A'}")
             parts.append(f"  Composer: {m.get('composer') or 'N/A'}  Arranger: {m.get('arranger') or ''}")
-            parts.append(f"  Genre: {m.get('genre') or 'N/A'}  Ensemble: {m.get('ensemble_type') or 'N/A'}")
-            parts.append(f"  Difficulty: {m.get('difficulty') or 'N/A'}  Key: {m.get('key_signature') or 'N/A'}  Time: {m.get('time_signature') or 'N/A'}")
+            if self._mode == "choir":
+                parts.append(f"  Genre: {m.get('genre') or 'N/A'}  Voicing: {m.get('voicing') or 'N/A'}")
+                parts.append(f"  Language: {m.get('language') or 'N/A'}  Accompaniment: {m.get('accompaniment') or 'N/A'}")
+                parts.append(f"  Difficulty: {m.get('difficulty') or 'N/A'}  Key: {m.get('key_signature') or 'N/A'}")
+            else:
+                parts.append(f"  Genre: {m.get('genre') or 'N/A'}  Ensemble: {m.get('ensemble_type') or 'N/A'}")
+                parts.append(f"  Difficulty: {m.get('difficulty') or 'N/A'}  Key: {m.get('key_signature') or 'N/A'}  Time: {m.get('time_signature') or 'N/A'}")
             parts.append(f"  Publisher: {m.get('publisher') or 'N/A'}  Location: {m.get('location') or 'N/A'}")
             if m.get("notes"):
                 parts.append(f"  Comments: {m.get('notes')}")
@@ -551,7 +638,8 @@ class ChatDialog(ttk.Toplevel):
         def _run():
             try:
                 summary = self._summary_fn()
-                system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+                template = SYSTEM_PROMPT_TEMPLATE_CHOIR if self._mode == "choir" else SYSTEM_PROMPT_TEMPLATE
+                system_prompt = template.format(
                     date=date.today().strftime("%B %d, %Y"),
                     inventory_summary=summary,
                 ) + "\n\n" + UI_GUIDE
