@@ -3,6 +3,7 @@ ui/main_menu.py - Main menu hub for Roka's Resonance
 """
 
 import os
+import sys
 import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
@@ -374,12 +375,16 @@ class MainMenu(ttk.Frame):
 
     def _start_update_check(self):
         from updater import check_for_update
-        check_for_update(self._version, lambda tag, url: self.after(0, self._show_update_banner, tag, url))
+        check_for_update(
+            self._version,
+            lambda tag, html_url, zipball_url: self.after(
+                0, self._show_update_banner, tag, html_url, zipball_url
+            ),
+        )
 
-    def _show_update_banner(self, tag: str, url: str):
+    def _show_update_banner(self, tag: str, html_url: str, zipball_url: str):
         if self._update_banner:
             return  # already showing
-        import webbrowser
         banner = ttk.Frame(self, bootstyle=WARNING)
         banner.pack(fill=X, before=self._btn_area)
         ttk.Label(
@@ -390,9 +395,9 @@ class MainMenu(ttk.Frame):
         ).pack(side=LEFT, padx=(16, 8), pady=6)
         ttk.Button(
             banner,
-            text="Download",
+            text="Install Update",
             bootstyle=WARNING,
-            command=lambda: webbrowser.open(url),
+            command=lambda: self._do_update(tag, zipball_url),
         ).pack(side=LEFT, pady=4)
         ttk.Button(
             banner,
@@ -402,6 +407,71 @@ class MainMenu(ttk.Frame):
             command=lambda: banner.pack_forget(),
         ).pack(side=RIGHT, padx=8, pady=4)
         self._update_banner = banner
+
+    def _do_update(self, tag: str, zipball_url: str):
+        """Show a progress dialog, download the release zip, install, then prompt restart."""
+        from updater import download_and_install
+        import subprocess
+
+        dlg = ttk.Toplevel(self.winfo_toplevel())
+        dlg.title(f"Installing {tag}")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        ttk.Label(dlg, text=f"Installing update {tag}",
+                  font=("Segoe UI", fs(11), "bold"), bootstyle=PRIMARY).pack(pady=(20, 4), padx=30)
+
+        status_var = tk.StringVar(value="Starting…")
+        ttk.Label(dlg, textvariable=status_var,
+                  font=("Segoe UI", fs(9))).pack(pady=(0, 8), padx=30)
+
+        bar = ttk.Progressbar(dlg, mode="indeterminate", bootstyle=PRIMARY)
+        bar.pack(fill=X, padx=30, pady=(0, 20))
+        bar.start(10)
+
+        from ui.theme import fit_window
+        fit_window(dlg, 400, 160)
+
+        def on_progress(msg):
+            self.after(0, lambda: status_var.set(msg))
+
+        def on_done():
+            def _show_done():
+                bar.stop()
+                bar.pack_forget()
+                status_var.set("Update installed successfully!")
+                ttk.Label(dlg, text="Restart the app to use the new version.",
+                          font=("Segoe UI", fs(9))).pack(pady=(0, 12), padx=30)
+                btn_row = ttk.Frame(dlg)
+                btn_row.pack(pady=(0, 16))
+                ttk.Button(
+                    btn_row, text="Restart Now", bootstyle=PRIMARY,
+                    command=lambda: _restart(dlg),
+                ).pack(side=LEFT, padx=6)
+                ttk.Button(
+                    btn_row, text="Later", bootstyle=SECONDARY,
+                    command=dlg.destroy,
+                ).pack(side=LEFT, padx=6)
+                fit_window(dlg, 400, 200)
+            self.after(0, _show_done)
+
+        def on_error(msg):
+            def _show_error():
+                bar.stop()
+                bar.pack_forget()
+                status_var.set(f"Update failed: {msg}")
+                ttk.Button(dlg, text="Close", bootstyle=DANGER,
+                           command=dlg.destroy).pack(pady=(0, 16))
+                fit_window(dlg, 420, 160)
+            self.after(0, _show_error)
+
+        def _restart(dialog):
+            dialog.destroy()
+            main_py = os.path.join(self.app_dir, "main.py")
+            subprocess.Popen([sys.executable, main_py])
+            self.winfo_toplevel().destroy()
+
+        download_and_install(self.app_dir, zipball_url, on_progress, on_done, on_error)
 
     def _on_child_close(self, key: str):
         """Clean up window reference and refresh stats when a child window closes."""
