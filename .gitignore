@@ -20,5 +20,8 @@ profiles.json
 # Claude Code
 .claude/
 
+# MusicPics folder contents
+MusicPics/
+
 # Misc
 =4.0.0
