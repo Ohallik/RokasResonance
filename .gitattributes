@@ -1,0 +1,21 @@
+# Default: normalize all text files to LF in the repo, CRLF in working tree on Windows
+* text=auto
+
+# Batch files must have CRLF on Windows or CMD will fail
+*.bat text eol=crlf
+
+# Python and other source files: LF everywhere
+*.py text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+
+# Binaries: no line ending conversion
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.exe binary
+*.db binary
