@@ -23,5 +23,18 @@ profiles.json
 # MusicPics folder contents
 MusicPics/
 
+# One-off dev/utility scripts (machine-specific paths, not for distribution)
+batch_enrich*.py
+batch_enrich*.txt
+fix_music_db.py
+test_importer.py
+test_enrich.py
+reset_and_import_xlsx.py
+backfill_history.py
+
+# Setup artifacts
+python-3.14.3-amd64.exe
+Claude-Proxy.txt
+
 # Misc
 =4.0.0

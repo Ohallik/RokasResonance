@@ -69,10 +69,9 @@ echo ============================================
 echo   Setup complete!
 echo ============================================
 echo.
-echo Note: The OMR (music recognition) feature uses homr, which will
-echo download ML models on first use. This requires an internet
-echo connection for the initial run only. The download includes
-echo PyTorch and related ML libraries, which may be several GB.
+echo Optional: The OMR (music scanning) feature requires homr, which
+echo is NOT installed by default due to its large size (PyTorch, ~2-3 GB).
+echo To enable OMR, run:  pip install homr
 echo.
 
 set /p CREATE_SHORTCUT="Create a desktop shortcut for Roka's Resonance? [Y/N]: "
