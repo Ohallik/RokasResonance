@@ -20,8 +20,9 @@ profiles.json
 # Claude Code
 .claude/
 
-# MusicPics folder contents
-MusicPics/
+# MusicPics folder contents (keep the folder itself, ignore files inside)
+MusicPics/*
+!MusicPics/.gitkeep
 
 # One-off dev/utility scripts (machine-specific paths, not for distribution)
 batch_enrich*.py
