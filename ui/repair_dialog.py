@@ -30,14 +30,9 @@ class RepairDialog(ttk.Toplevel):
         if title_suffix:
             title += f"  —  {title_suffix}"
         self.title(title)
-        self.geometry("500x640")
         self.resizable(False, True)
         self.grab_set()
-
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 500) // 2
-        y = (self.winfo_screenheight() - 640) // 2
-        self.geometry(f"+{x}+{y}")
+        self.lift()
 
         self._vars = {}
         self._build()
@@ -46,6 +41,9 @@ class RepairDialog(ttk.Toplevel):
             self._load_repair(repair_id)
         elif prefill_data:
             self._prefill(prefill_data)
+
+        from ui.theme import fit_window
+        fit_window(self, 500, 640)
 
     def _build(self):
         instrument = self.db.get_instrument(self.instrument_id)

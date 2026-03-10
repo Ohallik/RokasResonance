@@ -187,6 +187,16 @@ class MainMenu(ttk.Frame):
         settings_lbl.bind("<Button-1>", lambda e: self._open_settings())
 
         # ── Main Buttons ──────────────────────────────────────────────────────
+        # Configure bold fonts for the large nav buttons (scoped so other
+        # buttons in the app are unaffected).
+        # Use tkinter.ttk.Style directly to bypass ttkbootstrap's configure()
+        # override, which would try to parse "MainMenu" as a widget type.
+        import tkinter.ttk as _ttkbase
+        _s = _ttkbase.Style()
+        _btn_font = ("Segoe UI", fs(12), "bold")
+        for _base in ("primary", "warning", "info", "secondary"):
+            _s.configure(f"Nav.{_base}.TButton", font=_btn_font)
+
         btn_area = ttk.Frame(self)
         btn_area.pack(fill=BOTH, expand=True, padx=40, pady=(20, 16))
 
@@ -264,7 +274,7 @@ class MainMenu(ttk.Frame):
             frame,
             text=f"  {icon}  {text}",
             command=command,
-            bootstyle=style,
+            style=f"Nav.{style}.TButton",
             width=40,
         )
         btn.pack(fill=X, ipady=fs(10), padx=0)
@@ -383,12 +393,13 @@ class MainMenu(ttk.Frame):
         from ui.student_manager import StudentManager
         win = ttk.Toplevel(self.winfo_toplevel())
         win.title("Student Manager — Roka's Resonance")
-        win.geometry("1000x650")
         win.resizable(True, True)
         manager = StudentManager(win, self.db)
         manager.pack(fill=BOTH, expand=True)
         win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("students"))
         self._windows["students"] = win
+        from ui.theme import fit_window
+        fit_window(win, 1000, 650)
 
     def _open_music_manager(self):
         if self._raise_or_open("music"):
@@ -424,7 +435,6 @@ class MainMenu(ttk.Frame):
     def _show_active_checkouts_window(self):
         win = ttk.Toplevel(self.winfo_toplevel())
         win.title("Active Checkouts — Roka's Resonance")
-        win.geometry("900x600")
         win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("checkouts"))
         self._windows["checkouts"] = win
 
@@ -466,9 +476,12 @@ class MainMenu(ttk.Frame):
         ttk.Label(win, text=f"{len(checkouts)} instrument(s) currently checked out",
                   font=("Segoe UI", 9), foreground="#666").pack(pady=6)
 
+        from ui.theme import fit_window
+        fit_window(win, 900, 600)
+
     def _open_settings(self):
         from ui.settings_dialog import SettingsDialog
-        dlg = SettingsDialog(self.winfo_toplevel(), self.base_dir)
+        dlg = SettingsDialog(self.winfo_toplevel(), self.base_dir, app_dir=self.app_dir)
         self.winfo_toplevel().wait_window(dlg)  # block until Save/Cancel closes dialog
         self._refresh_stats()
 

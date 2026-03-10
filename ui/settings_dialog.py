@@ -60,25 +60,24 @@ def save_settings(base_dir: str, settings: dict):
 
 
 class SettingsDialog(ttk.Toplevel):
-    def __init__(self, parent, base_dir: str):
+    def __init__(self, parent, base_dir: str, app_dir: str = None):
         super().__init__(parent)
         self.base_dir = base_dir
+        self._app_dir = app_dir
         self._settings = load_settings(base_dir)
         self._show_key = False
         self._show_anthropic_key = False
 
         self.title("Settings — Roka's Resonance")
-        self.geometry("560x680")
         self.resizable(False, True)
         self.grab_set()
-
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 560) // 2
-        y = (self.winfo_screenheight() - 680) // 2
-        self.geometry(f"+{x}+{y}")
+        self.lift()
 
         self._build()
         self._load()
+
+        from ui.theme import fit_window
+        fit_window(self, 560, 680)
 
     # ───────────────────────────────────────────────────── Build UI ────────
 
@@ -163,6 +162,20 @@ class SettingsDialog(ttk.Toplevel):
 
         ttk.Separator(outer, orient=HORIZONTAL).pack(fill=X, pady=(14, 12))
 
+        # ── School info ────────────────────────────────────────────────────
+        for label, attr in [
+            ("School District", "_school_district_var"),
+            ("School Name",     "_school_name_var"),
+        ]:
+            ttk.Label(outer, text=label,
+                      font=("Segoe UI", 9, "bold")).pack(anchor=W)
+            var = tk.StringVar()
+            setattr(self, attr, var)
+            ttk.Entry(outer, textvariable=var, width=40).pack(
+                anchor=W, pady=(2, 10))
+
+        ttk.Separator(outer, orient=HORIZONTAL).pack(fill=X, pady=(4, 12))
+
         ttk.Label(outer, text="External Database",
                   font=("Segoe UI", 10, "bold")).pack(anchor=W)
         ttk.Label(
@@ -240,10 +253,12 @@ class SettingsDialog(ttk.Toplevel):
         size_frame.pack(fill=X)
 
         sizes = [
-            ("normal", "Normal",
+            ("normal",      "Normal",
              "Default text sizes (recommended for most displays)."),
-            ("large",  "Large",
+            ("large",       "Large",
              "25% larger text — easier to read for accessibility."),
+            ("extra_large", "Extra Large",
+             "50% larger text — maximum accessibility."),
         ]
         for val, label, desc in sizes:
             row = ttk.Frame(size_frame)
@@ -584,6 +599,8 @@ class SettingsDialog(ttk.Toplevel):
         # Teacher settings
         teacher = self._settings.get("teacher") or {}
         self._program_type_var.set(teacher.get("program_type", "band"))
+        self._school_district_var.set(teacher.get("school_district", ""))
+        self._school_name_var.set(teacher.get("school_name", ""))
         ext_path = teacher.get("external_db_path", "")
         self._ext_db_entry.config(state="normal")
         self._ext_db_var.set(ext_path)
@@ -634,6 +651,8 @@ class SettingsDialog(ttk.Toplevel):
         if "teacher" not in self._settings:
             self._settings["teacher"] = {}
         self._settings["teacher"]["program_type"] = self._program_type_var.get()
+        self._settings["teacher"]["school_district"] = self._school_district_var.get().strip()
+        self._settings["teacher"]["school_name"] = self._school_name_var.get().strip()
         self._settings["teacher"]["external_db_path"] = self._ext_db_var.get().strip()
 
         if "llm" not in self._settings:
@@ -668,6 +687,10 @@ class SettingsDialog(ttk.Toplevel):
                                   parent=self)
             return
 
+        # If Claude-Proxy.txt is present and the user changed any proxy settings,
+        # move the file so it no longer overrides settings on next launch.
+        self._retire_proxy_file_if_changed()
+
         # Apply theme change immediately
         try:
             import ttkbootstrap as ttk_mod
@@ -677,9 +700,10 @@ class SettingsDialog(ttk.Toplevel):
             pass
 
         # Notify about font size restart requirement
-        from ui.theme import get_font_scale
+        from ui.theme import get_font_scale, LARGE_FONT_SCALE, EXTRA_LARGE_FONT_SCALE
+        _scale_map = {"normal": 1.0, "large": LARGE_FONT_SCALE, "extra_large": EXTRA_LARGE_FONT_SCALE}
         current_scale = get_font_scale()
-        needs_restart = (chosen_size == "large") != (current_scale > 1.0)
+        needs_restart = _scale_map.get(chosen_size, 1.0) != current_scale
         if needs_restart:
             Messagebox.show_info(
                 "Display size change will take effect after restarting the app.",
@@ -688,6 +712,52 @@ class SettingsDialog(ttk.Toplevel):
             )
 
         self.destroy()
+
+    def _retire_proxy_file_if_changed(self):
+        """Move Claude-Proxy.txt to Claude-Proxy/ subfolder if user edited proxy settings."""
+        if not self._app_dir:
+            return
+        proxy_file = os.path.join(self._app_dir, "Claude-Proxy.txt")
+        if not os.path.exists(proxy_file):
+            return
+        # Parse original values from the file
+        orig_endpoint = orig_token = None
+        try:
+            with open(proxy_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    for sep in (":", "="):
+                        if sep in line:
+                            key, _, val = line.partition(sep)
+                            key = key.strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+                            val = val.strip()
+                            if key == "proxyendpoint":
+                                orig_endpoint = val.rstrip("/")
+                            elif key == "token":
+                                orig_token = val
+                            break
+        except Exception:
+            return
+        # Compare with what was just saved
+        new_backend = self._settings.get("llm", {}).get("backend", "local")
+        new_endpoint = self._settings.get("llm", {}).get("proxy_endpoint", "")
+        new_token = self._settings.get("llm", {}).get("proxy_token", "")
+        changed = (
+            new_backend != "proxy"
+            or new_endpoint != orig_endpoint
+            or new_token != orig_token
+        )
+        if changed:
+            import shutil
+            archive_dir = os.path.join(self._app_dir, "Claude-Proxy")
+            os.makedirs(archive_dir, exist_ok=True)
+            dest = os.path.join(archive_dir, "Claude-Proxy.txt")
+            try:
+                shutil.move(proxy_file, dest)
+            except Exception:
+                pass
 
     def _fetch_models(self):
         """Query the endpoint for available models and populate the combobox."""

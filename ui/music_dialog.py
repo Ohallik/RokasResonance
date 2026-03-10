@@ -70,15 +70,9 @@ class MusicDialog(ttk.Toplevel):
 
         title = "Edit Sheet Music" if music_id else "Add Sheet Music"
         self.title(title)
-        self.geometry("760x740")
         self.resizable(True, True)
         self.grab_set()
-
-        # Center
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 760) // 2
-        y = (self.winfo_screenheight() - 740) // 2
-        self.geometry(f"+{x}+{y}")
+        self.lift()
 
         self._vars = {}
         self._build()
@@ -90,6 +84,9 @@ class MusicDialog(ttk.Toplevel):
             self._vars["location"].set("Chinook Middle School")
             if prefill_data:
                 self._prefill(prefill_data)
+
+        from ui.theme import fit_window
+        fit_window(self, 760, 740)
 
     # ───────────────────────────────────────────────────── Build UI ────────
 
@@ -347,14 +344,14 @@ class MusicDialog(ttk.Toplevel):
             existing = self.db.get_sheet_music(self.music_id)
             if existing:
                 data["file_path"] = existing["file_path"] or ""
-            data["source_file"] = self._source_file if self._source_file else (
+            data["source_file"] = os.path.basename(self._source_file) if self._source_file else (
                 (existing["source_file"] or "") if existing else ""
             )
             self.db.update_sheet_music(self.music_id, data)
         else:
             # Create new
             data["file_path"] = ""
-            data["source_file"] = self._source_file or ""
+            data["source_file"] = os.path.basename(self._source_file) if self._source_file else ""
             self.db.add_sheet_music(data)
 
         self._result = "saved"

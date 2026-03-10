@@ -10,6 +10,7 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from collections import Counter
 from datetime import date
+from ui.theme import fs
 
 
 UI_GUIDE = """\
@@ -395,16 +396,13 @@ class ChatDialog(ttk.Toplevel):
         self._summary_fn = lambda: _build_combined_summary(db, band_db=self._band_db, mode=self._mode)
 
         self.title("Ask Reginald — Roka's Resonance")
-        self.geometry("520x600")
         self.resizable(True, True)
         # Not modal — user can still browse inventory while chatting
 
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 520) // 2
-        y = (self.winfo_screenheight() - 600) // 2
-        self.geometry(f"+{x}+{y}")
-
         self._build()
+
+        from ui.theme import fit_window
+        fit_window(self, 520, 600)
 
         # Opening line
         self._add_message(
@@ -421,13 +419,13 @@ class ChatDialog(ttk.Toplevel):
         ttk.Label(
             hdr,
             text="  🎩  Reginald — Inventory Assistant",
-            font=("Segoe UI", 12, "bold"),
+            font=("Segoe UI", fs(12), "bold"),
             bootstyle=(INVERSE, DARK),
         ).pack(side=LEFT, pady=10, padx=12)
         ttk.Label(
             hdr,
             text="grumpy butler · retired musician  ",
-            font=("Segoe UI", 8, "italic"),
+            font=("Segoe UI", fs(8), "italic"),
             bootstyle=(INVERSE, DARK),
         ).pack(side=RIGHT, pady=10, padx=4)
 
@@ -440,7 +438,7 @@ class ChatDialog(ttk.Toplevel):
             chat_frame,
             wrap=WORD,
             state="disabled",
-            font=("Segoe UI", 9),
+            font=("Segoe UI", fs(9)),
             relief="flat",
             padx=10,
             pady=6,
@@ -453,39 +451,39 @@ class ChatDialog(ttk.Toplevel):
 
         # Styling tags
         self._chat_text.tag_configure(
-            "user_label", font=("Segoe UI", 8, "bold"), foreground="#1a5fa8"
+            "user_label", font=("Segoe UI", fs(8), "bold"), foreground="#1a5fa8"
         )
         self._chat_text.tag_configure(
-            "user_text", font=("Segoe UI", 9), foreground="#1a5fa8",
+            "user_text", font=("Segoe UI", fs(9)), foreground="#1a5fa8",
             lmargin1=4, lmargin2=4,
         )
         self._chat_text.tag_configure(
-            "user_text_bold", font=("Segoe UI", 9, "bold"), foreground="#1a5fa8",
+            "user_text_bold", font=("Segoe UI", fs(9), "bold"), foreground="#1a5fa8",
             lmargin1=4, lmargin2=4,
         )
         self._chat_text.tag_configure(
-            "reg_label", font=("Segoe UI", 8, "bold"), foreground="#5a3a00"
+            "reg_label", font=("Segoe UI", fs(8), "bold"), foreground="#5a3a00"
         )
         self._chat_text.tag_configure(
-            "reg_text", font=("Segoe UI", 9), foreground="#222",
+            "reg_text", font=("Segoe UI", fs(9)), foreground="#222",
             lmargin1=4, lmargin2=4,
         )
         self._chat_text.tag_configure(
-            "reg_text_bold", font=("Segoe UI", 9, "bold"), foreground="#222",
+            "reg_text_bold", font=("Segoe UI", fs(9), "bold"), foreground="#222",
             lmargin1=4, lmargin2=4,
         )
         self._chat_text.tag_configure(
-            "thinking", font=("Segoe UI", 9, "italic"), foreground="#999"
+            "thinking", font=("Segoe UI", fs(9), "italic"), foreground="#999"
         )
         self._chat_text.tag_configure(
-            "error_text", font=("Segoe UI", 9, "italic"), foreground="#cc0000"
+            "error_text", font=("Segoe UI", fs(9), "italic"), foreground="#cc0000"
         )
 
         ttk.Separator(self).pack(fill=X, padx=10, pady=(6, 0))
 
         # Context strip
         self._ctx_label = ttk.Label(
-            self, text="", font=("Segoe UI", 8), foreground="#888"
+            self, text="", font=("Segoe UI", fs(8)), foreground="#888"
         )
         self._ctx_label.pack(anchor=W, padx=12, pady=(4, 0))
         self._update_context_label()
@@ -498,7 +496,7 @@ class ChatDialog(ttk.Toplevel):
         self._input_entry = ttk.Entry(
             input_frame,
             textvariable=self._input_var,
-            font=("Segoe UI", 10),
+            font=("Segoe UI", fs(10)),
         )
         self._input_entry.pack(side=LEFT, fill=X, expand=True, padx=(0, 6))
         self._input_entry.bind("<Return>", lambda e: self._send())

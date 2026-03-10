@@ -294,6 +294,32 @@ class Database:
                 "SELECT * FROM instruments WHERE id=?", (instrument_id,)
             ).fetchone()
 
+    def get_instrument_by_serial(self, serial_no: str):
+        """Return the first active instrument matching serial_no."""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM instruments WHERE is_active=1 AND serial_no=? LIMIT 1",
+                (serial_no,)
+            ).fetchone()
+
+    def get_instrument_by_barcode(self, barcode: str):
+        """Return the first active instrument matching barcode or district_no."""
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT * FROM instruments
+                   WHERE is_active=1 AND (barcode=? OR district_no=?)
+                   LIMIT 1""",
+                (barcode, barcode)
+            ).fetchone()
+
+    def find_student_by_student_id(self, student_id: str):
+        """Lookup student by their district student_id string."""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM students WHERE student_id=? ORDER BY id DESC LIMIT 1",
+                (student_id,)
+            ).fetchone()
+
     def add_instrument(self, data: dict) -> int:
         cols = [
             "category", "description", "brand", "model", "barcode", "quantity",

@@ -29,21 +29,18 @@ class InstrumentDialog(ttk.Toplevel):
 
         title = "Edit Instrument" if instrument_id else "Add New Instrument"
         self.title(title)
-        self.geometry("680x720")
         self.resizable(True, True)
         self.grab_set()
-
-        # Center
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 680) // 2
-        y = (self.winfo_screenheight() - 720) // 2
-        self.geometry(f"+{x}+{y}")
+        self.lift()
 
         self._vars = {}
         self._build()
 
         if instrument_id:
             self._load_instrument(instrument_id)
+
+        from ui.theme import fit_window
+        fit_window(self, 680, 720)
 
     # ───────────────────────────────────────────────────── Build UI ──────────
 

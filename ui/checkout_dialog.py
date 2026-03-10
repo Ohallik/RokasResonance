@@ -23,16 +23,14 @@ class CheckoutDialog(ttk.Toplevel):
         self.checkout_data = checkout_data or {}
 
         self.title("Check Out Instrument" if mode == "checkout" else "Check In Instrument")
-        self.geometry("480x500")
         self.resizable(False, False)
         self.grab_set()
-
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 480) // 2
-        y = (self.winfo_screenheight() - 500) // 2
-        self.geometry(f"+{x}+{y}")
+        self.lift()
 
         self._build()
+
+        from ui.theme import fit_window
+        fit_window(self, 480, 500)
 
     def _build(self):
         instrument = self.db.get_instrument(self.instrument_id)
@@ -101,10 +99,24 @@ class CheckoutDialog(ttk.Toplevel):
         self._ac_selecting = False
         self._selected_student_id = None
 
-        # Load all student names up front for autocomplete
+        # Load all student names up front for autocomplete (deduplicated).
+        # Always key by first-word-of-first-name + last name so that rows with and
+        # without a district student_id for the same person collapse into one entry.
+        # Prefer whichever record has a student_id (richer contact data).
         all_students = self.db.get_all_students()
+        _seen = {}  # name_key -> (record_dict, has_sid)
+        for s in all_students:
+            d = dict(s)
+            has_sid = bool((s["student_id"] or "").strip())
+            first_word = (s["first_name"] or "").split()[0].lower()
+            last = (s["last_name"] or "").lower()
+            name_key = f"{first_word}|{last}"
+            if name_key not in _seen:
+                _seen[name_key] = (d, has_sid)
+            elif has_sid and not _seen[name_key][1]:
+                _seen[name_key] = (d, True)  # upgrade to the richer record
         self._student_list = [
-            (f"{s['first_name']} {s['last_name']}", dict(s)) for s in all_students
+            (f"{s['first_name']} {s['last_name']}", s) for s, _ in _seen.values()
         ]
 
         # ── Student Name ───────────────────────────────────────────────────────

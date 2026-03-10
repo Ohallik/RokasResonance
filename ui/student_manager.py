@@ -11,7 +11,7 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
-from ui.theme import muted_fg, subtle_fg
+from ui.theme import muted_fg, subtle_fg, fs, bind_copy_menu
 
 
 def _current_school_year() -> str:
@@ -160,11 +160,12 @@ class StudentManager(ttk.Frame):
         for label, key in fields:
             r = ttk.Frame(outer)
             r.pack(fill=X, pady=1)
-            ttk.Label(r, text=f"{label}:", font=("Segoe UI", 8, "bold"),
+            ttk.Label(r, text=f"{label}:", font=("Segoe UI", fs(8), "bold"),
                       width=12, anchor=W).pack(side=LEFT)
-            lbl = ttk.Label(r, text="", font=("Segoe UI", 8),
+            lbl = ttk.Label(r, text="", font=("Segoe UI", fs(8)),
                              anchor=W, wraplength=180, justify=LEFT)
             lbl.pack(side=LEFT, fill=X, expand=True)
+            bind_copy_menu(lbl)
             self._detail_labels[key] = lbl
 
         # ── Checkout history tab ───────────────────────────────────────────────
@@ -557,16 +558,15 @@ class _StudentImportDialog(ttk.Toplevel):
         self.school_year = school_year
 
         self.title("Import Student Roster")
-        self.geometry("520x400")
         self.resizable(False, False)
         self.grab_set()
-
-        self.update_idletasks()
-        x = (self.winfo_screenwidth()  - 520) // 2
-        y = (self.winfo_screenheight() - 400) // 2
-        self.geometry(f"+{x}+{y}")
+        self.lift()
 
         self._build()
+
+        from ui.theme import fit_window
+        fit_window(self, 520, 400)
+
         self.after(100, self._run_import)
 
     def _build(self):
@@ -676,19 +676,17 @@ class StudentDialog(ttk.Toplevel):
         self.default_year = default_year or _current_school_year()
 
         self.title("Edit Student" if student_id else "Add Student")
-        self.geometry("620x680")
         self.resizable(True, True)
         self.grab_set()
-
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 620) // 2
-        y = (self.winfo_screenheight() - 680) // 2
-        self.geometry(f"+{x}+{y}")
+        self.lift()
 
         self._vars = {}
         self._build()
         if student_id:
             self._load(student_id)
+
+        from ui.theme import fit_window
+        fit_window(self, 620, 680)
 
     def _build(self):
         hdr = ttk.Frame(self, bootstyle=PRIMARY)

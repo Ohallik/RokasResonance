@@ -8,7 +8,7 @@ import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
-from ui.theme import muted_fg
+from ui.theme import muted_fg, fs, bind_copy_menu
 
 
 TREEVIEW_COLS = (
@@ -74,6 +74,7 @@ class InventoryManager(ttk.Frame):
         toolbar = ttk.Frame(self, bootstyle=LIGHT)
         toolbar.pack(fill=X, padx=0, pady=0)
 
+        # ── Group 1: single-instrument actions ────────────────────────────
         ttk.Button(toolbar, text="➕ Add Instrument", bootstyle=SUCCESS,
                    command=self._add_instrument).pack(side=LEFT, padx=6, pady=6)
         ttk.Button(toolbar, text="✏️ Edit", bootstyle=PRIMARY,
@@ -82,12 +83,18 @@ class InventoryManager(ttk.Frame):
                    command=self._checkout).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="📥 Check In", bootstyle=INFO,
                    command=self._checkin).pack(side=LEFT, padx=2, pady=6)
+        ttk.Button(toolbar, text="📄 Generate Form", bootstyle=PRIMARY,
+                   command=self._generate_form).pack(side=LEFT, padx=2, pady=6)
+
+        ttk.Separator(toolbar, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=4)
+
+        # ── Group 2: bulk / special actions ───────────────────────────────
+        ttk.Button(toolbar, text="📦 Bulk Check Out/In", bootstyle=(WARNING, OUTLINE),
+                   command=self._bulk_checkout).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="🔧 Add Repair", bootstyle=SECONDARY,
                    command=self._add_repair).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="📋 Upload Invoice", bootstyle=SECONDARY,
                    command=self._upload_invoice).pack(side=LEFT, padx=2, pady=6)
-        ttk.Button(toolbar, text="📄 Generate Form", bootstyle=PRIMARY,
-                   command=self._generate_form).pack(side=LEFT, padx=2, pady=6)
 
         ttk.Separator(toolbar, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=4)
 
@@ -245,11 +252,12 @@ class InventoryManager(ttk.Frame):
         for label, key in fields:
             row = ttk.Frame(outer)
             row.pack(fill=X, pady=1)
-            ttk.Label(row, text=f"{label}:", font=("Segoe UI", 8, "bold"),
+            ttk.Label(row, text=f"{label}:", font=("Segoe UI", fs(8), "bold"),
                       width=14, anchor=W).pack(side=LEFT)
-            val_lbl = ttk.Label(row, text="", font=("Segoe UI", 8),
+            val_lbl = ttk.Label(row, text="", font=("Segoe UI", fs(8)),
                                  anchor=W, wraplength=180, justify=LEFT)
             val_lbl.pack(side=LEFT, fill=X, expand=True)
+            bind_copy_menu(val_lbl)
             self._detail_labels[key] = val_lbl
 
     def _build_history_tab(self):
@@ -608,7 +616,8 @@ class InventoryManager(ttk.Frame):
     def _get_selected_instrument(self):
         sel = self.tree.selection()
         if not sel:
-            Messagebox.show_warning("Please select an instrument first.", title="No Selection")
+            Messagebox.show_warning("Please select an instrument first.", title="No Selection",
+                                    parent=self.winfo_toplevel())
             return None
         return int(sel[0])
 
@@ -637,7 +646,7 @@ class InventoryManager(ttk.Frame):
             Messagebox.show_warning(
                 f"This instrument is already checked out to {active['student_name']}.\n"
                 "Check it in first before checking it out again.",
-                title="Already Checked Out"
+                title="Already Checked Out", parent=self.winfo_toplevel()
             )
             return
         from ui.checkout_dialog import CheckoutDialog
@@ -654,7 +663,7 @@ class InventoryManager(ttk.Frame):
         if not active:
             Messagebox.show_warning(
                 "This instrument is not currently checked out.",
-                title="Not Checked Out"
+                title="Not Checked Out", parent=self.winfo_toplevel()
             )
             return
         from ui.checkout_dialog import CheckoutDialog
@@ -663,6 +672,13 @@ class InventoryManager(ttk.Frame):
         self.wait_window(dlg)
         self.refresh()
         self._load_detail(iid)
+
+    def _bulk_checkout(self):
+        from ui.bulk_checkout_dialog import BulkCheckoutDialog
+        dlg = BulkCheckoutDialog(self.winfo_toplevel(), self.db, self.base_dir,
+                                 refresh_callback=self.refresh)
+        self.wait_window(dlg)
+        self.refresh()
 
     def _add_repair(self):
         iid = self._get_selected_instrument()
@@ -697,7 +713,8 @@ class InventoryManager(ttk.Frame):
         if not tags:
             return
         repair_id = int(tags[0])
-        if Messagebox.yesno("Delete this repair record?", title="Confirm Delete") == "Yes":
+        if Messagebox.yesno("Delete this repair record?", title="Confirm Delete",
+                            parent=self.winfo_toplevel()) == "Yes":
             self.db.delete_repair(repair_id)
             if self._selected_id:
                 self._load_repairs(self._selected_id)
@@ -710,7 +727,7 @@ class InventoryManager(ttk.Frame):
         if not active:
             Messagebox.show_warning(
                 "This instrument must be checked out to generate a loan form.",
-                title="Not Checked Out"
+                title="Not Checked Out", parent=self.winfo_toplevel()
             )
             return
         try:
@@ -719,18 +736,20 @@ class InventoryManager(ttk.Frame):
             self.db.mark_form_generated(active["id"])
             Messagebox.show_info(
                 f"Loan form generated!\n\n{path}\n\nOpening now...",
-                title="Form Generated"
+                title="Form Generated", parent=self.winfo_toplevel()
             )
             os.startfile(path)
         except Exception as e:
-            Messagebox.show_error(f"Failed to generate form:\n{e}", title="Error")
+            Messagebox.show_error(f"Failed to generate form:\n{e}", title="Error",
+                                  parent=self.winfo_toplevel())
 
     def _upload_invoice(self):
         from tkinter import filedialog
         try:
             from invoice_parser import parse_invoices
         except ImportError as e:
-            Messagebox.show_error(str(e), title="Missing Dependency")
+            Messagebox.show_error(str(e), title="Missing Dependency",
+                                  parent=self.winfo_toplevel())
             return
 
         paths = filedialog.askopenfilenames(
@@ -746,10 +765,12 @@ class InventoryManager(ttk.Frame):
         try:
             results = parse_invoices(list(paths), instruments)
         except ImportError as e:
-            Messagebox.show_error(str(e), title="Missing Dependency")
+            Messagebox.show_error(str(e), title="Missing Dependency",
+                                  parent=self.winfo_toplevel())
             return
         except Exception as e:
-            Messagebox.show_error(f"Error parsing invoice(s):\n{e}", title="Parse Error")
+            Messagebox.show_error(f"Error parsing invoice(s):\n{e}", title="Parse Error",
+                                  parent=self.winfo_toplevel())
             return
 
         errors  = [r for r in results if "error" in r]
@@ -759,7 +780,8 @@ class InventoryManager(ttk.Frame):
             msg = "No instrument matches found in the selected invoice(s)."
             if errors:
                 msg += "\n\nErrors:\n" + "\n".join(e["error"] for e in errors)
-            Messagebox.show_info(msg, title="No Matches Found")
+            Messagebox.show_info(msg, title="No Matches Found",
+                                 parent=self.winfo_toplevel())
             return
 
         # Confirm before opening dialogs
@@ -768,7 +790,7 @@ class InventoryManager(ttk.Frame):
             f"Found {len(matches)} repair record(s) across "
             f"{len(set(m['source_file'] for m in matches))} invoice file(s).{error_note}\n\n"
             "Review each repair record now?",
-            title="Invoice Parsed"
+            title="Invoice Parsed", parent=self.winfo_toplevel()
         )
         if answer != "Yes":
             return
@@ -794,5 +816,5 @@ class InventoryManager(ttk.Frame):
 
         Messagebox.show_info(
             f"Saved {saved_count} of {len(matches)} repair record(s).",
-            title="Invoice Review Complete"
+            title="Invoice Review Complete", parent=self.winfo_toplevel()
         )

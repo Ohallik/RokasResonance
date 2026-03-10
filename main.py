@@ -131,16 +131,9 @@ class ProfileSelector:
 
         self.dialog = ttk.Toplevel(parent)
         self.dialog.title("Select Teacher Profile — Roka's Resonance")
-        self.dialog.geometry("420x380")
         self.dialog.resizable(False, False)
         self.dialog.grab_set()
         self.dialog.protocol("WM_DELETE_WINDOW", self._on_close)
-
-        # Center on screen
-        self.dialog.update_idletasks()
-        x = (self.dialog.winfo_screenwidth() - 420) // 2
-        y = (self.dialog.winfo_screenheight() - 380) // 2
-        self.dialog.geometry(f"+{x}+{y}")
 
         ttk.Label(
             self.dialog,
@@ -204,6 +197,9 @@ class ProfileSelector:
         ttk.Button(
             btn_frame, text="Cancel", bootstyle=SECONDARY, command=self._on_close
         ).pack(side=RIGHT)
+
+        from ui.theme import fit_window
+        fit_window(self.dialog, 420, 380)
 
     def _open(self):
         sel = self.listbox.curselection()
@@ -281,15 +277,8 @@ def run_first_import(db: Database, parent_window, import_flag: str):
 
     dialog = ttk.Toplevel(parent_window)
     dialog.title("First Run — Importing Inventory Data")
-    dialog.geometry("500x320")
     dialog.resizable(False, False)
     dialog.grab_set()
-
-    # Center on screen
-    dialog.update_idletasks()
-    x = (dialog.winfo_screenwidth() - 500) // 2
-    y = (dialog.winfo_screenheight() - 320) // 2
-    dialog.geometry(f"+{x}+{y}")
 
     ttk.Label(
         dialog,
@@ -315,6 +304,9 @@ def run_first_import(db: Database, parent_window, import_flag: str):
                        bg="#F8F8F8", relief="flat", bd=1)
     log_text.pack(fill=BOTH, expand=True)
 
+    from ui.theme import fit_window
+    fit_window(dialog, 500, 320)
+
     def log(msg):
         log_text.config(state="normal")
         log_text.insert("end", msg + "\n")
@@ -339,6 +331,57 @@ def run_first_import(db: Database, parent_window, import_flag: str):
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
+
+def _parse_proxy_file(app_dir: str) -> dict | None:
+    """
+    Read Claude-Proxy.txt from the app folder and return
+    {'endpoint': ..., 'token': ...} if both values are present, else None.
+    Supports both 'Key: value' and 'Key=value' formats (case-insensitive keys).
+    """
+    proxy_file = os.path.join(app_dir, "Claude-Proxy.txt")
+    if not os.path.exists(proxy_file):
+        return None
+    endpoint = token = None
+    try:
+        with open(proxy_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                # Split on first ':' or '='
+                for sep in (":", "="):
+                    if sep in line:
+                        key, _, val = line.partition(sep)
+                        key = key.strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+                        val = val.strip()
+                        if key == "proxyendpoint":
+                            endpoint = val.rstrip("/")
+                        elif key == "token":
+                            token = val
+                        break
+    except Exception:
+        return None
+    if endpoint and token:
+        return {"endpoint": endpoint, "token": token}
+    return None
+
+
+def _apply_proxy_file_if_present(data_dir: str, app_dir: str):
+    """
+    If Claude-Proxy.txt exists in app_dir, read it and overwrite the profile's
+    LLM settings to use the Claude Proxy backend with those credentials.
+    """
+    proxy = _parse_proxy_file(app_dir)
+    if not proxy:
+        return
+    from ui.settings_dialog import load_settings, save_settings
+    settings = load_settings(data_dir)
+    llm = settings.setdefault("llm", {})
+    llm["backend"] = "proxy"
+    llm["proxy_endpoint"] = proxy["endpoint"]
+    llm["proxy_token"] = proxy["token"]
+    save_settings(data_dir, settings)
+
 
 def _load_profile(app, profile_name: str):
     """Set up DB and menu for the given profile. Returns the menu widget."""
@@ -367,6 +410,9 @@ def _load_profile(app, profile_name: str):
             traceback.print_exc()
 
     app.title(f"Roka's Resonance — {profile_name}")
+
+    # Auto-apply Claude-Proxy.txt if present in the app folder
+    _apply_proxy_file_if_present(data_dir, APP_DIR)
 
     # Run first-time import if needed
     if not os.path.exists(import_flag):
@@ -404,15 +450,17 @@ def main():
     # Read saved display preferences before creating the window
     from ui.theme import (
         set_theme_name, set_font_scale, apply_global_font_scaling,
-        LARGE_FONT_SCALE,
+        LARGE_FONT_SCALE, EXTRA_LARGE_FONT_SCALE,
     )
     startup_theme, startup_font_size = _resolve_startup_display(profiles, last_used)
     set_theme_name(startup_theme)
-    if startup_font_size == "large":
+    if startup_font_size == "extra_large":
+        set_font_scale(EXTRA_LARGE_FONT_SCALE)
+    elif startup_font_size == "large":
         set_font_scale(LARGE_FONT_SCALE)
 
-    win_w = 680 if startup_font_size == "large" else 600
-    win_h = 820 if startup_font_size == "large" else 720
+    win_w = {"normal": 600, "large": 680, "extra_large": 760}.get(startup_font_size, 600)
+    win_h = {"normal": 720, "large": 820, "extra_large": 920}.get(startup_font_size, 720)
 
     app = ttk.Window(
         title="Roka's Resonance",
@@ -420,7 +468,7 @@ def main():
         size=(win_w, win_h),
         resizable=(True, True),
     )
-    app.minsize(520 if startup_font_size == "normal" else 580, 600)
+    app.minsize({"normal": 520, "large": 580, "extra_large": 640}.get(startup_font_size, 520), 600)
     app.withdraw()
 
     # Apply font scaling after Tk root exists
@@ -473,6 +521,15 @@ def main():
     app._switch_profile_callback = switch_profile
 
     current_menu[0] = _load_profile(app, profile_name)
+
+    # Auto-fit window height to actual content (handles DPI scaling differences)
+    app.update_idletasks()
+    req_h = app.winfo_reqheight()
+    if req_h > win_h:
+        win_h = min(req_h + 4, sh - 80)
+        x = (sw - win_w) // 2
+        y = (sh - win_h) // 2
+        app.geometry(f"{win_w}x{win_h}+{x}+{y}")
 
     app.mainloop()
 

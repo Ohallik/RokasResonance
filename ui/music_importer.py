@@ -1023,18 +1023,17 @@ class BatchImportDialog(ttk.Toplevel):
             self._WID  = self._WID_CHOIR
 
         self.title("Import Sheet Music")
-        self.geometry("1140x600")
         self.resizable(True, True)
         self.grab_set()
+        self.lift()
         self.minsize(900, 480)
-
-        self.update_idletasks()
-        x = (self.winfo_screenwidth()  - 940) // 2
-        y = (self.winfo_screenheight() - 580) // 2
-        self.geometry(f"+{x}+{y}")
 
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         self._build_progress_phase()
+
+        from ui.theme import fit_window
+        fit_window(self, 1140, 600)
+
         self.after(100, self._start_analysis)
 
     # ─────────────────────────────────────────── Phase 1: Progress ────────

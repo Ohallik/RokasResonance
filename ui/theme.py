@@ -20,6 +20,7 @@ THEME_DESCRIPTIONS = {
 }
 
 LARGE_FONT_SCALE = 1.25
+EXTRA_LARGE_FONT_SCALE = 1.5
 
 _DARK_THEMES = {"darkly", "superhero", "cyborg", "vapor", "solar", "slate"}
 
@@ -58,6 +59,27 @@ def fs(base_size: int) -> int:
     return max(6, round(base_size * _font_scale))
 
 
+def bind_copy_menu(widget) -> None:
+    """Attach a right-click 'Copy' context menu to any Label widget."""
+    import tkinter as tk
+
+    def _show(event):
+        text = widget.cget("text")
+        if not text:
+            return
+        menu = tk.Menu(widget, tearoff=0)
+        menu.add_command(
+            label="Copy",
+            command=lambda: (widget.clipboard_clear(), widget.clipboard_append(text)),
+        )
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    widget.bind("<Button-3>", _show)
+
+
 # ── Adaptive color helpers ────────────────────────────────────────────────────
 
 def muted_fg() -> str:
@@ -86,6 +108,21 @@ def file_selected_fg() -> str:
 
 
 # ── Startup application ───────────────────────────────────────────────────────
+
+def fit_window(win, min_w: int = 200, min_h: int = 200, margin: int = 80):
+    """Size a Toplevel to fit its content, then center it on screen.
+    Uses the larger of the measured required size and min_w/min_h, capped at
+    screen size minus margin. Call this AFTER all widgets have been added.
+    """
+    win.update_idletasks()
+    sw = win.winfo_screenwidth()
+    sh = win.winfo_screenheight()
+    w = min(max(min_w, win.winfo_reqwidth()), sw - margin)
+    h = min(max(min_h, win.winfo_reqheight()), sh - margin)
+    x = (sw - w) // 2
+    y = max(0, (sh - h) // 2)
+    win.geometry(f"{w}x{h}+{x}+{y}")
+
 
 def apply_global_font_scaling():
     """

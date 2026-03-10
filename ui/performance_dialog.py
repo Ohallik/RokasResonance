@@ -30,14 +30,9 @@ class PerformanceDialog(ttk.Toplevel):
 
         title = "Edit Performance" if performance_id else "Add Performance"
         self.title(title)
-        self.geometry("440x440")
         self.resizable(False, False)
         self.grab_set()
-
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 440) // 2
-        y = (self.winfo_screenheight() - 440) // 2
-        self.geometry(f"+{x}+{y}")
+        self.lift()
 
         self._vars = {}
         self._build()
@@ -46,6 +41,9 @@ class PerformanceDialog(ttk.Toplevel):
             self._load(performance_id)
         else:
             self._vars["performance_date"].set(datetime.now().strftime("%Y-%m-%d"))
+
+        from ui.theme import fit_window
+        fit_window(self, 440, 440)
 
     def _build(self):
         # Header

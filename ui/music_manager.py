@@ -12,10 +12,12 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from tkinter import filedialog, messagebox
 from datetime import datetime
-from ui.theme import muted_fg
+from ui.theme import muted_fg, fs, bind_copy_menu
 
 # MusicPics folder names to search when resolving source_file paths
 _MUSIC_PICS_FOLDERS = ["MusicPics", "music_pics", "musicpics"]
+# Program directory (RokasResonance/) — used to locate shared MusicPics folder
+_APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 # ── Band column configuration ────────────────────────────────────────────────
@@ -519,7 +521,7 @@ class MusicManager(ttk.Frame):
         def _section(title):
             f = ttk.Frame(outer)
             f.pack(fill=X, padx=8, pady=(14, 4))
-            ttk.Label(f, text=title, font=("Segoe UI", 9, "bold"),
+            ttk.Label(f, text=title, font=("Segoe UI", fs(9), "bold"),
                       bootstyle=PRIMARY).pack(side=LEFT)
             ttk.Separator(f).pack(side=LEFT, fill=X, expand=True, padx=(6, 2))
 
@@ -532,12 +534,13 @@ class MusicManager(ttk.Frame):
             for i, (label, key) in enumerate(pairs):
                 col = ttk.Frame(r)
                 col.grid(row=0, column=i, sticky="new", padx=(0, 8))
-                ttk.Label(col, text=label, font=("Segoe UI", 8, "bold"),
+                ttk.Label(col, text=label, font=("Segoe UI", fs(8), "bold"),
                           foreground=_muted).pack(anchor=W)
-                fnt = ("Segoe UI", 13) if key == "title" else ("Segoe UI", 10)
+                fnt = ("Segoe UI", fs(13)) if key == "title" else ("Segoe UI", fs(10))
                 lbl = ttk.Label(col, text="", font=fnt,
                                 anchor=W, wraplength=280, justify=LEFT)
                 lbl.pack(anchor=W)
+                bind_copy_menu(lbl)
                 self._detail_labels[key] = lbl
                 self._detail_wrap_info.append((lbl, n))
 
@@ -563,7 +566,7 @@ class MusicManager(ttk.Frame):
         _section("Comments")
         cf = ttk.Frame(outer)
         cf.pack(fill=X, padx=10, pady=(0, 16))
-        notes_lbl = ttk.Label(cf, text="", font=("Segoe UI", 10),
+        notes_lbl = ttk.Label(cf, text="", font=("Segoe UI", fs(10)),
                               anchor=NW, wraplength=280, justify=LEFT)
         notes_lbl.pack(anchor=W)
         self._detail_labels["notes"] = notes_lbl
@@ -1504,17 +1507,15 @@ class _OMRProcessDialog(ttk.Toplevel):
         self._file_path = piece["file_path"] if piece else ""
 
         self.title("OMR Processing")
-        self.geometry("650x520")
         self.resizable(True, True)
         self.grab_set()
-
-        # Center
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 650) // 2
-        y = (self.winfo_screenheight() - 520) // 2
-        self.geometry(f"+{x}+{y}")
+        self.lift()
 
         self._build()
+
+        from ui.theme import fit_window
+        fit_window(self, 650, 520)
+
         # Start detection after dialog is visible
         self.after(200, self._detect_engines)
 
@@ -1774,12 +1775,14 @@ def _resolve_source_file(path: str, base_dir: str) -> str | None:
         return None
     if os.path.isfile(path):
         return path
-    # Try just the filename in known MusicPics folders
+    # Try just the filename in known MusicPics folders under the program dir,
+    # then the profile data dir as a fallback
     fname = os.path.basename(path)
-    for folder in _MUSIC_PICS_FOLDERS:
-        candidate = os.path.join(base_dir, folder, fname)
-        if os.path.isfile(candidate):
-            return candidate
+    for root in [_APP_DIR, base_dir]:
+        for folder in _MUSIC_PICS_FOLDERS:
+            candidate = os.path.join(root, folder, fname)
+            if os.path.isfile(candidate):
+                return candidate
     return None
 
 
@@ -1835,16 +1838,15 @@ class _LLMValidateDialog(ttk.Toplevel):
         self.changes_made = False
 
         self.title("Validate with LLM")
-        self.geometry("700x540")
         self.resizable(True, True)
         self.grab_set()
-
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 700) // 2
-        y = (self.winfo_screenheight() - 540) // 2
-        self.geometry(f"+{x}+{y}")
+        self.lift()
 
         self._build()
+
+        from ui.theme import fit_window
+        fit_window(self, 700, 540)
+
         self.after(200, self._start_validation)
 
     def _build(self):
@@ -2691,16 +2693,14 @@ class _FixSuggestionsDialog(ttk.Toplevel):
         self._check_vars: list[tk.BooleanVar] = []
 
         self.title("LLM Validation Suggestions")
-        self.geometry("820x640")
         self.resizable(True, True)
         self.grab_set()
-
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 820) // 2
-        y = (self.winfo_screenheight() - 640) // 2
-        self.geometry(f"+{x}+{y}")
+        self.lift()
 
         self._build()
+
+        from ui.theme import fit_window
+        fit_window(self, 820, 640)
 
     def _build(self):
         hdr = ttk.Frame(self, bootstyle=SUCCESS)
