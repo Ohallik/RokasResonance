@@ -19,6 +19,8 @@ sys.path.insert(0, APP_DIR)
 from database import Database
 from ui.main_menu import MainMenu
 
+VERSION = "v1.0.0"
+
 # User data lives in AppData so app-folder updates never touch it
 _LOCALAPPDATA = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
 APP_DATA_DIR  = os.path.join(_LOCALAPPDATA, "RokasResonance")
@@ -418,7 +420,7 @@ def _load_profile(app, profile_name: str):
     if not os.path.exists(import_flag):
         app.after(200, lambda: run_first_import(db, app, import_flag))
 
-    menu = MainMenu(app, db, base_dir=data_dir, app_dir=APP_DIR, teacher_name=profile_name)
+    menu = MainMenu(app, db, base_dir=data_dir, app_dir=APP_DIR, teacher_name=profile_name, version=VERSION)
     menu.pack(fill=BOTH, expand=True)
     return menu
 

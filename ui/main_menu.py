@@ -10,12 +10,13 @@ from PIL import Image, ImageTk
 from ui.theme import fs, muted_fg, subtle_fg, link_fg
 
 class MainMenu(ttk.Frame):
-    def __init__(self, parent, db, base_dir: str, app_dir: str = None, teacher_name: str = ""):
+    def __init__(self, parent, db, base_dir: str, app_dir: str = None, teacher_name: str = "", version: str = ""):
         super().__init__(parent)
         self.db = db
         self.base_dir = base_dir
         self.app_dir = app_dir or base_dir
         self.teacher_name = teacher_name
+        self._version = version
         self._windows = {}  # key -> Toplevel; tracks open manager windows
         from ui.settings_dialog import load_settings
         settings = load_settings(base_dir)
@@ -29,6 +30,8 @@ class MainMenu(ttk.Frame):
         self._refresh_after_id = None
         self._build()
         self._schedule_refresh()
+        if self._version:
+            self.after(2000, self._start_update_check)  # slight delay so UI loads first
 
     def _raise_or_open(self, key: str) -> ttk.Toplevel | None:
         """If the window for *key* is still open, bring it to front and return it.
@@ -136,6 +139,9 @@ class MainMenu(ttk.Frame):
         music_stats.pack()
         self._stat_music = self._make_stat(music_stats, "—", "Pieces of Music", 0)
 
+        # ── Update Banner (hidden until an update is found) ───────────────────
+        self._update_banner = None  # created on demand
+
         # ── Footer ────────────────────────────────────────────────────────────
         # Pack footer BEFORE btn_area so it reserves bottom space first.
         footer = ttk.Frame(self)
@@ -197,8 +203,9 @@ class MainMenu(ttk.Frame):
         for _base in ("primary", "warning", "info", "secondary"):
             _s.configure(f"Nav.{_base}.TButton", font=_btn_font)
 
-        btn_area = ttk.Frame(self)
-        btn_area.pack(fill=BOTH, expand=True, padx=40, pady=(20, 16))
+        self._btn_area = ttk.Frame(self)
+        self._btn_area.pack(fill=BOTH, expand=True, padx=40, pady=(20, 16))
+        btn_area = self._btn_area
 
         # ── Instrument Inventory group ───────────────────────────────────────
         ttk.Label(
@@ -364,6 +371,37 @@ class MainMenu(ttk.Frame):
         """Periodic 30-second refresh loop — only one instance should run at a time."""
         self._refresh_stats()
         self._refresh_after_id = self.after(30000, self._schedule_refresh)
+
+    def _start_update_check(self):
+        from updater import check_for_update
+        check_for_update(self._version, lambda tag, url: self.after(0, self._show_update_banner, tag, url))
+
+    def _show_update_banner(self, tag: str, url: str):
+        if self._update_banner:
+            return  # already showing
+        import webbrowser
+        banner = ttk.Frame(self, bootstyle=WARNING)
+        banner.pack(fill=X, before=self._btn_area)
+        ttk.Label(
+            banner,
+            text=f"⬆  Update available: {tag}",
+            font=("Segoe UI", fs(9), "bold"),
+            bootstyle=(INVERSE, WARNING),
+        ).pack(side=LEFT, padx=(16, 8), pady=6)
+        ttk.Button(
+            banner,
+            text="Download",
+            bootstyle=WARNING,
+            command=lambda: webbrowser.open(url),
+        ).pack(side=LEFT, pady=4)
+        ttk.Button(
+            banner,
+            text="✕",
+            bootstyle=(OUTLINE, WARNING),
+            width=3,
+            command=lambda: banner.pack_forget(),
+        ).pack(side=RIGHT, padx=8, pady=4)
+        self._update_banner = banner
 
     def _on_child_close(self, key: str):
         """Clean up window reference and refresh stats when a child window closes."""
