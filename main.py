@@ -334,56 +334,6 @@ def run_first_import(db: Database, parent_window, import_flag: str):
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-def _parse_proxy_file(app_dir: str) -> dict | None:
-    """
-    Read Claude-Proxy.txt from the app folder and return
-    {'endpoint': ..., 'token': ...} if both values are present, else None.
-    Supports both 'Key: value' and 'Key=value' formats (case-insensitive keys).
-    """
-    proxy_file = os.path.join(app_dir, "Claude-Proxy.txt")
-    if not os.path.exists(proxy_file):
-        return None
-    endpoint = token = None
-    try:
-        with open(proxy_file, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                # Split on first ':' or '='
-                for sep in (":", "="):
-                    if sep in line:
-                        key, _, val = line.partition(sep)
-                        key = key.strip().lower().replace(" ", "").replace("-", "").replace("_", "")
-                        val = val.strip()
-                        if key == "proxyendpoint":
-                            endpoint = val.rstrip("/")
-                        elif key == "token":
-                            token = val
-                        break
-    except Exception:
-        return None
-    if endpoint and token:
-        return {"endpoint": endpoint, "token": token}
-    return None
-
-
-def _apply_proxy_file_if_present(data_dir: str, app_dir: str):
-    """
-    If Claude-Proxy.txt exists in app_dir, read it and overwrite the profile's
-    LLM settings to use the Claude Proxy backend with those credentials.
-    """
-    proxy = _parse_proxy_file(app_dir)
-    if not proxy:
-        return
-    from ui.settings_dialog import load_settings, save_settings
-    settings = load_settings(data_dir)
-    llm = settings.setdefault("llm", {})
-    llm["backend"] = "proxy"
-    llm["proxy_endpoint"] = proxy["endpoint"]
-    llm["proxy_token"] = proxy["token"]
-    save_settings(data_dir, settings)
-
 
 def _load_profile(app, profile_name: str):
     """Set up DB and menu for the given profile. Returns the menu widget."""
@@ -412,9 +362,6 @@ def _load_profile(app, profile_name: str):
             traceback.print_exc()
 
     app.title(f"Roka's Resonance — {profile_name}")
-
-    # Auto-apply Claude-Proxy.txt if present in the app folder
-    _apply_proxy_file_if_present(data_dir, APP_DIR)
 
     # Run first-time import if needed
     if not os.path.exists(import_flag):
@@ -494,13 +441,15 @@ def main():
     else:
         profile_name = profiles[0]
 
-    # Center and show
+    # Center and show — clamp to screen so large fonts don't overflow
     app.update_idletasks()
     sw = app.winfo_screenwidth()
     sh = app.winfo_screenheight()
+    win_w = min(win_w, sw - 80)
+    win_h = min(win_h, sh - 80)
     x = (sw - win_w) // 2
-    y = (sh - win_h) // 2
-    app.geometry(f"+{x}+{y}")
+    y = max(20, (sh - win_h) // 2)
+    app.geometry(f"{win_w}x{win_h}+{x}+{y}")
     app.deiconify()
 
     # State holder for the current menu widget
@@ -524,13 +473,16 @@ def main():
 
     current_menu[0] = _load_profile(app, profile_name)
 
-    # Auto-fit window height to actual content (handles DPI scaling differences)
+    # Auto-fit window to actual content, capped at screen size
     app.update_idletasks()
     req_h = app.winfo_reqheight()
-    if req_h > win_h:
-        win_h = min(req_h + 4, sh - 80)
+    req_w = app.winfo_reqwidth()
+    new_h = min(max(win_h, req_h + 4), sh - 80)
+    new_w = min(max(win_w, req_w + 4), sw - 80)
+    if new_h != win_h or new_w != win_w:
+        win_h, win_w = new_h, new_w
         x = (sw - win_w) // 2
-        y = (sh - win_h) // 2
+        y = max(20, (sh - win_h) // 2)
         app.geometry(f"{win_w}x{win_h}+{x}+{y}")
 
     app.mainloop()

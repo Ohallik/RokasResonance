@@ -95,11 +95,10 @@ class InventoryManager(ttk.Frame):
                    command=self._add_repair).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="📋 Upload Invoice", bootstyle=SECONDARY,
                    command=self._upload_invoice).pack(side=LEFT, padx=2, pady=6)
+        ttk.Button(toolbar, text="📊 Export Repairs", bootstyle=SECONDARY,
+                   command=self._export_repairs).pack(side=LEFT, padx=2, pady=6)
 
         ttk.Separator(toolbar, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=4)
-
-        ttk.Button(toolbar, text="🔄 Refresh", bootstyle=(SECONDARY, OUTLINE),
-                   command=self.refresh).pack(side=LEFT, padx=2, pady=6)
 
         ttk.Checkbutton(toolbar, text="Show Inactive",
                         variable=self._show_inactive,
@@ -296,7 +295,7 @@ class InventoryManager(ttk.Frame):
         sb = ttk.Scrollbar(frame, orient=VERTICAL)
         self._repair_tree = ttk.Treeview(frame, columns=cols, show="headings",
                                           yscrollcommand=sb.set, bootstyle=WARNING,
-                                          height=10)
+                                          height=10, selectmode="extended")
         sb.config(command=self._repair_tree.yview)
         sb.pack(side=RIGHT, fill=Y)
         self._repair_tree.pack(fill=BOTH, expand=True)
@@ -307,6 +306,15 @@ class InventoryManager(ttk.Frame):
             self._repair_tree.heading(col, text=col, anchor=W)
             self._repair_tree.column(col, width=w, anchor=W,
                                      minwidth=40, stretch=col in _stretch_r)
+
+        self._repair_total_var = tk.StringVar(value="")
+        self._repair_costs = {}  # iid -> act_cost or est_cost
+        self._repair_total_label = ttk.Label(
+            frame, textvariable=self._repair_total_var,
+            font=("Segoe UI", fs(9)), foreground=muted_fg(), anchor=E,
+        )
+        self._repair_total_label.pack(fill=X, padx=8, pady=(2, 4))
+        self._repair_tree.bind("<<TreeviewSelect>>", self._on_repair_select)
 
     # ──────────────────────────────────────────────────── Column Visibility ────
 
@@ -597,6 +605,7 @@ class InventoryManager(ttk.Frame):
 
     def _load_repairs(self, instrument_id: int):
         self._repair_tree.delete(*self._repair_tree.get_children())
+        self._repair_costs = {}
         repairs = self.db.get_repairs(instrument_id)
         for r in repairs:
             est = f"${r['est_cost']:,.2f}" if r["est_cost"] else ""
@@ -610,6 +619,28 @@ class InventoryManager(ttk.Frame):
             ))
             # Store repair id in item
             self._repair_tree.item(iid, tags=(str(r["id"]),))
+            self._repair_costs[iid] = float(r["act_cost"] or r["est_cost"] or 0)
+        total = sum(self._repair_costs.values())
+        n = len(self._repair_costs)
+        if n:
+            self._repair_total_var.set(f"Total spent: ${total:,.2f}  ({n} repair{'s' if n != 1 else ''})")
+        else:
+            self._repair_total_var.set("")
+
+    def _on_repair_select(self, _event=None):
+        sel = self._repair_tree.selection()
+        total = sum(self._repair_costs.values())
+        if not sel:
+            n = len(self._repair_costs)
+            if n:
+                self._repair_total_var.set(f"Total spent: ${total:,.2f}  ({n} repair{'s' if n != 1 else ''})")
+            else:
+                self._repair_total_var.set("")
+            return
+        sel_total = sum(self._repair_costs.get(iid, 0) for iid in sel)
+        self._repair_total_var.set(
+            f"Selected: ${sel_total:,.2f}  •  Total: ${total:,.2f}"
+        )
 
     # ─────────────────────────────────────────────────────── Action Handlers ──
 
@@ -818,3 +849,226 @@ class InventoryManager(ttk.Frame):
             f"Saved {saved_count} of {len(matches)} repair record(s).",
             title="Invoice Review Complete", parent=self.winfo_toplevel()
         )
+
+    def _export_repairs(self):
+        # ── Scope selection dialog ─────────────────────────────────────────
+        selected_ids = {int(iid) for iid in self.tree.selection()}
+        n_sel = len(selected_ids)
+
+        dlg = ttk.Toplevel(self.winfo_toplevel())
+        dlg.title("Export Repairs")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        ttk.Label(dlg, text="Export repair records for:",
+                  font=("Segoe UI", fs(10), "bold")).pack(anchor=W, padx=20, pady=(18, 8))
+
+        scope_var = tk.StringVar(value="all" if n_sel == 0 else "selected")
+
+        sel_text = (f"Selected instruments only  ({n_sel} selected)"
+                    if n_sel else "Selected instruments only  (none selected)")
+        ttk.Radiobutton(dlg, text=sel_text, variable=scope_var,
+                        value="selected",
+                        state="normal" if n_sel else "disabled").pack(anchor=W, padx=32, pady=2)
+        ttk.Radiobutton(dlg, text="All instruments", variable=scope_var,
+                        value="all").pack(anchor=W, padx=32, pady=2)
+
+        result = {"ok": False}
+
+        def _ok():
+            result["ok"] = True
+            dlg.destroy()
+
+        btn_row = ttk.Frame(dlg)
+        btn_row.pack(pady=(14, 18))
+        ttk.Button(btn_row, text="Export", bootstyle=PRIMARY,
+                   command=_ok).pack(side=LEFT, padx=6)
+        ttk.Button(btn_row, text="Cancel", bootstyle=SECONDARY,
+                   command=dlg.destroy).pack(side=LEFT, padx=6)
+
+        from ui.theme import fit_window
+        fit_window(dlg, 340, 185)
+        dlg.wait_window()
+        if not result["ok"]:
+            return
+
+        # ── Gather instrument + repair data ───────────────────────────────
+        all_instruments = [dict(r) for r in self.db.get_all_instruments(include_inactive=True)]
+        if scope_var.get() == "selected" and selected_ids:
+            all_instruments = [i for i in all_instruments if i["id"] in selected_ids]
+
+        data = []
+        for inst in all_instruments:
+            repairs = [dict(r) for r in self.db.get_repairs(inst["id"])]
+            if repairs:
+                data.append((inst, repairs))
+
+        if not data:
+            Messagebox.show_info("No repair records found for the selected instruments.",
+                                 title="Nothing to Export", parent=self.winfo_toplevel())
+            return
+
+        # ── Build Excel workbook ───────────────────────────────────────────
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            Messagebox.show_error("openpyxl is required. Run: pip install openpyxl",
+                                  title="Missing Dependency", parent=self.winfo_toplevel())
+            return
+
+        wb = openpyxl.Workbook()
+
+        def _fill(hex_color):
+            return PatternFill("solid", fgColor=hex_color)
+
+        def _border():
+            s = Side(style="thin", color="CCCCCC")
+            return Border(left=s, right=s, top=s, bottom=s)
+
+        hdr_font   = Font(bold=True, color="FFFFFF", size=10)
+        hdr_fill   = _fill("2E5E8E")   # dark blue
+        inst_font  = Font(bold=True, size=9)
+        inst_fill  = _fill("D9E1F2")   # light blue
+        total_font = Font(bold=True, size=9)
+        total_fill = _fill("E2EFDA")   # light green
+        alt_fill   = _fill("F5F5F5")   # light gray
+        money_fmt  = '"$"#,##0.00'
+
+        def _row(ws, r, values, font=None, fill=None, fmts=None):
+            for c, val in enumerate(values, 1):
+                cell = ws.cell(row=r, column=c, value=val)
+                cell.border = _border()
+                cell.alignment = Alignment(vertical="center")
+                if font:  cell.font = font
+                if fill:  cell.fill = fill
+                if fmts and fmts.get(c):
+                    cell.number_format = fmts[c]
+
+        # ── Sheet 1: Summary ──────────────────────────────────────────────
+        ws1 = wb.active
+        ws1.title = "Summary"
+        ws1.freeze_panes = "A2"
+
+        s1_hdrs = ["Category", "Instrument", "Brand", "Model",
+                   "Barcode", "District #", "Serial #", "Condition",
+                   "# Repairs", "Total Spent", "Last Repaired"]
+        _row(ws1, 1, s1_hdrs, font=hdr_font, fill=hdr_fill)
+        ws1.row_dimensions[1].height = 18
+
+        summary = []
+        for inst, repairs in data:
+            total = sum(float(r.get("act_cost") or r.get("est_cost") or 0) for r in repairs)
+            last  = max((r.get("date_repaired") or r.get("date_added") or "") for r in repairs)
+            summary.append((inst, repairs, total, last))
+        summary.sort(key=lambda x: -x[2])
+
+        grand_total = 0.0
+        for ri, (inst, repairs, total, last) in enumerate(summary, 2):
+            grand_total += total
+            fill = alt_fill if ri % 2 == 0 else None
+            _row(ws1, ri, [
+                inst.get("category") or "",
+                inst.get("description") or "",
+                inst.get("brand") or "",
+                inst.get("model") or "",
+                inst.get("barcode") or "",
+                inst.get("district_no") or "",
+                inst.get("serial_no") or "",
+                inst.get("condition") or "",
+                len(repairs),
+                total,
+                last or "",
+            ], fill=fill, fmts={10: money_fmt})
+
+        gt_row = len(summary) + 2
+        _row(ws1, gt_row,
+             ["", "", "", "", "", "", "", "GRAND TOTAL", "", grand_total, ""],
+             font=total_font, fill=total_fill, fmts={10: money_fmt})
+
+        for col, w in zip(range(1, 12), [14, 26, 16, 16, 10, 10, 14, 12, 9, 13, 13]):
+            ws1.column_dimensions[get_column_letter(col)].width = w
+
+        # ── Sheet 2: Repair Details ───────────────────────────────────────
+        ws2 = wb.create_sheet("Repair Details")
+        ws2.freeze_panes = "A2"
+
+        s2_hdrs = ["Category", "Instrument", "Brand", "Barcode",
+                   "Date Added", "Description", "Shop / Location",
+                   "Est. Cost", "Actual Cost", "Date Repaired", "Status"]
+        _row(ws2, 1, s2_hdrs, font=hdr_font, fill=hdr_fill)
+        ws2.row_dimensions[1].height = 18
+
+        dr = 2
+        for inst, repairs, total, _ in summary:
+            # Instrument header spanning all columns
+            label = "  ".join(filter(None, [
+                inst.get("category") or "",
+                inst.get("description") or "",
+                inst.get("brand") or "",
+                f"Barcode: {inst.get('barcode')}" if inst.get("barcode") else "",
+                f"District #: {inst.get('district_no')}" if inst.get("district_no") else "",
+            ]))
+            _row(ws2, dr, [label] + [""] * (len(s2_hdrs) - 1),
+                 font=inst_font, fill=inst_fill)
+            ws2.merge_cells(start_row=dr, start_column=1,
+                            end_row=dr, end_column=len(s2_hdrs))
+            dr += 1
+
+            for ridx, r in enumerate(
+                sorted(repairs, key=lambda x: x.get("date_added") or "")
+            ):
+                fill = alt_fill if ridx % 2 == 1 else None
+                status = "Completed" if r.get("date_repaired") else "Pending"
+                _row(ws2, dr, [
+                    inst.get("category") or "",
+                    inst.get("description") or "",
+                    inst.get("brand") or "",
+                    inst.get("barcode") or "",
+                    r.get("date_added") or "",
+                    r.get("description") or "",
+                    r.get("assigned_to") or r.get("location") or "",
+                    float(r.get("est_cost") or 0),
+                    float(r.get("act_cost") or 0),
+                    r.get("date_repaired") or "",
+                    status,
+                ], fill=fill, fmts={8: money_fmt, 9: money_fmt})
+                dr += 1
+
+            # Subtotal row
+            _row(ws2, dr,
+                 ["", "", "", "", "", "", "Subtotal", "", total, "", ""],
+                 font=total_font, fill=total_fill, fmts={8: money_fmt, 9: money_fmt})
+            dr += 2  # blank row between instruments
+
+        for col, w in zip(range(1, 12), [12, 22, 14, 10, 12, 34, 22, 10, 12, 14, 10]):
+            ws2.column_dimensions[get_column_letter(col)].width = w
+
+        # ── Save ──────────────────────────────────────────────────────────
+        from tkinter import filedialog
+        import datetime
+        path = filedialog.asksaveasfilename(
+            title="Save Repair Export",
+            parent=self.winfo_toplevel(),
+            defaultextension=".xlsx",
+            initialfile=f"Repairs_{datetime.date.today().isoformat()}.xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+
+        try:
+            wb.save(path)
+        except Exception as e:
+            Messagebox.show_error(f"Could not save file:\n{e}", title="Save Error",
+                                  parent=self.winfo_toplevel())
+            return
+
+        answer = Messagebox.yesno(
+            "Repair data exported successfully.\n\nOpen the file now?",
+            title="Export Complete", parent=self.winfo_toplevel()
+        )
+        if answer == "Yes":
+            import subprocess
+            subprocess.Popen(["start", "", path], shell=True)

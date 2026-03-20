@@ -23,8 +23,7 @@ STEP 1 — SYSTEM REQUIREMENTS
       IMPORTANT: During installation, check the box that says
       "Add Python to PATH" before clicking Install.
 
-  - An internet connection (required for AI features and the
-    initial download of OMR music-recognition models, ~200 MB)
+  - An internet connection (required for AI features)
 
 
 STEP 2 — INSTALL DEPENDENCIES

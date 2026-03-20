@@ -147,7 +147,7 @@ class SettingsDialog(ttk.Toplevel):
         self._program_type_var = tk.StringVar(value="band")
 
         for value, label, desc in [
-            ("band",  "Band",  "Concert band, jazz band, and marching band repertoire."),
+            ("band",  "Instrumental",  "Concert band, jazz band, marching band, and orchestra repertoire."),
             ("choir", "Choir", "Choral and vocal ensemble repertoire."),
         ]:
             row = ttk.Frame(outer)
@@ -181,7 +181,7 @@ class SettingsDialog(ttk.Toplevel):
         ttk.Label(
             outer,
             text="Select a Roka's Resonance database (.db) from another profile to "
-                 "view its music library as a read-only source in the Band Music Manager.",
+                 "view its music library as a read-only source in the Instrumental Music Manager.",
             font=("Segoe UI", 9), foreground="#888",
             wraplength=460, justify=LEFT,
         ).pack(anchor=W, pady=(2, 8))
@@ -687,10 +687,6 @@ class SettingsDialog(ttk.Toplevel):
                                   parent=self)
             return
 
-        # If Claude-Proxy.txt is present and the user changed any proxy settings,
-        # move the file so it no longer overrides settings on next launch.
-        self._retire_proxy_file_if_changed()
-
         # Apply theme change immediately
         try:
             import ttkbootstrap as ttk_mod
@@ -712,52 +708,6 @@ class SettingsDialog(ttk.Toplevel):
             )
 
         self.destroy()
-
-    def _retire_proxy_file_if_changed(self):
-        """Move Claude-Proxy.txt to Claude-Proxy/ subfolder if user edited proxy settings."""
-        if not self._app_dir:
-            return
-        proxy_file = os.path.join(self._app_dir, "Claude-Proxy.txt")
-        if not os.path.exists(proxy_file):
-            return
-        # Parse original values from the file
-        orig_endpoint = orig_token = None
-        try:
-            with open(proxy_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    for sep in (":", "="):
-                        if sep in line:
-                            key, _, val = line.partition(sep)
-                            key = key.strip().lower().replace(" ", "").replace("-", "").replace("_", "")
-                            val = val.strip()
-                            if key == "proxyendpoint":
-                                orig_endpoint = val.rstrip("/")
-                            elif key == "token":
-                                orig_token = val
-                            break
-        except Exception:
-            return
-        # Compare with what was just saved
-        new_backend = self._settings.get("llm", {}).get("backend", "local")
-        new_endpoint = self._settings.get("llm", {}).get("proxy_endpoint", "")
-        new_token = self._settings.get("llm", {}).get("proxy_token", "")
-        changed = (
-            new_backend != "proxy"
-            or new_endpoint != orig_endpoint
-            or new_token != orig_token
-        )
-        if changed:
-            import shutil
-            archive_dir = os.path.join(self._app_dir, "Claude-Proxy")
-            os.makedirs(archive_dir, exist_ok=True)
-            dest = os.path.join(archive_dir, "Claude-Proxy.txt")
-            try:
-                shutil.move(proxy_file, dest)
-            except Exception:
-                pass
 
     def _fetch_models(self):
         """Query the endpoint for available models and populate the combobox."""

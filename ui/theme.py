@@ -114,6 +114,7 @@ def fit_window(win, min_w: int = 200, min_h: int = 200, margin: int = 80):
     Uses the larger of the measured required size and min_w/min_h, capped at
     screen size minus margin. Call this AFTER all widgets have been added.
     """
+    win.withdraw()
     win.update_idletasks()
     sw = win.winfo_screenwidth()
     sh = win.winfo_screenheight()
@@ -122,6 +123,7 @@ def fit_window(win, min_w: int = 200, min_h: int = 200, margin: int = 80):
     x = (sw - w) // 2
     y = max(0, (sh - h) // 2)
     win.geometry(f"{w}x{h}+{x}+{y}")
+    win.deiconify()
 
 
 def apply_global_font_scaling():

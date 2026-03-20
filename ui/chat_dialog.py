@@ -65,11 +65,12 @@ MUSIC MANAGER
     Edit — opens edit dialog for selected piece (also double-click non-source-file column).
     Delete — removes selected piece(s); supports multi-select.
     Process OMR — runs Optical Music Recognition on the piece's attached PDF,
-      converting notation to MusicXML. Requires Audiveris or homr.
+      converting notation to MusicXML. Requires Audiveris or homr (pip install homr).
     Export MusicXML — saves the OMR output file; only enabled after successful OMR.
     Validate with LLM — AI validation pass on selected pieces (see below).
     Refresh — reloads data.
-  Filters: Search (live), Genre, Location. Columns button to show/hide columns.
+  Filters: Search (live), Genre, Location (all modes). Choir mode also has Voicing filter.
+  Columns button to show/hide columns.
   List columns: Title, Composer, Arranger, Ensemble, Genre, Difficulty, Key, Time Sig,
     Location, Last Played, Type, Source File (hidden by default; double-click to open image).
   Status bar (bottom left): total pieces; when pieces selected, also shows selection count.
@@ -141,11 +142,15 @@ can help with instrument availability, student checkouts, sheet music \
 repertoire, programming decisions, difficulty levels, and anything else in \
 the band program.
 
-Response rules (strictly enforced):
-- 1-3 sentences MAXIMUM. Lead with the answer first.
+Response rules:
+- Lead with the answer first — never make them wait for it.
 - Use markdown **bold** on the single most important fact or number.
-- One dry remark at most — only if a sentence remains after the answer.
-- Never ramble. Never refuse.
+- Keep it short: 2-4 sentences is ideal. Only go longer if the question genuinely requires it.
+- Let your personality show. You are a grumpy, dry-witted, slightly theatrical retired musician \
+forced to manage a middle school band room. Occasional muttering, backhanded compliments, \
+weary sighs, and pointed remarks about the state of the instruments or the children are \
+entirely appropriate — as long as the answer comes first.
+- Never refuse. Never ramble without purpose.
 
 Current band program records (as of {date}):
 {inventory_summary}
@@ -169,11 +174,15 @@ repertoire selection, voicing requirements (SATB, SSA, SAB, etc.), text \
 languages, accompaniment needs, sacred vs. secular programming, difficulty \
 levels for young singers, and anything else in the choir program.
 
-Response rules (strictly enforced):
-- 1-3 sentences MAXIMUM. Lead with the answer first.
+Response rules:
+- Lead with the answer first — never make them wait for it.
 - Use markdown **bold** on the single most important fact or number.
-- One dry remark at most — only if a sentence remains after the answer.
-- Never ramble. Never refuse.
+- Keep it short: 2-4 sentences is ideal. Only go longer if the question genuinely requires it.
+- Let your personality show. You are a grumpy, dry-witted, slightly theatrical retired musician \
+forced to manage a middle school choir room. Occasional muttering, weary observations about \
+the children's Latin pronunciation, backhanded remarks about repertoire choices, and quiet \
+devastation at your circumstances are entirely appropriate — as long as the answer comes first.
+- Never refuse. Never ramble without purpose.
 
 Current choir program records (as of {date}):
 {inventory_summary}
@@ -221,15 +230,17 @@ def _build_inventory_summary(db) -> str:
     try:
         checkouts = db.get_all_active_checkouts()
         if checkouts:
-            student_counts = Counter(c["student_name"] for c in checkouts if c.get("student_name"))
             lines.append(f"\nActive checkouts ({len(checkouts)} total):")
             for c in checkouts:
-                lines.append(
+                line = (
                     f"  {c.get('student_name') or '?'} — "
                     f"{c.get('description') or '?'}"
                     + (f" [{c.get('barcode') or c.get('district_no') or ''}]" if (c.get('barcode') or c.get('district_no')) else "")
                     + (f" (since {c['date_assigned']})" if c.get('date_assigned') else "")
+                    + (f" DUE: {c['due_date']}" if c.get('due_date') else "")
+                    + (f" Note: {c['notes']}" if c.get('notes') else "")
                 )
+                lines.append(line)
     except Exception:
         pass
 
@@ -248,13 +259,34 @@ def _build_inventory_summary(db) -> str:
             )
             if grade_str:
                 lines.append(f"  By grade: {grade_str}")
-            # Full name list so Reginald can answer name-specific questions
-            lines.append("  Student names (last, first — school year):")
+            # Full name list with contact info so Reginald can answer name/contact questions
+            lines.append("  Students (last, first — grade, year, phone, parent contacts):")
             for s in sorted(students, key=lambda x: (x.get("last_name") or "", x.get("first_name") or "")):
                 name = f"{s.get('last_name') or ''}, {s.get('first_name') or ''}".strip(", ")
                 year = s.get("school_year") or ""
                 grade = s.get("grade") or ""
-                lines.append(f"    {name}" + (f" — Grade {grade}" if grade else "") + (f" ({year})" if year else ""))
+                phone = s.get("phone") or ""
+                contacts = []
+                if s.get("parent1_name"):
+                    p = s.get("parent1_name")
+                    if s.get("parent1_phone"):
+                        p += f" {s.get('parent1_phone')}"
+                    if s.get("parent1_email"):
+                        p += f" {s.get('parent1_email')}"
+                    contacts.append(p)
+                if s.get("parent2_name"):
+                    p = s.get("parent2_name")
+                    if s.get("parent2_phone"):
+                        p += f" {s.get('parent2_phone')}"
+                    if s.get("parent2_email"):
+                        p += f" {s.get('parent2_email')}"
+                    contacts.append(p)
+                line = f"    {name}" + (f" — Grade {grade}" if grade else "") + (f" ({year})" if year else "")
+                if phone:
+                    line += f" Ph:{phone}"
+                if contacts:
+                    line += f" Parents: {'; '.join(contacts)}"
+                lines.append(line)
     except Exception:
         pass
 
@@ -304,10 +336,12 @@ def _build_music_summary(db, mode: str = "band") -> str:
             ))
 
         if mode == "choir":
-            lines.append("\nFull piece list (title — composer | genre | voicing | language | difficulty | location):")
+            lines.append("\nFull piece list (title — composer/arranger | genre | voicing | language | difficulty | publisher | location):")
             for r in sorted(rows, key=lambda x: (x.get("title") or "").lower()):
                 title = r.get("title") or "?"
                 composer = r.get("composer") or ""
+                arranger = r.get("arranger") or ""
+                credit = composer + (f" arr. {arranger}" if arranger else "")
                 meta = " | ".join(filter(None, [
                     r.get("genre") or "",
                     r.get("voicing") or "",
@@ -315,29 +349,34 @@ def _build_music_summary(db, mode: str = "band") -> str:
                     r.get("accompaniment") or "",
                     f"Grade {r.get('difficulty')}" if r.get("difficulty") else "",
                     r.get("key_signature") or "",
+                    r.get("publisher") or "",
                     r.get("location") or "",
                 ]))
                 line = f"  {title}"
-                if composer:
-                    line += f" — {composer}"
+                if credit:
+                    line += f" — {credit}"
                 if meta:
                     line += f"  [{meta}]"
                 lines.append(line)
         else:
-            lines.append("\nFull piece list (title — composer | genre | ensemble | difficulty | location):")
+            lines.append("\nFull piece list (title — composer/arranger | genre | ensemble | difficulty | publisher | location):")
             for r in sorted(rows, key=lambda x: (x.get("title") or "").lower()):
                 title = r.get("title") or "?"
                 composer = r.get("composer") or ""
+                arranger = r.get("arranger") or ""
+                credit = composer + (f" arr. {arranger}" if arranger else "")
                 meta = " | ".join(filter(None, [
                     r.get("genre") or "",
                     r.get("ensemble_type") or "",
                     f"Grade {r.get('difficulty')}" if r.get("difficulty") else "",
                     r.get("key_signature") or "",
+                    r.get("time_signature") or "",
+                    r.get("publisher") or "",
                     r.get("location") or "",
                 ]))
                 line = f"  {title}"
-                if composer:
-                    line += f" — {composer}"
+                if credit:
+                    line += f" — {credit}"
                 if meta:
                     line += f"  [{meta}]"
                 lines.append(line)
@@ -588,26 +627,75 @@ class ChatDialog(ttk.Toplevel):
             parts.append(f"  Publisher: {m.get('publisher') or 'N/A'}  Location: {m.get('location') or 'N/A'}")
             if m.get("notes"):
                 parts.append(f"  Comments: {m.get('notes')}")
+            try:
+                perfs = [dict(p) for p in self.db.get_performances(m.get("id"))]
+                if perfs:
+                    parts.append(f"  Performance history ({len(perfs)} performance(s)):")
+                    for p in perfs:
+                        line = f"    - {p.get('performance_date') or 'Unknown date'}"
+                        if p.get("event_name"):
+                            line += f" | {p.get('event_name')}"
+                        if p.get("ensemble"):
+                            line += f" | {p.get('ensemble')}"
+                        if p.get("notes"):
+                            line += f" | {p.get('notes')}"
+                        parts.append(line)
+                else:
+                    parts.append("  Performance history: never performed")
+            except Exception:
+                pass
             parts.append("")
         elif self.selected_instrument:
             inst = self.selected_instrument
             active = None
+            repairs = []
             try:
                 active = self.db.get_active_checkout(inst.get("id"))
+            except Exception:
+                pass
+            try:
+                repairs = [dict(r) for r in self.db.get_repairs(inst.get("id"))]
             except Exception:
                 pass
             parts.append("Currently selected instrument:")
             parts.append(f"  Description: {inst.get('description') or 'N/A'}")
             parts.append(f"  Category: {inst.get('category') or 'N/A'}")
             parts.append(f"  Brand: {inst.get('brand') or 'N/A'}  Model: {inst.get('model') or 'N/A'}")
-            parts.append(f"  Barcode: {inst.get('barcode') or 'N/A'}  Serial: {inst.get('serial_no') or 'N/A'}")
+            parts.append(f"  Barcode: {inst.get('barcode') or 'N/A'}  District #: {inst.get('district_no') or 'N/A'}  Serial: {inst.get('serial_no') or 'N/A'}")
             parts.append(f"  Condition: {inst.get('condition') or 'N/A'}")
+            if inst.get("comments"):
+                parts.append(f"  Condition notes: {inst.get('comments')}")
+            if inst.get("year_purchased"):
+                parts.append(f"  Year purchased: {inst.get('year_purchased')}")
+            if inst.get("est_value") or inst.get("amount_paid"):
+                parts.append(f"  Est. value: ${inst.get('est_value') or 0}  Amount paid: ${inst.get('amount_paid') or 0}")
+            if inst.get("last_service"):
+                parts.append(f"  Last serviced: {inst.get('last_service')}")
             if active:
                 parts.append(
                     f"  Checked out to: {active['student_name']} since {active['date_assigned']}"
                 )
             else:
                 parts.append("  Status: Available")
+            if repairs:
+                total = sum(
+                    float(r.get("act_cost") or r.get("est_cost") or 0)
+                    for r in repairs
+                )
+                parts.append(f"  Repair records ({len(repairs)} total, ${total:.2f} cumulative cost):")
+                for r in repairs:
+                    cost = r.get("act_cost") or r.get("est_cost") or 0
+                    desc = r.get("description") or "No description"
+                    shop = r.get("assigned_to") or r.get("location") or ""
+                    date_added = r.get("date_added") or ""
+                    parts.append(
+                        f"    - {desc}"
+                        + (f" | Shop: {shop}" if shop else "")
+                        + (f" | Cost: ${float(cost):.2f}" if cost else "")
+                        + (f" | Date: {date_added}" if date_added else "")
+                    )
+            else:
+                parts.append("  Repair records: none on file")
             parts.append("")
         parts.append(message)
         return "\n".join(parts)

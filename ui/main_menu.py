@@ -266,6 +266,26 @@ class MainMenu(ttk.Frame):
             row=3
         )
 
+        # ── Lesson Plans group ─────────────────────────────────────────────
+        ttk.Separator(btn_area).pack(fill=X, pady=(16, 12))
+
+        ttk.Label(
+            btn_area,
+            text="Lesson Plans",
+            font=("Segoe UI", fs(10), "bold"),
+            foreground=muted_fg(),
+        ).pack(anchor=W, pady=(0, 6))
+
+        self._make_main_button(
+            btn_area,
+            text="Lesson Plans",
+            subtext="Plan curriculum, create lesson plans & manage classes",
+            icon="📝",
+            command=self._open_lesson_plans,
+            style=PRIMARY,
+            row=4
+        )
+
     def _make_stat(self, parent, value: str, label: str, col: int):
         f = ttk.Frame(parent)
         f.grid(row=0, column=col, padx=20)
@@ -534,6 +554,19 @@ class MainMenu(ttk.Frame):
         manager.pack(fill=BOTH, expand=True)
         win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("music"))
         self._windows["music"] = win
+
+    def _open_lesson_plans(self):
+        if self._raise_or_open("lesson_plans"):
+            return
+        from ui.lesson_plans_hub import LessonPlansHub
+        win = ttk.Toplevel(self.winfo_toplevel())
+        win.title("Lesson Plans — Roka's Resonance")
+        win.state("zoomed")
+        hub = LessonPlansHub(win, self.db)
+        hub.pack(fill=BOTH, expand=True)
+        win.protocol("WM_DELETE_WINDOW",
+                     lambda: self._on_child_close("lesson_plans"))
+        self._windows["lesson_plans"] = win
 
     def _open_active_checkouts(self):
         if self._raise_or_open("checkouts"):
