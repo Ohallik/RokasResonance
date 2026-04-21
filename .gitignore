@@ -39,3 +39,9 @@ Claude-Proxy.txt
 
 # Misc
 =4.0.0
+
+# Runtime cache files
+.onenote_cache.json
+
+# Test scripts
+test_onenote.py
