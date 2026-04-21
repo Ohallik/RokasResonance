@@ -21,7 +21,7 @@ from lesson_plan_importer import import_from_file
 class CurriculumPlanner(ttk.Frame):
     """Main curriculum planning view with calendar, toolbar, and class filter."""
 
-    def __init__(self, parent, db, on_open_lesson_plan=None):
+    def __init__(self, parent, db, on_open_lesson_plan=None, on_class_changed=None):
         """
         Initialize CurriculumPlanner.
 
@@ -29,10 +29,12 @@ class CurriculumPlanner(ttk.Frame):
             parent: Parent tkinter widget
             db: Database instance
             on_open_lesson_plan: Callable(class_id, date_str) fired on double-click
+            on_class_changed: Callable(class_id) fired when class selection changes
         """
         super().__init__(parent)
         self.db = db
         self.on_open_lesson_plan = on_open_lesson_plan
+        self.on_class_changed = on_class_changed
 
         # State
         self._class_id_map = {}  # {"All Classes": None, "Band": 1, ...}
@@ -52,143 +54,86 @@ class CurriculumPlanner(ttk.Frame):
         self.refresh()
 
     def _build(self):
-        """Build the UI layout."""
-        # ──────────────────────────── Header Bar ──────────────────────────────
-        header = ttk.Frame(self, bootstyle=LIGHT, height=50)
-        header.pack(fill=X, padx=6, pady=6)
-
-        # Left: Class filter
-        ttk.Label(header, text="Class:").pack(side=LEFT, padx=(0, 6))
-        self._class_combo = ttk.Combobox(
-            header, state="readonly", width=22
-        )
-        self._class_combo.pack(side=LEFT, padx=(0, 20))
-        self._class_combo.bind("<<ComboboxSelected>>", lambda e: self._on_class_changed())
-
-        # Center: Navigation
-        nav_frame = ttk.Frame(header)
-        nav_frame.pack(side=LEFT, expand=True, fill=X, padx=20)
-
-        ttk.Button(
-            nav_frame, text="◀", width=2, command=self._on_prev
-        ).pack(side=LEFT, padx=4)
-
-        self._nav_title_label = ttk.Label(
-            nav_frame, text="", font=("Segoe UI", fs(11), "bold")
-        )
-        self._nav_title_label.pack(side=LEFT, padx=12, expand=True)
-
-        ttk.Button(
-            nav_frame, text="▶", width=2, command=self._on_next
-        ).pack(side=LEFT, padx=4)
-
-        ttk.Button(
-            nav_frame, text="Today", command=self._on_today
-        ).pack(side=LEFT, padx=4)
-
-        # Right: View mode buttons
-        ttk.Label(header, text="View:").pack(side=RIGHT, padx=(0, 6))
-        view_frame = ttk.Frame(header)
-        view_frame.pack(side=RIGHT, padx=(0, 0))
-
-        self._month_btn = ttk.Button(
-            view_frame, text="Month", width=6, bootstyle=SECONDARY,
-            command=lambda: self._set_view_mode("month")
-        )
-        self._month_btn.pack(side=LEFT, padx=2)
-
-        self._week_btn = ttk.Button(
-            view_frame, text="Week", width=6, bootstyle=(SECONDARY, OUTLINE),
-            command=lambda: self._set_view_mode("week")
-        )
-        self._week_btn.pack(side=LEFT, padx=2)
-
-        self._year_btn = ttk.Button(
-            view_frame, text="Year", width=6, bootstyle=(SECONDARY, OUTLINE),
-            command=lambda: self._set_view_mode("year")
-        )
-        self._year_btn.pack(side=LEFT, padx=2)
-
-        # ──────────────────────────── Toolbar ──────────────────────────────────
+        """Build the UI layout — compact single toolbar with dropdown menus."""
+        # ──────────────────────────── Single Toolbar Row ──────────────────────
         toolbar = ttk.Frame(self, bootstyle=LIGHT)
-        toolbar.pack(fill=X, padx=6, pady=(0, 6))
+        toolbar.pack(fill=X, padx=4, pady=2)
 
-        ttk.Button(
-            toolbar, text="📅 Move To...", bootstyle=PRIMARY,
-            command=self._move_to
-        ).pack(side=LEFT, padx=2, pady=4)
+        # Class filter
+        ttk.Label(toolbar, text="Class:", font=("Segoe UI", fs(9))).pack(
+            side=LEFT, padx=(4, 2))
+        self._class_combo = ttk.Combobox(toolbar, state="readonly", width=18)
+        self._class_combo.pack(side=LEFT, padx=(0, 8))
+        self._class_combo.bind("<<ComboboxSelected>>",
+                               lambda e: self._on_class_changed())
 
-        ttk.Button(
-            toolbar, text="⏩ Shift Forward", bootstyle=INFO,
-            command=self._shift_forward
-        ).pack(side=LEFT, padx=2, pady=4)
+        # Navigation: ◀ Title ▶ Today
+        ttk.Button(toolbar, text="◀", width=2,
+                   command=self._on_prev).pack(side=LEFT, padx=1)
+        self._nav_title_label = ttk.Label(
+            toolbar, text="", font=("Segoe UI", fs(10), "bold"))
+        self._nav_title_label.pack(side=LEFT, padx=6)
+        ttk.Button(toolbar, text="▶", width=2,
+                   command=self._on_next).pack(side=LEFT, padx=1)
+        ttk.Button(toolbar, text="Today", bootstyle=PRIMARY,
+                   command=self._on_today).pack(side=LEFT, padx=(4, 8))
 
-        ttk.Button(
-            toolbar, text="⏪ Shift Back", bootstyle=INFO,
-            command=self._shift_backward
-        ).pack(side=LEFT, padx=2, pady=4)
+        # View mode: Month | Week | Year (no fixed width — auto-size to text)
+        self._month_btn = ttk.Button(
+            toolbar, text="Month", bootstyle=SECONDARY,
+            command=lambda: self._set_view_mode("month"))
+        self._month_btn.pack(side=LEFT, padx=1)
+        self._week_btn = ttk.Button(
+            toolbar, text="Week", bootstyle=(SECONDARY, OUTLINE),
+            command=lambda: self._set_view_mode("week"))
+        self._week_btn.pack(side=LEFT, padx=1)
+        self._year_btn = ttk.Button(
+            toolbar, text="Year", bootstyle=(SECONDARY, OUTLINE),
+            command=lambda: self._set_view_mode("year"))
+        self._year_btn.pack(side=LEFT, padx=(1, 8))
 
-        ttk.Button(
-            toolbar, text="🔀 Swap", bootstyle=WARNING,
-            command=self._swap_dates
-        ).pack(side=LEFT, padx=2, pady=4)
+        # ── Edit dropdown (replaces 8 separate buttons) ──
+        edit_btn = ttk.Menubutton(toolbar, text="Edit ▾", bootstyle=INFO)
+        edit_btn.pack(side=LEFT, padx=2)
+        edit_menu = tk.Menu(edit_btn, tearoff=False)
+        edit_btn.config(menu=edit_menu)
+        edit_menu.add_command(label="Move To...", command=self._move_to)
+        edit_menu.add_command(label="Shift Forward...", command=self._shift_forward)
+        edit_menu.add_command(label="Shift Back...", command=self._shift_backward)
+        edit_menu.add_command(label="Swap Dates", command=self._swap_dates)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Insert Blank Day", command=self._insert_day)
+        edit_menu.add_command(label="Remove Day", command=self._remove_day)
+        edit_menu.add_command(label="Copy Day...", command=self._copy_day)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Lock/Unlock", command=self._toggle_lock)
 
-        ttk.Separator(toolbar, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=4)
+        # Import and AI buttons (kept visible — used frequently)
+        ttk.Button(toolbar, text="Import", bootstyle=(INFO, OUTLINE),
+                   command=self._import_curriculum).pack(side=LEFT, padx=2)
+        ttk.Button(toolbar, text="AI Generate", bootstyle=(SUCCESS, OUTLINE),
+                   command=self._ai_generate).pack(side=LEFT, padx=2)
 
-        ttk.Button(
-            toolbar, text="➕ Insert Day", bootstyle=(SUCCESS, OUTLINE),
-            command=self._insert_day
-        ).pack(side=LEFT, padx=2, pady=4)
-
-        ttk.Button(
-            toolbar, text="🗑️ Remove Day", bootstyle=(DANGER, OUTLINE),
-            command=self._remove_day
-        ).pack(side=LEFT, padx=2, pady=4)
-
-        ttk.Button(
-            toolbar, text="📋 Copy", bootstyle=SECONDARY,
-            command=self._copy_day
-        ).pack(side=LEFT, padx=2, pady=4)
-
-        ttk.Button(
-            toolbar, text="🔒 Lock/Unlock", bootstyle=SECONDARY,
-            command=self._toggle_lock
-        ).pack(side=LEFT, padx=2, pady=4)
-
-        ttk.Separator(toolbar, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=4)
-
-        ttk.Button(
-            toolbar, text="📂 Import...", bootstyle=INFO,
-            command=self._import_curriculum
-        ).pack(side=LEFT, padx=2, pady=4)
-
-        ttk.Button(
-            toolbar, text="🤖 AI Generate...", bootstyle=SUCCESS,
-            command=self._ai_generate
-        ).pack(side=LEFT, padx=2, pady=4)
+        # Status info (right side of toolbar)
+        self._status_label = ttk.Label(
+            toolbar, text="", foreground=subtle_fg(),
+            font=("Segoe UI", fs(8)))
+        self._status_label.pack(side=RIGHT, padx=4)
 
         # ──────────────────────────── Calendar Area ────────────────────────────
         calendar_frame = ttk.Frame(self)
-        calendar_frame.pack(fill=BOTH, expand=True, padx=6, pady=(0, 6))
+        calendar_frame.pack(fill=BOTH, expand=True, padx=4, pady=(0, 2))
 
         self._calendar = CalendarView(calendar_frame)
         self._calendar.pack(fill=BOTH, expand=True)
         self._calendar.set_on_date_click(self._on_date_clicked)
         self._calendar.set_on_date_double_click(self._on_date_double_clicked)
 
-        # ──────────────────────────── Status Bar ────────────────────────────────
-        status = ttk.Frame(self, bootstyle=LIGHT, height=32)
-        status.pack(fill=X, padx=6, pady=(0, 6))
-
-        self._status_label = ttk.Label(
-            status, text="", foreground=subtle_fg(), font=("Segoe UI", fs(9))
-        )
-        self._status_label.pack(side=LEFT, padx=6, pady=6)
-
+        # Selected date info bar (thin, below calendar)
         self._status_right_label = ttk.Label(
-            status, text="", foreground=subtle_fg(), font=("Segoe UI", fs(9))
-        )
-        self._status_right_label.pack(side=RIGHT, padx=6, pady=6)
+            self, text="", foreground=muted_fg(),
+            font=("Segoe UI", fs(8)))
+        self._status_right_label.pack(fill=X, padx=8, pady=(0, 2))
 
     # ═══════════════════════════════════ Public Methods ═════════════════════
 
@@ -268,6 +213,20 @@ class CurriculumPlanner(ttk.Frame):
         self._selected_class_id = self._class_id_map.get(selected)
         self._load_calendar_items()
         self._update_status_bar()
+        # Notify parent (hub) about the change
+        if self.on_class_changed:
+            self.on_class_changed(self._selected_class_id)
+
+    def select_class_by_id(self, class_id: int):
+        """Programmatically select a class by its ID (used for restoring last selection)."""
+        for name, cid in self._class_id_map.items():
+            if cid == class_id:
+                self._class_combo.set(name)
+                self._selected_class_id = cid
+                self._load_calendar_items()
+                self._update_status_bar()
+                return True
+        return False
 
     # ════════════════════════════════════ Calendar Items ═════════════════════
 

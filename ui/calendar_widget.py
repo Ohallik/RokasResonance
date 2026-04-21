@@ -233,42 +233,39 @@ class CalendarView(ttk.Frame):
         return text[:max_chars - 1].rstrip() + "…"
 
     def _draw_month_view(self, width, height):
-        """Render month view on canvas."""
-        padding = 8
-        title_height = 28
-        header_height = 22
-        gap = 2  # gap between cells
+        """Render month view — compact weekends, no title (nav bar shows it)."""
+        full_height = height  # preserve for legend positioning
+        padding = 4
+        header_height = 20
+        gap = 1
+        legend_reserve = 20
+        height = height - legend_reserve  # reduce drawing area for cells
 
-        cell_width = (width - 2 * padding - 6 * gap) // 7
-        cell_height = (height - padding - title_height - header_height - 5 * gap) // 6
+        # Weekend columns are narrow (just enough for day number + event dot)
+        weekend_w = max(30, (width - 2 * padding) // 14)  # ~half a weekday
+        weekday_w = (width - 2 * padding - 2 * weekend_w - 6 * gap) // 5
 
-        # How many characters fit in a cell (approx 7px per char at fs(8))
-        char_width = max(1, (cell_width - 12) // 7)
+        # Column widths: Mon-Fri full, Sat-Sun compact
+        col_widths = [weekday_w] * 5 + [weekend_w] * 2
+        cell_height = (height - padding - header_height - 5 * gap) // 6
 
-        # How many item lines fit below the day number
         line_h = max(13, fs(8) + 4)
-        day_num_h = 18  # space for the day number
-        max_item_lines = max(1, (cell_height - day_num_h - 4) // line_h)
-
-        # Draw title
-        title = self.get_title()
-        self._canvas.create_text(
-            width // 2, title_height // 2 + 2,
-            text=title,
-            font=("Segoe UI", fs(13), "bold"),
-            fill=fg(), anchor="center",
-        )
+        day_num_h = max(16, fs(8) + 6)  # enough room for day number + gap
 
         # Draw day headers
-        day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sa", "Su"]
+        x_cursor = padding
+        col_positions = []  # (x_start, width) for each column
         for i, name in enumerate(day_names):
-            x = padding + i * (cell_width + gap) + cell_width // 2
-            y = title_height + header_height // 2
+            w = col_widths[i]
+            col_positions.append((x_cursor, w))
             self._canvas.create_text(
-                x, y, text=name,
-                font=("Segoe UI", fs(9), "bold"),
+                x_cursor + w // 2, header_height // 2,
+                text=name,
+                font=("Segoe UI", fs(8), "bold"),
                 fill=muted_fg(), anchor="center",
             )
+            x_cursor += w + gap
 
         # Get days for this month
         days_list = self._get_month_days(
@@ -277,99 +274,96 @@ class CalendarView(ttk.Frame):
         today = datetime.now().date()
         item_font = ("Segoe UI", fs(8))
         item_font_bold = ("Segoe UI", fs(8), "bold")
-        day_font = ("Segoe UI", fs(9), "bold")
+        day_font = ("Segoe UI", fs(8), "bold")
 
         for idx, (day, is_current_month) in enumerate(days_list):
             row = idx // 7
             col = idx % 7
-            x1 = padding + col * (cell_width + gap)
-            y1 = title_height + header_height + row * (cell_height + gap)
-            x2 = x1 + cell_width
+            col_x, col_w = col_positions[col]
+            x1 = col_x
+            y1 = header_height + row * (cell_height + gap)
+            x2 = x1 + col_w
             y2 = y1 + cell_height
+            is_weekend = col >= 5
 
             day_str = day.strftime("%Y-%m-%d")
             items = self._items.get(day_str, [])
 
             # ── Cell background ──
             if not is_current_month:
-                bg = "#2A2A2A" if is_dark() else "#F0F0F0"
+                bg = "#2A2A2A" if is_dark() else "#ECECEC"
+            elif is_weekend and not items:
+                bg = "#2E2E2E" if is_dark() else "#E8E8E8"
             elif not items:
                 bg = self._get_bg_color()
             elif len(items) == 1:
                 bg = self._get_cell_bg_color(
-                    items[0].get("activity_type", "no_class")
-                )
+                    items[0].get("activity_type", "no_class"))
             else:
-                # Multiple items: use first non-concert item's color
                 non_concert = [
-                    it for it in items
-                    if it.get("activity_type") != "concert"
-                ]
+                    it for it in items if it.get("activity_type") != "concert"]
                 if non_concert:
                     bg = self._get_cell_bg_color(
-                        non_concert[0].get("activity_type", "skill_building")
-                    )
+                        non_concert[0].get("activity_type", "skill_building"))
                 else:
                     bg = self._get_cell_bg_color("concert")
 
             self._canvas.create_rectangle(
-                x1, y1, x2, y2,
-                fill=bg, outline=subtle_fg(), width=1,
-            )
+                x1, y1, x2, y2, fill=bg, outline=subtle_fg(), width=1)
 
             # ── Today highlight ──
             if day.date() == today:
                 self._canvas.create_rectangle(
-                    x1, y1, x2, y2,
-                    fill="", outline="#4A90E2", width=3,
-                )
+                    x1, y1, x2, y2, fill="", outline="#4A90E2", width=3)
 
             # ── Selected highlight ──
             if day_str == self._selected_date:
                 self._canvas.create_rectangle(
                     x1 + 1, y1 + 1, x2 - 1, y2 - 1,
-                    fill="", outline="#E67E22", width=2,
-                )
+                    fill="", outline="#E67E22", width=2)
 
-            # ── Day number (top-left) ──
             text_color = fg() if is_current_month else subtle_fg()
-            num_text = str(day.day)
-            self._canvas.create_text(
-                x1 + 4, y1 + 2,
-                text=num_text, font=day_font,
-                fill=text_color, anchor="nw",
-            )
 
-            # ── Concert star (top-right) ──
-            has_concert = any(
-                it.get("activity_type") == "concert" for it in items
-            )
-            if has_concert:
+            if is_weekend:
+                # ── Weekend: compact — just day number centered + event dot ──
                 self._canvas.create_text(
-                    x2 - 4, y1 + 2,
-                    text="★", font=("Segoe UI", fs(11)),
-                    fill="#E74C3C", anchor="ne",
-                )
+                    x1 + col_w // 2, y1 + 4,
+                    text=str(day.day), font=("Segoe UI", fs(7)),
+                    fill=text_color, anchor="n")
+                # Event indicator
+                has_event = bool(items)
+                has_concert = any(
+                    it.get("activity_type") == "concert" for it in items)
+                if has_concert:
+                    self._canvas.create_text(
+                        x1 + col_w // 2, y1 + 18,
+                        text="★", font=("Segoe UI", fs(10)),
+                        fill="#E74C3C", anchor="n")
+                elif has_event:
+                    self._canvas.create_oval(
+                        x1 + col_w // 2 - 3, y1 + 20,
+                        x1 + col_w // 2 + 3, y1 + 26,
+                        fill="#4A90D9", outline="")
+            else:
+                # ── Weekday: full content ──
+                self._canvas.create_text(
+                    x1 + 3, y1 + 1,
+                    text=str(day.day), font=day_font,
+                    fill=text_color, anchor="nw")
 
-            # ── Lock icon (top-right, below star) ──
-            has_lock = any(it.get("is_locked") for it in items)
-            if has_lock and not has_concert:
-                self._canvas.create_text(
-                    x2 - 4, y1 + 2,
-                    text="🔒", font=("Segoe UI", fs(7)),
-                    fill=muted_fg(), anchor="ne",
-                )
-            elif has_lock and has_concert:
-                self._canvas.create_text(
-                    x2 - 4, y1 + 16,
-                    text="🔒", font=("Segoe UI", fs(7)),
-                    fill=muted_fg(), anchor="ne",
-                )
+                # Concert star (top-right)
+                has_concert = any(
+                    it.get("activity_type") == "concert" for it in items)
+                if has_concert:
+                    self._canvas.create_text(
+                        x2 - 3, y1 + 1, text="★",
+                        font=("Segoe UI", fs(10)),
+                        fill="#E74C3C", anchor="ne")
 
-            # ── Item text lines ──
-            if items and is_current_month:
-                text_x = x1 + 4
-                text_w = cell_width - 10  # available width for wrapped text
+            # ── Item text lines (weekdays only — weekends handled above) ──
+            if items and is_current_month and not is_weekend:
+                text_x = x1 + 3
+                text_w = col_w - 8  # available width for wrapped text
                 y_cursor = y1 + day_num_h
                 space_left = y2 - y_cursor - 4
                 items_shown = 0
@@ -442,6 +436,9 @@ class CalendarView(ttk.Frame):
             # ── Record click region ──
             self._click_regions.append((x1, y1, x2, y2, day_str))
 
+        # ── Legend at bottom ──
+        self._draw_legend(width, full_height)
+
     # ==================== Week View ====================
 
     def _get_week_days(self, date):
@@ -455,13 +452,15 @@ class CalendarView(ttk.Frame):
 
     def _draw_week_view(self, width, height):
         """Render week view on canvas — tall columns with full item detail."""
+        full_height = height
         padding = 10
         title_height = 28
         day_header_h = 28
         gap = 3
+        legend_reserve = 20
         day_width = (width - 2 * padding - 4 * gap) // 5
         col_top = title_height + day_header_h
-        col_bottom = height - padding
+        col_bottom = height - padding - legend_reserve
         line_h = max(16, fs(9) + 5)
         char_width = max(1, (day_width - 16) // 7)
 
@@ -529,44 +528,49 @@ class CalendarView(ttk.Frame):
                     fill="", outline="#E67E22", width=2,
                 )
 
-            # Items
-            y_cursor = col_top + 6
-            max_lines = (col_bottom - col_top - 12) // line_h
-            lines_drawn = 0
+            # Items — use Canvas text wrapping for full-width display
+            text_x = x1 + 8
+            text_w = day_width - 16  # available width for wrapped text
+            y_cursor = col_top + 8
+            space_left = col_bottom - y_cursor - 8
 
             for item in items:
-                if lines_drawn >= max_lines:
+                if space_left < 20:
                     break
                 summary = item.get("summary", "")
                 atype = item.get("activity_type", "")
 
                 if atype == "concert":
-                    display = "★ " + self._truncate(summary, char_width - 2)
-                    font_use = ("Segoe UI", fs(9), "bold")
+                    display = "★ " + summary
+                    font_use = ("Segoe UI", fs(10), "bold")
                     color = "#E74C3C" if not is_dark() else "#FF6B6B"
                 else:
-                    display = self._truncate(summary, char_width)
-                    font_use = ("Segoe UI", fs(9))
+                    display = summary
+                    font_use = ("Segoe UI", fs(10))
                     color = fg()
 
-                self._canvas.create_text(
-                    x1 + 6, y_cursor,
+                # Draw with text wrapping at the column width
+                tid = self._canvas.create_text(
+                    text_x, y_cursor,
                     text=display, font=font_use,
                     fill=color, anchor="nw",
+                    width=text_w,
                 )
-                y_cursor += line_h
-                lines_drawn += 1
 
-            remaining = len(items) - lines_drawn
-            if remaining > 0:
-                self._canvas.create_text(
-                    x1 + 6, y_cursor,
-                    text=f"+{remaining} more",
-                    font=("Segoe UI", fs(7), "italic"),
-                    fill=muted_fg(), anchor="nw",
-                )
+                # Measure rendered height
+                bbox = self._canvas.bbox(tid)
+                if bbox:
+                    rendered_h = bbox[3] - bbox[1]
+                    y_cursor += rendered_h + 6
+                    space_left -= rendered_h + 6
+                else:
+                    y_cursor += 20
+                    space_left -= 20
 
             self._click_regions.append((x1, col_top, x2, col_bottom, day_str))
+
+        # ── Legend at bottom ──
+        self._draw_legend(width, full_height)
 
     # ==================== Year View ====================
 
@@ -586,88 +590,128 @@ class CalendarView(ttk.Frame):
         ]
 
     def _draw_year_view(self, width, height):
-        """Render year view on canvas."""
-        padding = 20
-        header_height = 40
-        month_width = (width - 2 * padding) // 5
-        month_height = (height - padding - header_height) // 2
+        """Render year view — 10 mini-calendars (Sep-Jun) with color legend."""
+        padding = 10
+        label_h = 20  # height for month label above each mini-cal
+        legend_h = 24  # height for color legend at bottom
+        gap_x = 8
+        gap_y = 6
 
-        # Draw title
-        title = self.get_title()
-        self._canvas.create_text(
-            width // 2, padding // 2 + 10, text=title,
-            font=("TkDefaultFont", fs(14), "bold"), fill=fg(), anchor="center"
-        )
+        # 5 columns, 2 rows of months
+        month_width = (width - 2 * padding - 4 * gap_x) // 5
+        month_height = (height - 2 * padding - legend_h - gap_y) // 2
 
         # Get school year months
         school_year = self._current_date.year
         if self._current_date.month < 9:
             school_year -= 1
-
         months = self._get_school_year_months(school_year)
 
-        # Draw mini calendars
         for idx, (year, month) in enumerate(months):
             row = idx // 5
             col = idx % 5
-            x = padding + col * month_width + 8
-            y = padding + header_height + row * month_height + 8
+            x = padding + col * (month_width + gap_x)
+            y = padding + row * (month_height + gap_y)
 
-            month_name = datetime(year, month, 1).strftime("%b %y")
-
-            # Draw month label
+            # Month label — centered above the grid
+            month_name = datetime(year, month, 1).strftime("%b %Y")
             self._canvas.create_text(
-                x + month_width // 2 - 8, y + 8,
-                text=month_name, font=("TkDefaultFont", fs(9), "bold"),
-                fill=fg(), anchor="nw"
+                x + month_width // 2, y + label_h // 2,
+                text=month_name,
+                font=("Segoe UI", fs(9), "bold"),
+                fill=fg(), anchor="center",
             )
 
-            # Draw mini calendar grid
+            # Mini calendar grid
             days_list = self._get_month_days(year, month)
-            cell_w = (month_width - 16) // 7
-            cell_h = (month_height - 24) // 6
+            grid_x = x + 2
+            grid_y = y + label_h
+            cell_w = (month_width - 4) // 7
+            cell_h = (month_height - label_h - 4) // 6
 
-            mini_y = y + 20
             for day_idx, (day, is_current_month) in enumerate(days_list):
-                grid_row = day_idx // 7
-                grid_col = day_idx % 7
-                cx = x + 8 + grid_col * cell_w
-                cy = mini_y + grid_row * cell_h
+                gr = day_idx // 7
+                gc = day_idx % 7
+                cx = grid_x + gc * cell_w
+                cy = grid_y + gr * cell_h
 
                 day_str = day.strftime("%Y-%m-%d")
                 items = self._items.get(day_str, [])
 
-                # Determine background
                 if is_current_month and items:
-                    activity_type = items[0].get("activity_type", "no_class")
-                    mini_bg = self._get_cell_bg_color(activity_type)
+                    atype = items[0].get("activity_type", "no_class")
+                    bg = self._get_cell_bg_color(atype)
                 elif is_current_month:
-                    mini_bg = self._get_bg_color()
+                    bg = self._get_bg_color()
                 else:
-                    mini_bg = "#2A2A2A" if is_dark() else "#F0F0F0"
+                    bg = "#2E2E2E" if is_dark() else "#ECECEC"
 
-                # Draw tiny cell
                 self._canvas.create_rectangle(
-                    cx, cy, cx + cell_w - 2, cy + cell_h - 2,
-                    fill=mini_bg, outline=subtle_fg(), width=1
+                    cx, cy, cx + cell_w - 1, cy + cell_h - 1,
+                    fill=bg, outline="",
                 )
 
-                # Show concert marker
+                # Concert star
                 has_concert = any(
-                    item.get("activity_type") == "concert" for item in items
-                )
+                    it.get("activity_type") == "concert" for it in items)
                 if has_concert:
                     self._canvas.create_text(
                         cx + cell_w // 2, cy + cell_h // 2,
-                        text="★", font=("TkDefaultFont", fs(8)),
-                        fill="#FF6B6B", anchor="center"
+                        text="★", font=("Segoe UI", fs(7)),
+                        fill="#E74C3C", anchor="center",
                     )
 
-            # Record click region for the month (switches to month view)
+            # Click region for the month
             self._click_regions.append(
-                (x, y, x + month_width - 16, y + month_height - 8,
+                (x, y, x + month_width, y + month_height,
                  f"{year}-{month:02d}-01")
             )
+
+        self._draw_legend(width, height)
+
+    # ==================== Shared Legend ====================
+
+    def _draw_legend(self, width, height):
+        """Draw a compact color legend at the bottom of the canvas."""
+        items = [
+            ("Skill", "skill_building"),
+            ("Prep", "concert_prep"),
+            ("Concert", "concert"),
+            ("Test", "assessment"),
+            ("S-Read", "sight_reading"),
+            ("Theory", "theory"),
+            ("Flex", "flex"),
+        ]
+        legend_font = ("Segoe UI", fs(7))
+        swatch_size = 10
+        item_spacing = 4
+
+        # Measure total width needed
+        # Each item = swatch + 2px gap + text + spacing
+        # Estimate text at ~5px per char
+        total_w = sum(swatch_size + 3 + len(label) * 6 + item_spacing for label, _ in items)
+        legend_y = height - 18
+        start_x = max(4, (width - total_w) // 2)
+
+        x_cursor = start_x
+        for label, atype in items:
+            color = self._get_cell_bg_color(atype)
+            self._canvas.create_rectangle(
+                x_cursor, legend_y + 2,
+                x_cursor + swatch_size, legend_y + 2 + swatch_size,
+                fill=color, outline=muted_fg(),
+            )
+            self._canvas.create_text(
+                x_cursor + swatch_size + 3, legend_y + 2 + swatch_size // 2,
+                text=label, font=legend_font,
+                fill=muted_fg(), anchor="w",
+            )
+            # Measure actual text width for next position
+            tid = self._canvas.create_text(0, 0, text=label, font=legend_font)
+            bbox = self._canvas.bbox(tid)
+            text_w = (bbox[2] - bbox[0]) if bbox else len(label) * 6
+            self._canvas.delete(tid)
+            x_cursor += swatch_size + 3 + text_w + item_spacing + 6
 
     # ==================== Event Handling ====================
 

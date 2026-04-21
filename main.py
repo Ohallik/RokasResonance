@@ -399,17 +399,19 @@ def main():
     # Read saved display preferences before creating the window
     from ui.theme import (
         set_theme_name, set_font_scale, apply_global_font_scaling,
-        LARGE_FONT_SCALE, EXTRA_LARGE_FONT_SCALE,
+        NORMAL_FONT_SCALE, LARGE_FONT_SCALE, EXTRA_LARGE_FONT_SCALE,
     )
     startup_theme, startup_font_size = _resolve_startup_display(profiles, last_used)
     set_theme_name(startup_theme)
-    if startup_font_size == "extra_large":
-        set_font_scale(EXTRA_LARGE_FONT_SCALE)
-    elif startup_font_size == "large":
-        set_font_scale(LARGE_FONT_SCALE)
+    _scale_map = {
+        "normal": NORMAL_FONT_SCALE,
+        "large": LARGE_FONT_SCALE,
+        "extra_large": EXTRA_LARGE_FONT_SCALE,
+    }
+    set_font_scale(_scale_map.get(startup_font_size, NORMAL_FONT_SCALE))
 
-    win_w = {"normal": 600, "large": 680, "extra_large": 760}.get(startup_font_size, 600)
-    win_h = {"normal": 720, "large": 820, "extra_large": 920}.get(startup_font_size, 720)
+    win_w = {"normal": 620, "large": 700, "extra_large": 780}.get(startup_font_size, 620)
+    win_h = {"normal": 580, "large": 640, "extra_large": 720}.get(startup_font_size, 580)
 
     app = ttk.Window(
         title="Roka's Resonance",
@@ -417,7 +419,7 @@ def main():
         size=(win_w, win_h),
         resizable=(True, True),
     )
-    app.minsize({"normal": 520, "large": 580, "extra_large": 640}.get(startup_font_size, 520), 600)
+    app.minsize({"normal": 580, "large": 640, "extra_large": 720}.get(startup_font_size, 580), 650)
     app.withdraw()
 
     # Apply font scaling after Tk root exists

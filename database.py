@@ -302,6 +302,22 @@ class Database:
                     notes TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS onenote_sync (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    class_id INTEGER NOT NULL,
+                    notebook_id TEXT,
+                    notebook_name TEXT,
+                    section_id TEXT NOT NULL,
+                    section_name TEXT,
+                    start_date TEXT NOT NULL,
+                    end_date TEXT NOT NULL,
+                    sync_enabled INTEGER DEFAULT 0,
+                    last_sync_at TEXT,
+                    sync_direction TEXT DEFAULT 'app_to_onenote',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (class_id) REFERENCES teaching_classes(id)
+                );
             """)
             # ── Lesson Plans indexes ──
             for idx_sql in [
@@ -1806,3 +1822,66 @@ class Database:
             "resources": resources,
             "upcoming_concerts": upcoming_concerts,
         }
+
+    # ─── OneNote Sync CRUD ───────────────────────────────────────────────────
+
+    def get_onenote_sync(self, class_id: int):
+        """Get the OneNote sync config for a class (if any)."""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM onenote_sync WHERE class_id=? ORDER BY id DESC LIMIT 1",
+                (class_id,),
+            ).fetchone()
+
+    def get_all_onenote_syncs(self):
+        """Get all active OneNote sync configs."""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT os.*, tc.class_name FROM onenote_sync os "
+                "JOIN teaching_classes tc ON tc.id = os.class_id "
+                "WHERE os.sync_enabled=1 ORDER BY tc.class_name"
+            ).fetchall()
+
+    def save_onenote_sync(self, data: dict) -> int:
+        """Create or update a OneNote sync config."""
+        cols = [
+            "class_id", "notebook_id", "notebook_name",
+            "section_id", "section_name", "start_date", "end_date",
+            "sync_enabled", "last_sync_at", "sync_direction",
+        ]
+        # Check if one already exists for this class
+        existing = self.get_onenote_sync(data.get("class_id"))
+        if existing:
+            set_clause = ", ".join([f"{c}=?" for c in cols])
+            values = [data.get(c) for c in cols] + [existing["id"]]
+            with self._connect() as conn:
+                conn.execute(
+                    f"UPDATE onenote_sync SET {set_clause} WHERE id=?", values
+                )
+            return existing["id"]
+        else:
+            values = [data.get(c) for c in cols]
+            placeholders = ",".join(["?"] * len(cols))
+            col_str = ",".join(cols)
+            with self._connect() as conn:
+                cur = conn.execute(
+                    f"INSERT INTO onenote_sync ({col_str}) VALUES ({placeholders})",
+                    values,
+                )
+                return cur.lastrowid
+
+    def update_sync_timestamp(self, sync_id: int):
+        """Update the last_sync_at timestamp."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE onenote_sync SET last_sync_at=datetime('now') WHERE id=?",
+                (sync_id,),
+            )
+
+    def disable_onenote_sync(self, class_id: int):
+        """Disable sync for a class."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE onenote_sync SET sync_enabled=0 WHERE class_id=?",
+                (class_id,),
+            )

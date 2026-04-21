@@ -65,12 +65,10 @@ class LessonPlanEditor(ttk.Toplevel):
         except Exception:
             pass
 
-        # Setup window
+        # Setup window — no transient() so maximize button is available
         self.title(f"Lesson Plan — {self.class_name} — {self.formatted_date}")
         self.geometry("1100x700")
         self.resizable(True, True)
-        self.transient(parent)
-        self.grab_set()
         self._fit_window()
 
         # Build UI
@@ -570,14 +568,21 @@ class LessonPlanEditor(ttk.Toplevel):
             width=12
         ).pack(side=LEFT, padx=4)
 
-        # Right side: AI Assist (placeholder)
+        # Right side: AI Assist
+        ai_frame = ttk.Frame(button_frame)
+        ai_frame.pack(side=RIGHT)
+
         ttk.Button(
-            button_frame,
-            text="🤖 AI Assist",
-            command=lambda: None,
-            state=DISABLED,
-            width=16
-        ).pack(side=RIGHT, padx=4)
+            ai_frame, text="Regenerate Plan",
+            bootstyle=INFO, width=16,
+            command=self._ai_regenerate,
+        ).pack(side=LEFT, padx=4)
+
+        ttk.Button(
+            ai_frame, text="AI Modify...",
+            bootstyle=(INFO, OUTLINE), width=14,
+            command=self._ai_modify_dialog,
+        ).pack(side=LEFT, padx=4)
 
     def _populate_fields(self):
         """Populate all fields from loaded data."""
@@ -628,6 +633,222 @@ class LessonPlanEditor(ttk.Toplevel):
     def _mark_changed(self):
         """Mark that there are unsaved changes."""
         self._has_unsaved = True
+
+    # ═══════════════════════════ AI Assist ═══════════════════════════
+
+    def _get_base_dir(self):
+        import os
+        return os.path.dirname(os.path.abspath(self.db.db_path))
+
+    def _ai_regenerate(self):
+        """Regenerate the lesson plan using AI — different approach, same topic."""
+        topic = self.entry_summary.get().strip()
+        if not topic:
+            Messagebox.show_warning(
+                "Please enter a topic in the Summary Card first.",
+                title="Topic Required", parent=self,
+            )
+            return
+
+        confirm = Messagebox.yesno(
+            f"Regenerate the lesson plan for:\n\n"
+            f"  {topic}\n\n"
+            f"The AI will create a completely different approach\n"
+            f"to teaching this material. Your current plan will\n"
+            f"be replaced (you can undo by clicking Cancel).",
+            title="Regenerate Lesson Plan?", parent=self,
+        )
+        if confirm != "Yes":
+            return
+
+        self._run_ai("regenerate", "")
+
+    def _ai_modify_dialog(self):
+        """Open a dialog for the teacher to describe how to modify the plan."""
+        topic = self.entry_summary.get().strip()
+        if not topic:
+            Messagebox.show_warning(
+                "Please enter a topic in the Summary Card first.",
+                title="Topic Required", parent=self,
+            )
+            return
+
+        dlg = tk.Toplevel(self)
+        dlg.title("AI Modify Lesson Plan")
+        dlg.resizable(True, True)
+
+        # Center on parent
+        dlg.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 500) // 2
+        y = self.winfo_y() + (self.winfo_height() - 300) // 2
+        dlg.geometry(f"500x300+{max(0,x)}+{max(0,y)}")
+
+        ttk.Label(
+            dlg, text="How should the AI modify this lesson plan?",
+            font=("Segoe UI", fs(11), "bold"),
+        ).pack(padx=16, pady=(16, 4))
+
+        ttk.Label(
+            dlg,
+            text=f"Topic: {topic[:60]}",
+            foreground=muted_fg(), font=("Segoe UI", fs(9)),
+        ).pack(padx=16, pady=(0, 8))
+
+        ttk.Label(
+            dlg,
+            text="Describe what you want changed — the AI will interpret\n"
+                 "your instructions and modify the plan accordingly:",
+            font=("Segoe UI", fs(9)),
+        ).pack(padx=16, pady=(0, 4), anchor=W)
+
+        text_input = tk.Text(dlg, height=5, font=("Segoe UI", fs(10)))
+        text_input.pack(fill=BOTH, expand=True, padx=16, pady=4)
+        text_input.insert("1.0",
+            "e.g., 'Make it more engaging for students who are struggling' or\n"
+            "'Add a sight-reading component' or 'This class has behavior issues,\n"
+            "keep activities short and varied'"
+        )
+        text_input.tag_add("placeholder", "1.0", "end")
+        text_input.tag_config("placeholder", foreground="#999999")
+
+        def _clear_placeholder(event):
+            if text_input.tag_ranges("placeholder"):
+                text_input.delete("1.0", "end")
+                text_input.tag_delete("placeholder")
+
+        text_input.bind("<FocusIn>", _clear_placeholder)
+
+        btn_frame = ttk.Frame(dlg)
+        btn_frame.pack(pady=(4, 16))
+
+        def _do_modify():
+            feedback = text_input.get("1.0", "end").strip()
+            if not feedback or "e.g.," in feedback:
+                Messagebox.show_warning(
+                    "Please describe how you want the plan modified.",
+                    title="Input Required", parent=dlg,
+                )
+                return
+            dlg.destroy()
+            self._run_ai("adjust", feedback)
+
+        ttk.Button(
+            btn_frame, text="Modify Plan", bootstyle=SUCCESS,
+            command=_do_modify, width=14,
+        ).pack(side=LEFT, padx=4)
+        ttk.Button(
+            btn_frame, text="Cancel", bootstyle=SECONDARY,
+            command=dlg.destroy, width=10,
+        ).pack(side=LEFT, padx=4)
+
+    def _run_ai(self, mode, feedback):
+        """Run the AI generation and apply results to the form."""
+        from lesson_plan_ai import generate_lesson_plan
+
+        # Show progress
+        self.title(f"Lesson Plan — {self.class_name} — Generating...")
+        self.update()
+
+        try:
+            result = generate_lesson_plan(
+                base_dir=self._get_base_dir(),
+                db=self.db,
+                class_id=self._class_id,
+                date_str=self._date_str,
+                mode=mode,
+                teacher_feedback=feedback,
+            )
+
+            if result.get("error"):
+                self.title(f"Lesson Plan — {self.class_name} — {self.formatted_date}")
+                Messagebox.show_error(
+                    f"AI generation failed:\n{result['error']}",
+                    title="AI Error", parent=self,
+                )
+                return
+
+            plan = result.get("plan")
+            if not plan:
+                self.title(f"Lesson Plan — {self.class_name} — {self.formatted_date}")
+                Messagebox.show_warning(
+                    "AI did not return a lesson plan.",
+                    title="AI Result", parent=self,
+                )
+                return
+
+            # Apply AI results to the form fields
+            self._apply_ai_plan(plan)
+            self.title(f"Lesson Plan — {self.class_name} — {self.formatted_date}")
+            self._mark_changed()
+
+        except Exception as e:
+            self.title(f"Lesson Plan — {self.class_name} — {self.formatted_date}")
+            Messagebox.show_error(
+                f"AI generation failed:\n{str(e)}",
+                title="AI Error", parent=self,
+            )
+
+    def _apply_ai_plan(self, plan):
+        """Apply AI-generated plan data to the form fields."""
+        # Objectives
+        if plan.get("objectives"):
+            self.text_objectives.delete("1.0", "end")
+            self.text_objectives.insert("1.0", plan["objectives"])
+
+        # Standards
+        if plan.get("standards"):
+            self.text_standards.delete("1.0", "end")
+            self.text_standards.insert("1.0", plan["standards"])
+
+        # Warm-up
+        if plan.get("warmup_text"):
+            self.text_warmup.delete("1.0", "end")
+            self.text_warmup.insert("1.0", plan["warmup_text"])
+
+        # Assessment
+        if plan.get("assessment_type"):
+            self.combo_assessment.set(plan["assessment_type"])
+        if plan.get("assessment_details"):
+            self.text_assessment.delete("1.0", "end")
+            self.text_assessment.insert("1.0", plan["assessment_details"])
+
+        # Differentiation
+        if plan.get("differentiation_advanced"):
+            self.text_advanced.delete("1.0", "end")
+            self.text_advanced.insert("1.0", plan["differentiation_advanced"])
+        if plan.get("differentiation_struggling"):
+            self.text_struggling.delete("1.0", "end")
+            self.text_struggling.insert("1.0", plan["differentiation_struggling"])
+
+        # Notes
+        if plan.get("notes"):
+            self.text_notes.delete("1.0", "end")
+            self.text_notes.insert("1.0", plan["notes"])
+
+        # Activity blocks — if the AI returned blocks, replace the current ones
+        blocks = plan.get("blocks", [])
+        if blocks and hasattr(self, '_activity_blocks'):
+            new_blocks = []
+            for i, block in enumerate(blocks):
+                new_blocks.append({
+                    "id": id(object()),
+                    "lesson_plan_id": self._plan_id,
+                    "block_type": block.get("block_type", "custom"),
+                    "title": block.get("title", f"Activity {i+1}"),
+                    "description": block.get("description", ""),
+                    "duration_minutes": block.get("duration_minutes", 10),
+                    "sort_order": i,
+                    "notes": block.get("notes", ""),
+                    "technique_focus": block.get("technique_focus", ""),
+                    "grouping": block.get("grouping", ""),
+                    "difficulty_level": block.get("difficulty_level", "Medium"),
+                    "measure_start": block.get("measure_start"),
+                    "measure_end": block.get("measure_end"),
+                    "music_piece_id": None,
+                })
+            self._activity_blocks.blocks = new_blocks
+            self._activity_blocks._redraw_blocks()
+            self._on_blocks_changed()
 
     def _on_save(self):
         """Save the lesson plan and close the window."""

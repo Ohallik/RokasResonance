@@ -69,7 +69,7 @@ class SettingsDialog(ttk.Toplevel):
         self._show_anthropic_key = False
 
         self.title("Settings — Roka's Resonance")
-        self.resizable(False, True)
+        self.resizable(True, True)
         self.grab_set()
         self.lift()
 
@@ -77,7 +77,7 @@ class SettingsDialog(ttk.Toplevel):
         self._load()
 
         from ui.theme import fit_window
-        fit_window(self, 560, 680)
+        fit_window(self, 500, 400)
 
     # ───────────────────────────────────────────────────── Build UI ────────
 
@@ -256,9 +256,9 @@ class SettingsDialog(ttk.Toplevel):
             ("normal",      "Normal",
              "Default text sizes (recommended for most displays)."),
             ("large",       "Large",
-             "25% larger text — easier to read for accessibility."),
+             "Larger text for easier reading and accessibility."),
             ("extra_large", "Extra Large",
-             "50% larger text — maximum accessibility."),
+             "Maximum size for low-vision accessibility."),
         ]
         for val, label, desc in sizes:
             row = ttk.Frame(size_frame)
@@ -696,8 +696,8 @@ class SettingsDialog(ttk.Toplevel):
             pass
 
         # Notify about font size restart requirement
-        from ui.theme import get_font_scale, LARGE_FONT_SCALE, EXTRA_LARGE_FONT_SCALE
-        _scale_map = {"normal": 1.0, "large": LARGE_FONT_SCALE, "extra_large": EXTRA_LARGE_FONT_SCALE}
+        from ui.theme import get_font_scale, NORMAL_FONT_SCALE, LARGE_FONT_SCALE, EXTRA_LARGE_FONT_SCALE
+        _scale_map = {"normal": NORMAL_FONT_SCALE, "large": LARGE_FONT_SCALE, "extra_large": EXTRA_LARGE_FONT_SCALE}
         current_scale = get_font_scale()
         needs_restart = _scale_map.get(chosen_size, 1.0) != current_scale
         if needs_restart:

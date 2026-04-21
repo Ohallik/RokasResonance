@@ -72,8 +72,8 @@ class MainMenu(ttk.Frame):
                 else:
                     new_data.append((r, g, b, a))
             img.putdata(new_data)
-            # Resize to fit the banner height
-            target_h = 110
+            # Resize to fit the banner height — cap at 80px to save vertical space
+            target_h = 80
             aspect = img.width / img.height
             target_w = int(target_h * aspect)
             img = img.resize((target_w, target_h), Image.LANCZOS)
@@ -91,7 +91,7 @@ class MainMenu(ttk.Frame):
 
         # Text centered in remaining space (left of the image)
         text_frame = ttk.Frame(header, bootstyle=PRIMARY)
-        text_frame.pack(side=LEFT, fill=BOTH, expand=True, pady=(18, 16))
+        text_frame.pack(side=LEFT, fill=BOTH, expand=True, pady=(10, 8))
 
         ttk.Label(
             text_frame,
@@ -114,7 +114,7 @@ class MainMenu(ttk.Frame):
         stats_outer.pack(fill=X)
 
         stats_inner = ttk.Frame(stats_outer)
-        stats_inner.pack(pady=10)
+        stats_inner.pack(pady=6)
 
         # Left stats — rebuilt dynamically when program type changes
         self._left_stats_container = ttk.Frame(stats_inner)
@@ -150,7 +150,7 @@ class MainMenu(ttk.Frame):
         ttk.Separator(footer).pack(fill=X)
 
         footer_inner = ttk.Frame(footer)
-        footer_inner.pack(pady=8)
+        footer_inner.pack(pady=4)
 
         ttk.Label(
             footer_inner,
@@ -193,126 +193,85 @@ class MainMenu(ttk.Frame):
         settings_lbl.pack(side=LEFT)
         settings_lbl.bind("<Button-1>", lambda e: self._open_settings())
 
-        # ── Main Buttons ──────────────────────────────────────────────────────
-        # Configure bold fonts for the large nav buttons (scoped so other
-        # buttons in the app are unaffected).
-        # Use tkinter.ttk.Style directly to bypass ttkbootstrap's configure()
-        # override, which would try to parse "MainMenu" as a widget type.
+        # ── Main Navigation Grid ─────────────────────────────────────────────
+        # Two-column layout for compact, accessible navigation.
         import tkinter.ttk as _ttkbase
         _s = _ttkbase.Style()
-        _btn_font = ("Segoe UI", fs(12), "bold")
+        _btn_font = ("Segoe UI", min(fs(11), 20), "bold")
+        _btn_font_sm = ("Segoe UI", min(fs(10), 18), "bold")
         for _base in ("primary", "warning", "info", "secondary"):
             _s.configure(f"Nav.{_base}.TButton", font=_btn_font)
+            _s.configure(f"NavSm.{_base}.TButton", font=_btn_font_sm)
 
-        self._btn_area = ttk.Frame(self)
-        self._btn_area.pack(fill=BOTH, expand=True, padx=40, pady=(20, 16))
-        btn_area = self._btn_area
+        btn_area = ttk.Frame(self)
+        btn_area.pack(fill=X, padx=30, pady=(8, 4))
+        btn_area.columnconfigure(0, weight=1)
+        btn_area.columnconfigure(1, weight=1)
+        self._btn_area = btn_area
 
-        # ── Instrument Inventory group ───────────────────────────────────────
+        btn_pad = min(fs(5), 10)  # internal padding, capped
+        cur_row = 0
+
+        # ── Instruments ──
         ttk.Label(
-            btn_area,
-            text="Instrument Inventory",
-            font=("Segoe UI", fs(10), "bold"),
-            foreground=muted_fg(),
-        ).pack(anchor=W, pady=(0, 6))
+            btn_area, text="Instruments",
+            font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
+        ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(4, 2))
+        cur_row += 1
 
-        self._make_main_button(
-            btn_area,
-            text="Manage Instrument Inventory",
-            subtext="View, add, edit, check out & track instruments",
-            icon="🎺",
+        ttk.Button(
+            btn_area, text="  🎺  Inventory",
             command=self._open_inventory,
-            style=PRIMARY,
-            row=0
-        )
+            style=f"Nav.{PRIMARY}.TButton",
+        ).grid(row=cur_row, column=0, sticky="ew", padx=(0, 3), pady=2, ipady=btn_pad)
 
-        self._make_main_button(
-            btn_area,
-            text="Active Checkouts",
-            subtext="See all instruments currently checked out",
-            icon="📋",
+        ttk.Button(
+            btn_area, text="  📋  Checkouts",
             command=self._open_active_checkouts,
-            style=WARNING,
-            row=1
-        )
+            style=f"Nav.{WARNING}.TButton",
+        ).grid(row=cur_row, column=1, sticky="ew", padx=(3, 0), pady=2, ipady=btn_pad)
+        cur_row += 1
 
-        self._make_main_button(
-            btn_area,
-            text="Manage Students",
-            subtext="View and edit student records by school year",
-            icon="🎓",
-            command=self._open_students,
-            style=INFO,
-            row=2
-        )
-
-        # ── Sheet Music group ────────────────────────────────────────────────
-        ttk.Separator(btn_area).pack(fill=X, pady=(16, 12))
-
+        # ── Lesson Plans & Music ──
         ttk.Label(
-            btn_area,
-            text="Sheet Music",
-            font=("Segoe UI", fs(10), "bold"),
-            foreground=muted_fg(),
-        ).pack(anchor=W, pady=(0, 6))
+            btn_area, text="Lesson Plans & Music",
+            font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
+        ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(8, 2))
+        cur_row += 1
 
-        self._make_main_button(
-            btn_area,
-            text="Music Manager",
-            subtext="Manage sheet music library",
-            icon="🎼",
-            command=self._open_music_manager,
-            style=SECONDARY,
-            row=3
-        )
-
-        # ── Lesson Plans group ─────────────────────────────────────────────
-        ttk.Separator(btn_area).pack(fill=X, pady=(16, 12))
-
-        ttk.Label(
-            btn_area,
-            text="Lesson Plans",
-            font=("Segoe UI", fs(10), "bold"),
-            foreground=muted_fg(),
-        ).pack(anchor=W, pady=(0, 6))
-
-        self._make_main_button(
-            btn_area,
-            text="Lesson Plans",
-            subtext="Plan curriculum, create lesson plans & manage classes",
-            icon="📝",
+        ttk.Button(
+            btn_area, text="  📝  Lesson Plans",
             command=self._open_lesson_plans,
-            style=PRIMARY,
-            row=4
-        )
+            style=f"Nav.{PRIMARY}.TButton",
+        ).grid(row=cur_row, column=0, sticky="ew", padx=(0, 3), pady=2, ipady=btn_pad)
+
+        ttk.Button(
+            btn_area, text="  🎼  Music Manager",
+            command=self._open_music_manager,
+            style=f"Nav.{SECONDARY}.TButton",
+        ).grid(row=cur_row, column=1, sticky="ew", padx=(3, 0), pady=2, ipady=btn_pad)
+        cur_row += 1
+
+        # ── Students (full-width) ──
+        ttk.Label(
+            btn_area, text="Students",
+            font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
+        ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(8, 2))
+        cur_row += 1
+
+        ttk.Button(
+            btn_area, text="  🎓  Manage Students — View and edit student records",
+            command=self._open_students,
+            style=f"Nav.{INFO}.TButton",
+        ).grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2, ipady=btn_pad)
 
     def _make_stat(self, parent, value: str, label: str, col: int):
         f = ttk.Frame(parent)
-        f.grid(row=0, column=col, padx=20)
-        val_lbl = ttk.Label(f, text=value, font=("Segoe UI", fs(20), "bold"), bootstyle=PRIMARY)
+        f.grid(row=0, column=col, padx=14)
+        val_lbl = ttk.Label(f, text=value, font=("Segoe UI", fs(18), "bold"), bootstyle=PRIMARY)
         val_lbl.pack()
         ttk.Label(f, text=label, font=("Segoe UI", fs(8)), foreground=muted_fg()).pack()
         return val_lbl
-
-    def _make_main_button(self, parent, text, subtext, icon, command, style, row):
-        frame = ttk.Frame(parent)
-        frame.pack(fill=X, pady=6)
-
-        btn = ttk.Button(
-            frame,
-            text=f"  {icon}  {text}",
-            command=command,
-            style=f"Nav.{style}.TButton",
-            width=40,
-        )
-        btn.pack(fill=X, ipady=fs(10), padx=0)
-
-        ttk.Label(
-            frame,
-            text=f"      {subtext}",
-            font=("Segoe UI", fs(8)),
-            foreground=muted_fg(),
-        ).pack(anchor=W, pady=(2, 0))
 
     def _build_left_stats(self):
         """Build (or rebuild) the left stats section for the current program type."""
