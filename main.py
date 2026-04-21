@@ -335,6 +335,24 @@ def run_first_import(db: Database, parent_window, import_flag: str):
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 
+def _run_backups(db, data_dir: str, profile_name: str):
+    """Run local + external backup for the given profile. Non-fatal: errors print only."""
+    try:
+        db.backup()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+
+    from ui.settings_dialog import load_settings as _load_settings
+    ext_path = (_load_settings(data_dir).get("backup") or {}).get("external_path", "").strip()
+    if ext_path:
+        try:
+            db.backup_to_external(ext_path, profile_name)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+
 def _load_profile(app, profile_name: str):
     """Set up DB and menu for the given profile. Returns the menu widget."""
     # Save last-used
@@ -348,18 +366,13 @@ def _load_profile(app, profile_name: str):
     import_flag = os.path.join(data_dir, ".imported")
 
     db = Database(db_path)
-    db.backup()
+    _run_backups(db, data_dir, profile_name)
     db.relink_checkouts_to_students()
 
-    # External backup (if configured) — non-fatal, errors go to console only
-    from ui.settings_dialog import load_settings as _load_settings
-    _ext_path = (_load_settings(data_dir).get("backup") or {}).get("external_path", "").strip()
-    if _ext_path:
-        try:
-            db.backup_to_external(_ext_path, profile_name)
-        except Exception:
-            import traceback
-            traceback.print_exc()
+    # Stash current profile state on the app so the close handler can back it up
+    app._current_db = db
+    app._current_data_dir = data_dir
+    app._current_profile_name = profile_name
 
     app.title(f"Roka's Resonance — {profile_name}")
 
@@ -486,6 +499,16 @@ def main():
         x = (sw - win_w) // 2
         y = max(20, (sh - win_h) // 2)
         app.geometry(f"{win_w}x{win_h}+{x}+{y}")
+
+    def on_close():
+        db = getattr(app, "_current_db", None)
+        data_dir = getattr(app, "_current_data_dir", None)
+        profile_name = getattr(app, "_current_profile_name", None)
+        if db and data_dir and profile_name:
+            _run_backups(db, data_dir, profile_name)
+        app.destroy()
+
+    app.protocol("WM_DELETE_WINDOW", on_close)
 
     app.mainloop()
 

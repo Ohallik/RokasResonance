@@ -240,7 +240,7 @@ class MainMenu(ttk.Frame):
         cur_row += 1
 
         ttk.Button(
-            btn_area, text="  📝  Lesson Plans",
+            btn_area, text="  📝  Lesson Plans  (Beta)",
             command=self._open_lesson_plans,
             style=f"Nav.{PRIMARY}.TButton",
         ).grid(row=cur_row, column=0, sticky="ew", padx=(0, 3), pady=2, ipady=btn_pad)

@@ -19,7 +19,8 @@ GITHUB_MODELS_CATALOG = "https://models.github.ai/catalog/models"
 ANTHROPIC_MODELS = [
     "claude-haiku-4-5-20251001",   # fast, low cost
     "claude-sonnet-4-6",            # balanced quality/speed
-    "claude-opus-4-6",              # most capable
+    "claude-opus-4-6",              # most capable (previous)
+    "claude-opus-4-7",              # most capable (latest)
 ]
 
 # Default model list (publisher/model format) — shown before "Fetch Models" is clicked.
@@ -302,37 +303,8 @@ class SettingsDialog(ttk.Toplevel):
         self._local_frame = ttk.Frame(outer)
 
         ttk.Label(self._local_frame,
-                  text="GitHub API Key  (for GPT, Llama, Mistral, Phi models)",
+                  text="Anthropic API Key  (required — Claude models + enrichment)",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 0))
-
-        saved_key = (self._settings.get("llm") or {}).get("api_key", "").strip()
-        env_key = os.environ.get("GITHUB_TOKEN", "")
-        if saved_key:
-            env_note, env_color = "Key saved in settings below.", "#2a7a2a"
-        elif env_key:
-            env_note = f"GITHUB_TOKEN env var is set ({len(env_key)} chars) — used as fallback."
-            env_color = "#2a7a2a"
-        else:
-            env_note, env_color = "No key saved. Enter your GitHub personal access token.", "#888"
-
-        ttk.Label(self._local_frame, text=env_note, font=("Segoe UI", 8),
-                  foreground=env_color, wraplength=460).pack(anchor=W, pady=(0, 4))
-
-        key_row = ttk.Frame(self._local_frame)
-        key_row.pack(fill=X, pady=(0, 10))
-        self._key_var = tk.StringVar()
-        self._key_entry = ttk.Entry(key_row, textvariable=self._key_var,
-                                    show="•", width=44)
-        self._key_entry.pack(side=LEFT, fill=X, expand=True)
-        self._toggle_btn = ttk.Button(
-            key_row, text="Show", bootstyle=(SECONDARY, OUTLINE), width=6,
-            command=self._toggle_key_visibility)
-        self._toggle_btn.pack(side=LEFT, padx=(6, 0))
-
-        ttk.Separator(self._local_frame, orient=HORIZONTAL).pack(fill=X, pady=(0, 10))
-
-        ttk.Label(self._local_frame, text="Anthropic API Key  (for Claude models)",
-                  font=("Segoe UI", 9, "bold")).pack(anchor=W)
 
         saved_ak = (self._settings.get("llm") or {}).get("anthropic_api_key", "").strip()
         ak_note = "Key saved in settings below." if saved_ak else \
@@ -355,11 +327,41 @@ class SettingsDialog(ttk.Toplevel):
 
         ttk.Separator(self._local_frame, orient=HORIZONTAL).pack(fill=X, pady=(0, 10))
 
+        ttk.Label(self._local_frame,
+                  text="GitHub API Key  (optional — only for GPT, Llama, Mistral, Phi models)",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W)
+
+        saved_key = (self._settings.get("llm") or {}).get("api_key", "").strip()
+        env_key = os.environ.get("GITHUB_TOKEN", "")
+        if saved_key:
+            env_note, env_color = "Key saved in settings below.", "#2a7a2a"
+        elif env_key:
+            env_note = f"GITHUB_TOKEN env var is set ({len(env_key)} chars) — used as fallback."
+            env_color = "#2a7a2a"
+        else:
+            env_note, env_color = "No key saved. Leave blank if only using Claude models.", "#888"
+
+        ttk.Label(self._local_frame, text=env_note, font=("Segoe UI", 8),
+                  foreground=env_color, wraplength=460).pack(anchor=W, pady=(0, 4))
+
+        key_row = ttk.Frame(self._local_frame)
+        key_row.pack(fill=X, pady=(0, 10))
+        self._key_var = tk.StringVar()
+        self._key_entry = ttk.Entry(key_row, textvariable=self._key_var,
+                                    show="•", width=44)
+        self._key_entry.pack(side=LEFT, fill=X, expand=True)
+        self._toggle_btn = ttk.Button(
+            key_row, text="Show", bootstyle=(SECONDARY, OUTLINE), width=6,
+            command=self._toggle_key_visibility)
+        self._toggle_btn.pack(side=LEFT, padx=(6, 0))
+
+        ttk.Separator(self._local_frame, orient=HORIZONTAL).pack(fill=X, pady=(0, 10))
+
         ttk.Label(self._local_frame, text="Model",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W)
         self._model_hint = ttk.Label(
             self._local_frame,
-            text="Claude models use Anthropic key. All others use GitHub key.",
+            text="Anthropic key required. GitHub key only needed if selecting a non-Claude model.",
             font=("Segoe UI", 8), foreground="#888")
         self._model_hint.pack(anchor=W, pady=(0, 4))
 
@@ -432,7 +434,7 @@ class SettingsDialog(ttk.Toplevel):
             outer,
             text="Choose a folder on a network drive, OneDrive, or USB drive.\n"
                  "A copy of your database is saved here automatically each time\n"
-                 "the app starts. Up to 30 backups are kept per profile.",
+                 "the app starts and when it closes. Up to 30 backups are kept per profile.",
             font=("Segoe UI", 9),
             foreground="#888",
             justify=LEFT,
