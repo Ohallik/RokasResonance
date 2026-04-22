@@ -279,20 +279,20 @@ class SettingsDialog(ttk.Toplevel):
         ttk.Label(outer, text="AI Backend",
                   font=("Segoe UI", 10, "bold")).pack(anchor=W)
 
-        self._backend_var = tk.StringVar(value="local")
+        self._backend_var = tk.StringVar(value="proxy")
 
         backend_frame = ttk.Frame(outer)
         backend_frame.pack(fill=X, pady=(4, 0))
 
         ttk.Radiobutton(
-            backend_frame, text="Local API Keys",
-            variable=self._backend_var, value="local",
+            backend_frame, text="Claude Proxy",
+            variable=self._backend_var, value="proxy",
             bootstyle=PRIMARY,
             command=self._on_backend_change,
         ).pack(side=LEFT, padx=(0, 16))
         ttk.Radiobutton(
-            backend_frame, text="Claude Proxy",
-            variable=self._backend_var, value="proxy",
+            backend_frame, text="Local API Keys (Advanced)",
+            variable=self._backend_var, value="local",
             bootstyle=PRIMARY,
             command=self._on_backend_change,
         ).pack(side=LEFT)
@@ -610,7 +610,7 @@ class SettingsDialog(ttk.Toplevel):
 
         # LLM settings
         llm = self._settings.get("llm") or {}
-        self._backend_var.set(llm.get("backend", "local"))
+        self._backend_var.set(llm.get("backend", "proxy"))
         self._key_var.set(llm.get("api_key", ""))
         self._anthropic_key_var.set(llm.get("anthropic_api_key", ""))
         self._proxy_endpoint_var.set(llm.get("proxy_endpoint", ""))

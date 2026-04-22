@@ -304,12 +304,19 @@ def _query_with_images_anthropic(base_dir: str, model: str, user_prompt: str,
 def _is_proxy_mode(base_dir: str) -> bool:
     """True if the user has selected Claude Proxy as the backend."""
     settings = load_settings(base_dir)
-    return (settings.get("llm") or {}).get("backend", "local") == "proxy"
+    return (settings.get("llm") or {}).get("backend", "proxy") == "proxy"
 
 
 def _get_proxy_endpoint(base_dir: str) -> str:
     settings = load_settings(base_dir)
-    return (settings.get("llm") or {}).get("proxy_endpoint", "").strip().rstrip("/")
+    url = (settings.get("llm") or {}).get("proxy_endpoint", "").strip().rstrip("/")
+    # Accept either the base URL or one that already includes the /api/chat path —
+    # the request code always appends /api/chat, so strip it here if present.
+    for suffix in ("/api/chat", "/api"):
+        if url.endswith(suffix):
+            url = url[: -len(suffix)].rstrip("/")
+            break
+    return url
 
 
 def _get_proxy_token(base_dir: str) -> str:

@@ -3,14 +3,121 @@ main.py - Entry point for Roka's Resonance
 Chinook Middle School Band Instrument Inventory Manager
 """
 
-import json
 import os
-import shutil
 import sys
+import threading
+import traceback
+from datetime import datetime
+
+
+# ── Early crash handler ──────────────────────────────────────────────────────
+# Installed BEFORE the heavier imports (ttkbootstrap etc.) so that any failure
+# during startup — including import errors or missing dependencies on an end
+# user's machine — still produces a log file we can read.
+#
+# GUI builds have console=False, so without this any uncaught exception (or
+# print/stderr) disappears silently.  We cover four sources of failure:
+#   1. main-thread uncaught exceptions   → sys.excepthook
+#   2. worker-thread uncaught exceptions → threading.excepthook
+#   3. tkinter event-handler crashes     → tk.Tk.report_callback_exception
+#   4. stray stdout/stderr               → redirect to the same log when frozen
+#
+# The log also gets startup/exit markers so "silently blocked before Python
+# started" (empty log) is distinguishable from "Python ran, then crashed".
+
+_FROZEN = getattr(sys, "frozen", False)  # True when running from PyInstaller bundle
+
+
+def _log_path() -> str:
+    localappdata = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return os.path.join(localappdata, "RokasResonance", "crash.log")
+
+
+def _log_line(line: str):
+    try:
+        path = _log_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line.rstrip() + "\n")
+    except Exception:
+        pass
+
+
+def _log_exception(label: str, exc_type, exc_value, exc_tb):
+    try:
+        path = _log_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n" + "=" * 72 + "\n")
+            f.write(f"{label} at {datetime.now().isoformat()}\n")
+            f.write(f"thread : {threading.current_thread().name}\n")
+            f.write(f"python : {sys.version.splitlines()[0]}\n")
+            f.write(f"exe    : {sys.executable}\n")
+            f.write(f"argv   : {sys.argv}\n")
+            f.write(f"cwd    : {os.getcwd()}\n")
+            f.write("-" * 72 + "\n")
+            traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
+    except Exception:
+        pass  # absolutely last resort — don't let the crash handler itself crash
+
+
+def _excepthook(exc_type, exc_value, exc_tb):
+    _log_exception("UNCAUGHT (main thread)", exc_type, exc_value, exc_tb)
+
+
+def _threading_excepthook(args):
+    _log_exception(
+        f"UNCAUGHT (thread: {args.thread.name if args.thread else '?'})",
+        args.exc_type, args.exc_value, args.exc_traceback,
+    )
+
+
+sys.excepthook = _excepthook
+threading.excepthook = _threading_excepthook
+
+
+# When frozen, redirect stdout/stderr into the log so library prints (and the
+# many traceback.print_exc() calls throughout the codebase) don't vanish.
+# Leave alone when running from source so the dev console still works.
+if _FROZEN:
+    class _LogStream:
+        def __init__(self, prefix: str):
+            self._prefix = prefix
+        def write(self, data: str):
+            if not data:
+                return
+            for line in data.rstrip("\n").split("\n"):
+                _log_line(f"[{self._prefix}] {line}")
+        def flush(self):
+            pass
+        def isatty(self):
+            return False
+
+    sys.stdout = _LogStream("stdout")
+    sys.stderr = _LogStream("stderr")
+
+
+_log_line("\n" + "#" * 72)
+_log_line(f"STARTUP at {datetime.now().isoformat()} — frozen={_FROZEN}")
+_log_line(f"exe={sys.executable}")
+_log_line(f"argv={sys.argv}")
+
+
+import json
+import shutil
 import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox, Querybox
+
+
+# Tkinter callback crashes — e.g. a button handler raises.  Tk catches these
+# and by default prints to stderr (which we've already redirected when frozen,
+# but this gives a clearer label).
+def _tk_callback_exception(self, exc_type, exc_value, exc_tb):
+    _log_exception("UNCAUGHT (tk callback)", exc_type, exc_value, exc_tb)
+
+tk.Tk.report_callback_exception = _tk_callback_exception
 
 # Ensure the app directory is in sys.path
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -426,12 +533,14 @@ def main():
     win_w = {"normal": 620, "large": 700, "extra_large": 780}.get(startup_font_size, 620)
     win_h = {"normal": 580, "large": 640, "extra_large": 720}.get(startup_font_size, 580)
 
+    _log_line(f"CHECKPOINT: before ttk.Window (theme={startup_theme})")
     app = ttk.Window(
         title="Roka's Resonance",
         themename=startup_theme,
         size=(win_w, win_h),
         resizable=(True, True),
     )
+    _log_line("CHECKPOINT: after ttk.Window")
     app.minsize({"normal": 580, "large": 640, "extra_large": 720}.get(startup_font_size, 580), 650)
     app.withdraw()
 
@@ -440,6 +549,11 @@ def main():
 
     # Pick initial profile (no dialog on first launch)
     if not profiles:
+        # Show the main window before the Querybox so the dialog has a visible parent
+        # to anchor to — otherwise the prompt renders off-screen on some systems
+        # (observed on fresh Windows 11 Enterprise VMs).
+        app.deiconify()
+        app.update()
         name = Querybox.get_string(
             prompt="Welcome! Enter your name to create your profile:",
             title="Create First Profile",
@@ -510,7 +624,9 @@ def main():
 
     app.protocol("WM_DELETE_WINDOW", on_close)
 
+    _log_line(f"REACHED mainloop at {datetime.now().isoformat()}")
     app.mainloop()
+    _log_line(f"EXITED mainloop at {datetime.now().isoformat()}")
 
 
 if __name__ == "__main__":

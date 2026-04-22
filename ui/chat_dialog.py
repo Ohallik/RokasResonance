@@ -441,7 +441,8 @@ class ChatDialog(ttk.Toplevel):
         self._build()
 
         from ui.theme import fit_window
-        fit_window(self, 520, 600)
+        fit_window(self, 520, 480)
+        self.minsize(380, 300)
 
         # Opening line
         self._add_message(
@@ -468,7 +469,19 @@ class ChatDialog(ttk.Toplevel):
             bootstyle=(INVERSE, DARK),
         ).pack(side=RIGHT, pady=10, padx=4)
 
-        # Chat area
+        # Input bar, context label, and separator are packed BOTTOM-first so the
+        # input stays anchored when the window is resized smaller than its content.
+        input_frame = ttk.Frame(self)
+        input_frame.pack(side=BOTTOM, fill=X, padx=10, pady=8)
+
+        self._ctx_label = ttk.Label(
+            self, text="", font=("Segoe UI", fs(8)), foreground="#888"
+        )
+        self._ctx_label.pack(side=BOTTOM, anchor=W, padx=12, pady=(4, 0))
+
+        ttk.Separator(self).pack(side=BOTTOM, fill=X, padx=10, pady=(6, 0))
+
+        # Chat area fills the remaining space between the header and the bottom bar.
         chat_frame = ttk.Frame(self)
         chat_frame.pack(fill=BOTH, expand=True, padx=10, pady=(8, 0))
 
@@ -477,6 +490,7 @@ class ChatDialog(ttk.Toplevel):
             chat_frame,
             wrap=WORD,
             state="disabled",
+            height=10,
             font=("Segoe UI", fs(9)),
             relief="flat",
             padx=10,
@@ -518,18 +532,7 @@ class ChatDialog(ttk.Toplevel):
             "error_text", font=("Segoe UI", fs(9), "italic"), foreground="#cc0000"
         )
 
-        ttk.Separator(self).pack(fill=X, padx=10, pady=(6, 0))
-
-        # Context strip
-        self._ctx_label = ttk.Label(
-            self, text="", font=("Segoe UI", fs(8)), foreground="#888"
-        )
-        self._ctx_label.pack(anchor=W, padx=12, pady=(4, 0))
         self._update_context_label()
-
-        # Input bar
-        input_frame = ttk.Frame(self)
-        input_frame.pack(fill=X, padx=10, pady=8)
 
         self._input_var = tk.StringVar()
         self._input_entry = ttk.Entry(

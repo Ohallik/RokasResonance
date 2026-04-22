@@ -356,12 +356,12 @@ class MainMenu(ttk.Frame):
         from updater import check_for_update
         check_for_update(
             self._version,
-            lambda tag, html_url, zipball_url: self.after(
-                0, self._show_update_banner, tag, html_url, zipball_url
+            lambda tag, html_url, zipball_url, installer_url: self.after(
+                0, self._show_update_banner, tag, html_url, zipball_url, installer_url
             ),
         )
 
-    def _show_update_banner(self, tag: str, html_url: str, zipball_url: str):
+    def _show_update_banner(self, tag: str, html_url: str, zipball_url: str, installer_url: str | None):
         if self._update_banner:
             return  # already showing
         banner = ttk.Frame(self, bootstyle=WARNING)
@@ -372,12 +372,26 @@ class MainMenu(ttk.Frame):
             font=("Segoe UI", fs(9), "bold"),
             bootstyle=(INVERSE, WARNING),
         ).pack(side=LEFT, padx=(16, 8), pady=6)
-        ttk.Button(
-            banner,
-            text="Install Update",
-            bootstyle=WARNING,
-            command=lambda: self._do_update(tag, zipball_url),
-        ).pack(side=LEFT, pady=4)
+
+        # Frozen bundles can't be updated in place — direct the user to download
+        # the new installer instead. Dev / copy-files installs keep the original
+        # in-app source-copy update flow.
+        if getattr(sys, "frozen", False):
+            download_url = installer_url or html_url
+            ttk.Button(
+                banner,
+                text="Download Installer",
+                bootstyle=WARNING,
+                command=lambda: self._open_installer_download(download_url),
+            ).pack(side=LEFT, pady=4)
+        else:
+            ttk.Button(
+                banner,
+                text="Install Update",
+                bootstyle=WARNING,
+                command=lambda: self._do_update(tag, zipball_url),
+            ).pack(side=LEFT, pady=4)
+
         ttk.Button(
             banner,
             text="✕",
@@ -386,6 +400,10 @@ class MainMenu(ttk.Frame):
             command=lambda: banner.pack_forget(),
         ).pack(side=RIGHT, padx=8, pady=4)
         self._update_banner = banner
+
+    def _open_installer_download(self, url: str):
+        import webbrowser
+        webbrowser.open(url)
 
     def _do_update(self, tag: str, zipball_url: str):
         """Show a progress dialog, download the release zip, install, then prompt restart."""

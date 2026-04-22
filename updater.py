@@ -14,6 +14,11 @@ import zipfile
 REPO = "Ohallik/RokasResonance"
 _API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 
+# Name of the installer asset attached to each GitHub release. When the app is
+# running as a PyInstaller bundle, the update flow points users at this file
+# (downloaded directly from the release) instead of the source zipball.
+INSTALLER_ASSET_NAME = "Install-RokasResonance.exe"
+
 # Folders/files to never overwrite — user data that lives in the app folder
 _SKIP = {"profiles", "MusicPics", ".claude", "__pycache__", ".imported",
          "rokas_resonance.db", "Claude-Proxy.txt", "Claude-Proxy"}
@@ -22,7 +27,9 @@ _SKIP = {"profiles", "MusicPics", ".claude", "__pycache__", ".imported",
 def check_for_update(current_version: str, callback):
     """
     Spawns a daemon thread that checks for a newer GitHub release.
-    If one is found, calls callback(latest_tag, html_url, zipball_url).
+    If one is found, calls callback(latest_tag, html_url, zipball_url, installer_url).
+    installer_url is the direct download URL for INSTALLER_ASSET_NAME if the
+    release has it attached, otherwise None.
     Never raises — silently ignores network errors, rate limits, etc.
     """
     def _check():
@@ -36,8 +43,13 @@ def check_for_update(current_version: str, callback):
             latest_tag  = data.get("tag_name",    "").strip()
             html_url    = data.get("html_url",    "").strip()
             zipball_url = data.get("zipball_url", "").strip()
+            installer_url = None
+            for asset in (data.get("assets") or []):
+                if asset.get("name") == INSTALLER_ASSET_NAME:
+                    installer_url = (asset.get("browser_download_url") or "").strip() or None
+                    break
             if latest_tag and _is_newer(latest_tag, current_version):
-                callback(latest_tag, html_url, zipball_url)
+                callback(latest_tag, html_url, zipball_url, installer_url)
         except Exception:
             pass  # no internet, rate-limited, repo not found, etc.
 

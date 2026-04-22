@@ -5,6 +5,11 @@ __pycache__/
 dist/
 build/
 
+# Installer build artifacts (spec/iss/bat/readme are tracked, outputs are not)
+installer/dist/
+installer/build/
+installer/output/
+
 # Profile data (databases, backups, generated PDFs, sheet music files)
 profiles/
 
