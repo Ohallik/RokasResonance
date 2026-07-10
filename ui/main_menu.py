@@ -212,47 +212,27 @@ class MainMenu(ttk.Frame):
         btn_pad = min(fs(5), 10)  # internal padding, capped
         cur_row = 0
 
-        # ── Instruments ──
+        # ── Inventory (things: equipment + sheet music) ──
         ttk.Label(
-            btn_area, text="Instruments",
+            btn_area, text="Inventory",
             font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
         ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(4, 2))
         cur_row += 1
 
         ttk.Button(
-            btn_area, text="  🎺  Inventory",
+            btn_area, text="  🎺  Equipment",
             command=self._open_inventory,
             style=f"Nav.{PRIMARY}.TButton",
         ).grid(row=cur_row, column=0, sticky="ew", padx=(0, 3), pady=2, ipady=btn_pad)
 
         ttk.Button(
-            btn_area, text="  📋  Checkouts",
-            command=self._open_active_checkouts,
-            style=f"Nav.{WARNING}.TButton",
-        ).grid(row=cur_row, column=1, sticky="ew", padx=(3, 0), pady=2, ipady=btn_pad)
-        cur_row += 1
-
-        # ── Lesson Plans & Music ──
-        ttk.Label(
-            btn_area, text="Lesson Plans & Music",
-            font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
-        ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(8, 2))
-        cur_row += 1
-
-        ttk.Button(
-            btn_area, text="  📝  Lesson Plans  (Beta)",
-            command=self._open_lesson_plans,
-            style=f"Nav.{PRIMARY}.TButton",
-        ).grid(row=cur_row, column=0, sticky="ew", padx=(0, 3), pady=2, ipady=btn_pad)
-
-        ttk.Button(
-            btn_area, text="  🎼  Music Manager",
+            btn_area, text="  🎼  Sheet Music",
             command=self._open_music_manager,
             style=f"Nav.{SECONDARY}.TButton",
         ).grid(row=cur_row, column=1, sticky="ew", padx=(3, 0), pady=2, ipady=btn_pad)
         cur_row += 1
 
-        # ── Students (full-width) ──
+        # ── Students ──
         ttk.Label(
             btn_area, text="Students",
             font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
@@ -264,6 +244,26 @@ class MainMenu(ttk.Frame):
             command=self._open_students,
             style=f"Nav.{INFO}.TButton",
         ).grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2, ipady=btn_pad)
+        cur_row += 1
+
+        # ── Teacher Prep (budget + lesson planning) ──
+        ttk.Label(
+            btn_area, text="Teacher Prep",
+            font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
+        ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(8, 2))
+        cur_row += 1
+
+        ttk.Button(
+            btn_area, text="  💵  Budget",
+            command=self._open_budget,
+            style=f"Nav.{SUCCESS}.TButton",
+        ).grid(row=cur_row, column=0, sticky="ew", padx=(0, 3), pady=2, ipady=btn_pad)
+
+        ttk.Button(
+            btn_area, text="  📝  Lesson Plans  (Beta)",
+            command=self._open_lesson_plans,
+            style=f"Nav.{PRIMARY}.TButton",
+        ).grid(row=cur_row, column=1, sticky="ew", padx=(3, 0), pady=2, ipady=btn_pad)
 
     def _make_stat(self, parent, value: str, label: str, col: int):
         f = ttk.Frame(parent)
@@ -303,7 +303,7 @@ class MainMenu(ttk.Frame):
         else:
             ttk.Label(
                 self._left_stats_container,
-                text="INSTRUMENTS",
+                text="EQUIPMENT",
                 font=("Segoe UI", fs(7), "bold"),
                 foreground=muted_fg(),
                 anchor=CENTER,
@@ -342,7 +342,16 @@ class MainMenu(ttk.Frame):
                 co, total = stats["checked_out"], stats["total"]
                 self._stat_checkedout.config(text=f"{co} / {total}")
                 self._stat_repair.config(text=str(stats["in_repair"]))
-                music_count = stats.get("sheet_music", 0)
+                if self._program_type == "orchestra":
+                    # Orchestra music lives in its own DB, like choir.
+                    try:
+                        from database import Database
+                        orch_db = Database(os.path.join(self.base_dir, "orchestra_music.db"))
+                        music_count = orch_db.get_stats().get("sheet_music", 0)
+                    except Exception:
+                        music_count = 0
+                else:
+                    music_count = stats.get("sheet_music", 0)
             self._stat_music.config(text=str(music_count))
         except Exception:
             pass
@@ -485,21 +494,37 @@ class MainMenu(ttk.Frame):
             return
         from ui.inventory_manager import InventoryManager
         win = ttk.Toplevel(self.winfo_toplevel())
-        win.title("Manage Instrument Inventory — Roka's Resonance")
+        win.title("Manage Equipment Inventory — Roka's Resonance")
         win.state("zoomed")
-        manager = InventoryManager(win, self.db, self.base_dir)
+        manager = InventoryManager(win, self.db, self.base_dir,
+                                   on_checkouts=self._open_active_checkouts)
         manager.pack(fill=BOTH, expand=True)
         win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("inventory"))
         self._windows["inventory"] = win
+
+    def _open_budget(self):
+        if self._raise_or_open("budget"):
+            return
+        from ui.budget_manager import BudgetManager
+        win = ttk.Toplevel(self.winfo_toplevel())
+        win.title("Budget — Roka's Resonance")
+        win.state("zoomed")
+        program_type = self._program_type
+        manager = BudgetManager(win, self.db, self.base_dir, program_type=program_type)
+        manager.pack(fill=BOTH, expand=True)
+        win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("budget"))
+        self._windows["budget"] = win
 
     def _open_students(self):
         if self._raise_or_open("students"):
             return
         from ui.student_manager import StudentManager
+        from ui.settings_dialog import load_settings
+        program_type = (load_settings(self.base_dir).get("teacher") or {}).get("program_type", "band")
         win = ttk.Toplevel(self.winfo_toplevel())
         win.title("Student Manager — Roka's Resonance")
         win.resizable(True, True)
-        manager = StudentManager(win, self.db)
+        manager = StudentManager(win, self.db, program_type=program_type)
         manager.pack(fill=BOTH, expand=True)
         win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("students"))
         self._windows["students"] = win
@@ -520,6 +545,11 @@ class MainMenu(ttk.Frame):
             choir_db_path = os.path.join(self.base_dir, "choir_music.db")
             music_db = Database(choir_db_path)
             title = "Choir Music Manager — Roka's Resonance"
+        elif program_type == "orchestra":
+            from database import Database
+            orch_db_path = os.path.join(self.base_dir, "orchestra_music.db")
+            music_db = Database(orch_db_path)
+            title = "Orchestra Music Manager — Roka's Resonance"
         else:
             music_db = self.db
             title = "Music Manager — Roka's Resonance"
@@ -565,7 +595,8 @@ class MainMenu(ttk.Frame):
 
         scrollbar = ttk.Scrollbar(tree_frame, orient=VERTICAL)
         tree = ttk.Treeview(tree_frame, columns=cols, show="headings",
-                            yscrollcommand=scrollbar.set, bootstyle=PRIMARY)
+                            yscrollcommand=scrollbar.set, bootstyle=PRIMARY,
+                            selectmode="browse")
         scrollbar.config(command=tree.yview)
 
         widths = [180, 200, 120, 100, 120]
@@ -577,22 +608,63 @@ class MainMenu(ttk.Frame):
         scrollbar.pack(side=RIGHT, fill=Y)
         tree.pack(fill=BOTH, expand=True)
 
-        checkouts = self.db.get_all_active_checkouts()
-        for c in checkouts:
-            tree.insert("", "end", values=(
-                c["student_name"] or "",
-                c["description"] or "",
-                c["category"] or "",
-                c["barcode"] or c["district_no"] or "",
-                c["date_assigned"] or "",
-            ))
+        count_lbl = ttk.Label(win, text="", font=("Segoe UI", 9), foreground="#666")
 
-        if not checkouts:
-            ttk.Label(win, text="No instruments currently checked out.",
-                      font=("Segoe UI", 10), foreground="#888").pack(pady=20)
+        def _reload():
+            tree.delete(*tree.get_children())
+            checkouts = self.db.get_all_active_checkouts()
+            for c in checkouts:
+                is_item = not c["instrument_id"]
+                label = (c["description"] or "") + ("  (item)" if is_item else "")
+                tree.insert("", "end", iid=f"co:{c['id']}", values=(
+                    c["student_name"] or "",
+                    label,
+                    c["category"] or "",
+                    c["barcode"] or c["district_no"] or "",
+                    c["date_assigned"] or "",
+                ))
+            loans = self.db.get_all_active_loans()
+            for l in loans:
+                who = "🏫 " + (l["school"] or "Another school")
+                if l["contact_name"]:
+                    who += f" — {l['contact_name']}"
+                tree.insert("", "end", iid=f"loan:{l['id']}", values=(
+                    who,
+                    (l["description"] or "") + "  (on loan)",
+                    l["category"] or "",
+                    l["barcode"] or l["district_no"] or "",
+                    l["date_out"] or "",
+                ))
+            count_lbl.config(
+                text=f"{len(checkouts) + len(loans)} item(s) out "
+                     f"({len(loans)} on loan to other schools)")
 
-        ttk.Label(win, text=f"{len(checkouts)} instrument(s) currently checked out",
-                  font=("Segoe UI", 9), foreground="#666").pack(pady=6)
+        def _return_selected():
+            sel = tree.selection()
+            if not sel:
+                from ttkbootstrap.dialogs import Messagebox
+                Messagebox.show_warning("Select a checked-out item to return.",
+                                        title="No Selection", parent=win)
+                return
+            from datetime import datetime as _dt
+            today = _dt.today().strftime("%Y-%m-%d")
+            iid = sel[0]
+            if iid.startswith("loan:"):
+                self.db.return_loan(int(iid.split(":", 1)[1]), today)
+            else:
+                self.db.checkin_instrument(int(iid.split(":", 1)[1]), today)
+            _reload()
+            self._refresh_stats()
+
+        btn_row = ttk.Frame(win)
+        btn_row.pack(fill=X, padx=14, pady=(0, 4))
+        ttk.Button(btn_row, text="📥 Return Selected", bootstyle=INFO,
+                   command=_return_selected).pack(side=LEFT, padx=4, pady=4)
+        ttk.Button(btn_row, text="🔄 Refresh", bootstyle=(SECONDARY, OUTLINE),
+                   command=_reload).pack(side=LEFT, padx=4, pady=4)
+
+        count_lbl.pack(pady=6)
+        _reload()
 
         from ui.theme import fit_window
         fit_window(win, 900, 600)
