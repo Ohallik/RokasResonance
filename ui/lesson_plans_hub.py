@@ -114,7 +114,19 @@ class LessonPlansHub(ttk.Frame):
         self._notebook.add(class_tab, text="  🎓 Manage Classes  ")
         self._class_manager = class_tab
 
-        # Tab 3: Resource Library
+        # Tab 3: Percussion Rotation planner
+        from ui.percussion_rotation_view import PercussionRotationView
+        percussion_tab = PercussionRotationView(self._notebook, self.db)
+        self._notebook.add(percussion_tab, text="  🥁 Percussion  ")
+        self._percussion = percussion_tab
+
+        # Tab 4: Seating Chart generator
+        from ui.seating_chart_view import SeatingChartView
+        seating_tab = SeatingChartView(self._notebook, self.db, self.main_db, self._base_dir)
+        self._notebook.add(seating_tab, text="  🪑 Seating  ")
+        self._seating = seating_tab
+
+        # Tab 5: Resource Library
         from ui.resource_library import ResourceLibrary
         resource_tab = ResourceLibrary(self._notebook, self.db)
         self._notebook.add(resource_tab, text="  📚 Resource Library  ")
@@ -176,10 +188,14 @@ class LessonPlansHub(ttk.Frame):
         elif tab_index == 1:
             self._class_manager.refresh()
         elif tab_index == 2:
-            self._resource_library.refresh()
+            self._percussion.refresh()
         elif tab_index == 3:
-            self._concert_dashboard.refresh()
+            self._seating.refresh()
         elif tab_index == 4:
+            self._resource_library.refresh()
+        elif tab_index == 5:
+            self._concert_dashboard.refresh()
+        elif tab_index == 6:
             self._analytics.refresh()
 
     def _open_lesson_plan(self, class_id: int, date_str: str):
@@ -292,6 +308,10 @@ class LessonPlansHub(ttk.Frame):
         self._curriculum_planner.refresh()
         self._class_manager.db = self.db
         self._class_manager.refresh()
+        self._percussion.db = self.db
+        self._percussion.refresh()
+        self._seating.db = self.db
+        self._seating.refresh()
         self._resource_library.db = self.db
         self._resource_library.refresh()
         self._concert_dashboard.db = self.db

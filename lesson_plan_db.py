@@ -174,7 +174,77 @@ class LessonPlanDatabase:
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (class_id) REFERENCES teaching_classes(id)
                 );
+
+                CREATE TABLE IF NOT EXISTS percussion_groups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    school_year TEXT,
+                    name TEXT NOT NULL,
+                    class_type TEXT DEFAULT 'entry',
+                    period TEXT,
+                    current_day INTEGER DEFAULT 1,
+                    mallet_subrotation INTEGER DEFAULT 1,
+                    class_id INTEGER,
+                    notes TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS percussion_students (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    sort_order INTEGER DEFAULT 0,
+                    full_rotation INTEGER DEFAULT 1,
+                    assessments_passed INTEGER DEFAULT 0,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (group_id) REFERENCES percussion_groups(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS percussion_overrides (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id INTEGER NOT NULL,
+                    day_number INTEGER NOT NULL,
+                    mode TEXT NOT NULL,
+                    note TEXT,
+                    UNIQUE(group_id, day_number),
+                    FOREIGN KEY (group_id) REFERENCES percussion_groups(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS seating_charts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    school_year TEXT,
+                    name TEXT NOT NULL,
+                    chart_type TEXT DEFAULT 'class',
+                    config_json TEXT,
+                    layout_json TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS seating_conflicts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    school_year TEXT,
+                    name_a TEXT NOT NULL,
+                    name_b TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS seating_pins (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    school_year TEXT,
+                    student_name TEXT NOT NULL,
+                    pref TEXT,
+                    note TEXT,
+                    buffer INTEGER DEFAULT 0,
+                    UNIQUE(school_year, student_name)
+                );
             """)
+            # Migration: add the buffer column to older seating_pins tables.
+            try:
+                conn.execute("ALTER TABLE seating_pins ADD COLUMN buffer INTEGER DEFAULT 0")
+                conn.commit()
+            except Exception:
+                pass
             # Indexes
             for idx_sql in [
                 "CREATE INDEX IF NOT EXISTS idx_ci_class_date ON curriculum_items(class_id, item_date)",
@@ -760,6 +830,219 @@ class LessonPlanDatabase:
     def disable_onenote_sync(self, class_id):
         with self._connect() as conn:
             conn.execute("UPDATE onenote_sync SET sync_enabled=0 WHERE class_id=?", (class_id,))
+
+    # ─── Percussion Rotations ─────────────────────────────────────────────────
+
+    def get_percussion_groups(self, school_year=None, include_inactive=False):
+        with self._connect() as conn:
+            conds, params = [], []
+            if not include_inactive:
+                conds.append("is_active=1")
+            if school_year:
+                conds.append("school_year=?")
+                params.append(school_year)
+            where = ("WHERE " + " AND ".join(conds)) if conds else ""
+            return conn.execute(
+                f"SELECT * FROM percussion_groups {where} ORDER BY period, name", params,
+            ).fetchall()
+
+    def get_percussion_group(self, group_id):
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM percussion_groups WHERE id=?", (group_id,)
+            ).fetchone()
+
+    def add_percussion_group(self, data):
+        cols = ["school_year", "name", "class_type", "period", "current_day",
+                "mallet_subrotation", "class_id", "notes"]
+        values = [data.get(c) for c in cols]
+        placeholders = ",".join(["?"] * len(cols))
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"INSERT INTO percussion_groups ({','.join(cols)}) VALUES ({placeholders})",
+                values,
+            )
+            return cur.lastrowid
+
+    def update_percussion_group(self, group_id, data):
+        cols = [c for c in ["school_year", "name", "class_type", "period",
+                            "current_day", "mallet_subrotation", "class_id",
+                            "notes", "is_active"] if c in data]
+        if not cols:
+            return
+        set_clause = ", ".join(f"{c}=?" for c in cols)
+        values = [data[c] for c in cols] + [group_id]
+        with self._connect() as conn:
+            conn.execute(f"UPDATE percussion_groups SET {set_clause} WHERE id=?", values)
+
+    def delete_percussion_group(self, group_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM percussion_students WHERE group_id=?", (group_id,))
+            conn.execute("DELETE FROM percussion_overrides WHERE group_id=?", (group_id,))
+            conn.execute("DELETE FROM percussion_groups WHERE id=?", (group_id,))
+
+    def set_percussion_current_day(self, group_id, day):
+        with self._connect() as conn:
+            conn.execute("UPDATE percussion_groups SET current_day=? WHERE id=?",
+                         (max(1, int(day)), group_id))
+
+    # ── Percussion students ──
+
+    def get_percussion_students(self, group_id, include_inactive=False):
+        with self._connect() as conn:
+            cond = "" if include_inactive else " AND is_active=1"
+            return conn.execute(
+                f"SELECT * FROM percussion_students WHERE group_id=?{cond} "
+                "ORDER BY sort_order, id", (group_id,),
+            ).fetchall()
+
+    def add_percussion_student(self, group_id, name, full_rotation=1,
+                               assessments_passed=0, sort_order=None):
+        with self._connect() as conn:
+            if sort_order is None:
+                row = conn.execute(
+                    "SELECT COALESCE(MAX(sort_order), -1)+1 AS n "
+                    "FROM percussion_students WHERE group_id=?", (group_id,)
+                ).fetchone()
+                sort_order = row["n"]
+            cur = conn.execute(
+                "INSERT INTO percussion_students "
+                "(group_id, name, full_rotation, assessments_passed, sort_order) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (group_id, name, 1 if full_rotation else 0,
+                 assessments_passed or 0, sort_order),
+            )
+            return cur.lastrowid
+
+    def update_percussion_student(self, student_id, data):
+        cols = [c for c in ["name", "full_rotation", "assessments_passed",
+                            "is_active", "sort_order"] if c in data]
+        if not cols:
+            return
+        set_clause = ", ".join(f"{c}=?" for c in cols)
+        values = [data[c] for c in cols] + [student_id]
+        with self._connect() as conn:
+            conn.execute(f"UPDATE percussion_students SET {set_clause} WHERE id=?", values)
+
+    def delete_percussion_student(self, student_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM percussion_students WHERE id=?", (student_id,))
+
+    def reorder_percussion_students(self, ordered_ids):
+        with self._connect() as conn:
+            for idx, sid in enumerate(ordered_ids):
+                conn.execute("UPDATE percussion_students SET sort_order=? WHERE id=?",
+                             (idx, sid))
+
+    # ── Percussion day overrides ──
+
+    def get_percussion_overrides(self, group_id):
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM percussion_overrides WHERE group_id=? ORDER BY day_number",
+                (group_id,),
+            ).fetchall()
+
+    def get_percussion_override(self, group_id, day_number):
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM percussion_overrides WHERE group_id=? AND day_number=?",
+                (group_id, day_number),
+            ).fetchone()
+
+    def set_percussion_override(self, group_id, day_number, mode, note=""):
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO percussion_overrides (group_id, day_number, mode, note) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(group_id, day_number) DO UPDATE SET mode=excluded.mode, "
+                "note=excluded.note",
+                (group_id, day_number, mode, note),
+            )
+
+    def clear_percussion_override(self, group_id, day_number):
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM percussion_overrides WHERE group_id=? AND day_number=?",
+                (group_id, day_number),
+            )
+
+    # ─── Seating Charts ───────────────────────────────────────────────────────
+
+    def get_seating_charts(self, school_year=None):
+        with self._connect() as conn:
+            if school_year:
+                return conn.execute(
+                    "SELECT * FROM seating_charts WHERE school_year=? ORDER BY name",
+                    (school_year,)).fetchall()
+            return conn.execute("SELECT * FROM seating_charts ORDER BY name").fetchall()
+
+    def get_seating_chart(self, chart_id):
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM seating_charts WHERE id=?",
+                                (chart_id,)).fetchone()
+
+    def add_seating_chart(self, data):
+        cols = ["school_year", "name", "chart_type", "config_json", "layout_json"]
+        vals = [data.get(c) for c in cols]
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"INSERT INTO seating_charts ({','.join(cols)}) VALUES ({','.join(['?']*len(cols))})",
+                vals)
+            return cur.lastrowid
+
+    def update_seating_chart(self, chart_id, data):
+        cols = [c for c in ["name", "chart_type", "config_json", "layout_json"] if c in data]
+        if not cols:
+            return
+        set_clause = ", ".join(f"{c}=?" for c in cols) + ", updated_at=datetime('now')"
+        vals = [data[c] for c in cols] + [chart_id]
+        with self._connect() as conn:
+            conn.execute(f"UPDATE seating_charts SET {set_clause} WHERE id=?", vals)
+
+    def delete_seating_chart(self, chart_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM seating_charts WHERE id=?", (chart_id,))
+
+    # ── Seating conflicts (keep-apart pairs) ──
+
+    def get_seating_conflicts(self, school_year):
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM seating_conflicts WHERE school_year=? ORDER BY name_a, name_b",
+                (school_year,)).fetchall()
+
+    def add_seating_conflict(self, school_year, name_a, name_b):
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO seating_conflicts (school_year, name_a, name_b) VALUES (?,?,?)",
+                (school_year, name_a, name_b))
+
+    def delete_seating_conflict(self, conflict_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM seating_conflicts WHERE id=?", (conflict_id,))
+
+    # ── Seating pins (IEP/504 placement) ──
+
+    def get_seating_pins(self, school_year):
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM seating_pins WHERE school_year=? ORDER BY student_name",
+                (school_year,)).fetchall()
+
+    def set_seating_pin(self, school_year, student_name, pref, note="", buffer=0):
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO seating_pins (school_year, student_name, pref, note, buffer) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(school_year, student_name) "
+                "DO UPDATE SET pref=excluded.pref, note=excluded.note, buffer=excluded.buffer",
+                (school_year, student_name, pref, note, int(buffer or 0)))
+
+    def clear_seating_pin(self, school_year, student_name):
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM seating_pins WHERE school_year=? AND student_name=?",
+                (school_year, student_name))
 
     # ─── Stats ────────────────────────────────────────────────────────────────
 
