@@ -8,15 +8,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
 
-ENSEMBLE_OPTIONS = [
-    "Concert Band", "Jazz Band", "Percussion Ensemble",
-    "Small Ensemble", "Solo", "Marching Band", "Other",
-]
-
-CHOIR_ENSEMBLE_OPTIONS = [
-    "Concert Choir", "Chamber Choir", "Women's Choir", "Men's Choir",
-    "Full Choir", "Small Ensemble", "Solo", "Other",
-]
+from ui.ensembles import ensembles_for
 
 
 class PerformanceDialog(ttk.Toplevel):
@@ -43,7 +35,7 @@ class PerformanceDialog(ttk.Toplevel):
             self._vars["performance_date"].set(datetime.now().strftime("%Y-%m-%d"))
 
         from ui.theme import fit_window
-        fit_window(self, 440, 440)
+        fit_window(self, 460, 520)
 
     def _build(self):
         # Header
@@ -59,16 +51,26 @@ class PerformanceDialog(ttk.Toplevel):
         # Date
         self._make_field(content, "Date (YYYY-MM-DD)", "performance_date")
 
-        # Ensemble
+        # Ensemble(s) — tick every class that performed this piece.  Combined
+        # performances (e.g. Intermediate + Advanced Band) can select several.
         f = ttk.Frame(content)
         f.pack(fill=X, pady=4)
-        ttk.Label(f, text="Ensemble", font=("Segoe UI", 9)).pack(anchor=W)
-        var = tk.StringVar()
-        self._vars["ensemble"] = var
-        opts = CHOIR_ENSEMBLE_OPTIONS if self._mode == "choir" else ENSEMBLE_OPTIONS
-        ttk.Combobox(f, textvariable=var, values=opts, width=30).pack(
-            anchor=W, pady=(2, 0)
-        )
+        ttk.Label(f, text="Ensemble(s) — tick all that performed this piece",
+                  font=("Segoe UI", 9)).pack(anchor=W)
+        grid = ttk.Frame(f)
+        grid.pack(fill=X, pady=(2, 0))
+        self._ens_vars = {}
+        for i, opt in enumerate(ensembles_for(self._mode)):
+            v = tk.BooleanVar(value=False)
+            self._ens_vars[opt] = v
+            ttk.Checkbutton(grid, text=opt, variable=v, bootstyle=INFO).grid(
+                row=i // 2, column=i % 2, sticky=W, padx=6, pady=2)
+        other_row = ttk.Frame(f)
+        other_row.pack(fill=X, pady=(4, 0))
+        ttk.Label(other_row, text="Other:", font=("Segoe UI", 9)).pack(side=LEFT)
+        self._ens_other = tk.StringVar()
+        ttk.Entry(other_row, textvariable=self._ens_other, width=26).pack(
+            side=LEFT, padx=(4, 0))
 
         # Event Name
         self._make_field(content, "Event Name *", "event_name")
@@ -104,14 +106,32 @@ class PerformanceDialog(ttk.Toplevel):
                 break
         if not row:
             return
-        for key in ("performance_date", "ensemble", "event_name"):
+        for key in ("performance_date", "event_name"):
             if key in self._vars:
                 self._vars[key].set(row[key] or "")
+        # Ensemble(s): tick known ones, put anything else in "Other"
+        parts = [p.strip() for p in (row["ensemble"] or "").split(",") if p.strip()]
+        extras = []
+        for p in parts:
+            if p in self._ens_vars:
+                self._ens_vars[p].set(True)
+            else:
+                extras.append(p)
+        self._ens_other.set(", ".join(extras))
         self._notes_text.delete("1.0", "end")
         self._notes_text.insert("1.0", row["notes"] or "")
 
+    def _collect_ensembles(self) -> str:
+        picked = [opt for opt, v in self._ens_vars.items() if v.get()]
+        for extra in (self._ens_other.get() or "").split(","):
+            extra = extra.strip()
+            if extra and extra not in picked:
+                picked.append(extra)
+        return ", ".join(picked)
+
     def _save(self):
         data = {k: v.get().strip() for k, v in self._vars.items()}
+        data["ensemble"] = self._collect_ensembles()
         data["notes"] = self._notes_text.get("1.0", "end").strip()
         data["music_id"] = self.music_id
 

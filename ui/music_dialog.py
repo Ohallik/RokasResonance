@@ -18,8 +18,9 @@ GENRE_OPTIONS = [
 ]
 
 ENSEMBLE_OPTIONS = [
-    "Concert Band", "Jazz Band", "Percussion Ensemble",
-    "Small Ensemble", "Solo", "Marching Band", "Other",
+    "Concert Band", "Symphonic Band", "Wind Ensemble", "Jazz Band", "Vocal Jazz",
+    "Symphony Orchestra", "String Orchestra", "Chamber Orchestra", "Full Orchestra",
+    "Percussion Ensemble", "Small Ensemble", "Solo", "Marching Band", "Other",
 ]
 
 DIFFICULTY_OPTIONS = [
@@ -49,7 +50,7 @@ CHOIR_GENRE_OPTIONS = [
 ]
 
 VOICING_OPTIONS = [
-    "SATB", "SSA", "SAB", "TTBB", "Unison", "2-Part", "3-Part Mixed",
+    "SA", "SATB", "SSA", "SAB", "TTBB", "Unison", "2-Part", "3-Part Mixed",
     "4-Part Mixed", "SSATB", "SSAA", "Other",
 ]
 

@@ -19,8 +19,9 @@ GITHUB_MODELS_CATALOG = "https://models.github.ai/catalog/models"
 ANTHROPIC_MODELS = [
     "claude-haiku-4-5-20251001",   # fast, low cost
     "claude-sonnet-4-6",            # balanced quality/speed
-    "claude-opus-4-6",              # most capable (previous)
-    "claude-opus-4-7",              # most capable (latest)
+    "claude-opus-4-6",              # most capable (older)
+    "claude-opus-4-7",              # most capable (previous)
+    "claude-opus-4-8",              # most capable (latest)
 ]
 
 # Default model list (publisher/model format) — shown before "Fetch Models" is clicked.
@@ -148,8 +149,9 @@ class SettingsDialog(ttk.Toplevel):
         self._program_type_var = tk.StringVar(value="band")
 
         for value, label, desc in [
-            ("band",  "Instrumental",  "Concert band, jazz band, marching band, and orchestra repertoire."),
-            ("choir", "Choir", "Choral and vocal ensemble repertoire."),
+            ("band",      "Band",      "Concert band, jazz band, and marching band repertoire."),
+            ("choir",     "Choir",     "Choral and vocal ensemble repertoire."),
+            ("orchestra", "Orchestra", "String and full orchestra repertoire."),
         ]:
             row = ttk.Frame(outer)
             row.pack(fill=X, pady=3)
@@ -182,7 +184,7 @@ class SettingsDialog(ttk.Toplevel):
         ttk.Label(
             outer,
             text="Select a Roka's Resonance database (.db) from another profile to "
-                 "view its music library as a read-only source in the Instrumental Music Manager.",
+                 "view its music library as a read-only source in the Music Manager.",
             font=("Segoe UI", 9), foreground="#888",
             wraplength=460, justify=LEFT,
         ).pack(anchor=W, pady=(2, 8))

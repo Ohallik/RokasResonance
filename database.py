@@ -384,6 +384,187 @@ class Database:
                     conn.commit()
                 except Exception:
                     pass
+            # Migrate: loans table — an instrument loaned out to another school.
+            # While a loan is open (date_returned NULL) the instrument is "On
+            # Loan" and unavailable for local checkout.
+            try:
+                conn.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS loans (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        instrument_id INTEGER NOT NULL,
+                        school TEXT,
+                        contact_name TEXT,
+                        contact_email TEXT,
+                        contact_phone TEXT,
+                        date_out TEXT,
+                        date_due TEXT,
+                        date_returned TEXT,
+                        notes TEXT,
+                        FOREIGN KEY (instrument_id) REFERENCES instruments(id)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_loans_instrument
+                        ON loans(instrument_id);
+                    """
+                )
+                conn.commit()
+            except Exception:
+                pass
+            # Migrate: budgeting + student-fee tables.
+            try:
+                conn.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS budget_categories (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        kind TEXT NOT NULL        -- 'expense' | 'income'
+                    );
+                    CREATE TABLE IF NOT EXISTS budget_transactions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        txn_date TEXT,
+                        description TEXT,
+                        category TEXT,
+                        kind TEXT,                -- 'expense' | 'income'
+                        amount REAL DEFAULT 0,
+                        funding_source TEXT,      -- Building | ASB | Boosters | Other
+                        student_id INTEGER,
+                        notes TEXT,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE TABLE IF NOT EXISTS fee_types (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        default_amount REAL DEFAULT 0
+                    );
+                    CREATE TABLE IF NOT EXISTS student_fees (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        student_id INTEGER,
+                        fee_type TEXT,
+                        school_year TEXT,
+                        amount REAL DEFAULT 0,
+                        status TEXT DEFAULT 'unpaid',   -- unpaid | paid | waived
+                        date_paid TEXT,
+                        notes TEXT,
+                        FOREIGN KEY (student_id) REFERENCES students(id)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_txn_date ON budget_transactions(txn_date);
+                    CREATE INDEX IF NOT EXISTS idx_sfee_student ON student_fees(student_id);
+                    """
+                )
+                conn.commit()
+            except Exception:
+                pass
+            # Seed default budget categories + fee types once (only if empty).
+            try:
+                if conn.execute("SELECT COUNT(*) FROM budget_categories").fetchone()[0] == 0:
+                    for name, kind in [
+                        ("Instrument Repair", "expense"),
+                        ("Instrument Supplies", "expense"),
+                        ("Sheet Music", "expense"),
+                        ("Office Supplies", "expense"),
+                        ("Field Trip", "expense"),
+                        ("Guest Artist / Clinician", "expense"),
+                        ("Festival / Registration", "expense"),
+                        ("Uniforms / Polos", "expense"),
+                        ("Fundraiser", "income"),
+                        ("Ticket Sales", "income"),
+                        ("Donations", "income"),
+                        ("Instrument Rental Fees", "income"),
+                        ("Student Fees", "income"),
+                        ("Other", "expense"),
+                        ("Other", "income"),
+                    ]:
+                        conn.execute("INSERT INTO budget_categories (name, kind) VALUES (?, ?)",
+                                     (name, kind))
+                if conn.execute("SELECT COUNT(*) FROM fee_types").fetchone()[0] == 0:
+                    for name, amt in [
+                        ("Polo Shirt", 15.0),                     # Chinook polo (editable)
+                        ("Instrument Rental (School Year)", 75.0),  # BSD standard
+                        ("Instrument Rental (Summer)", 20.0),       # BSD standard
+                    ]:
+                        conn.execute("INSERT INTO fee_types (name, default_amount) VALUES (?, ?)",
+                                     (name, amt))
+                conn.commit()
+            except Exception:
+                pass
+            # Correct the earlier placeholder seed amounts to the real BSD/Chinook
+            # values — only where still at the old default (never clobber edits).
+            try:
+                conn.execute("UPDATE fee_types SET default_amount=15 "
+                             "WHERE name='Polo Shirt' AND default_amount=25")
+                old = conn.execute("SELECT id FROM fee_types "
+                                   "WHERE name='Instrument Rental' AND default_amount=40").fetchone()
+                if old:
+                    conn.execute("UPDATE fee_types SET name='Instrument Rental (School Year)', "
+                                 "default_amount=75 WHERE id=?", (old["id"],))
+                    if not conn.execute("SELECT 1 FROM fee_types "
+                                        "WHERE name='Instrument Rental (Summer)'").fetchone():
+                        conn.execute("INSERT INTO fee_types (name, default_amount) "
+                                     "VALUES ('Instrument Rental (Summer)', 20)")
+                conn.commit()
+            except Exception:
+                pass
+            # Migrate: student ensemble / class-period / instrument fields.
+            # Stored as comma-separated strings (e.g. "Advanced Band,Jazz 1"
+            # and "1,3,5") so a student can belong to several at once.
+            for col in ("ensembles TEXT", "class_periods TEXT",
+                        "primary_instrument TEXT", "secondary_instrument TEXT",
+                        "preferred_name TEXT"):
+                try:
+                    conn.execute(f"ALTER TABLE students ADD COLUMN {col}")
+                    conn.commit()
+                except Exception:
+                    pass
+            # Migrate: shorter saxophone names (unambiguous 1:1 renames).
+            # "Baritone/Euphonium" is left alone — it split into four clef-
+            # specific options and we can't guess which one a student plays.
+            try:
+                for old, new in (("Alto Saxophone", "Alto Sax"),
+                                 ("Tenor Saxophone", "Tenor Sax"),
+                                 ("Baritone Saxophone", "Bari Sax")):
+                    conn.execute("UPDATE students SET primary_instrument=? "
+                                 "WHERE primary_instrument=?", (new, old))
+                    conn.execute("UPDATE students SET secondary_instrument=? "
+                                 "WHERE secondary_instrument=?", (new, old))
+                conn.commit()
+            except Exception:
+                pass
+            # Migrate: support free-text "random item" checkouts.
+            # Adds item_description and makes instrument_id nullable.  SQLite
+            # can't drop a NOT NULL constraint in place, so rebuild the table.
+            try:
+                ck_cols = [r["name"] for r in
+                           conn.execute("PRAGMA table_info(checkouts)").fetchall()]
+                if "item_description" not in ck_cols:
+                    conn.executescript(
+                        """
+                        CREATE TABLE checkouts_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            instrument_id INTEGER,
+                            student_id INTEGER,
+                            student_name TEXT,
+                            date_assigned TEXT,
+                            date_returned TEXT,
+                            due_date TEXT,
+                            notes TEXT,
+                            item_description TEXT,
+                            form_generated INTEGER DEFAULT 0,
+                            FOREIGN KEY (instrument_id) REFERENCES instruments(id),
+                            FOREIGN KEY (student_id) REFERENCES students(id)
+                        );
+                        INSERT INTO checkouts_new
+                            (id, instrument_id, student_id, student_name, date_assigned,
+                             date_returned, due_date, notes, form_generated)
+                            SELECT id, instrument_id, student_id, student_name, date_assigned,
+                                   date_returned, due_date, notes, form_generated
+                            FROM checkouts;
+                        DROP TABLE checkouts;
+                        ALTER TABLE checkouts_new RENAME TO checkouts;
+                        """
+                    )
+                    conn.commit()
+            except Exception:
+                pass
 
     # ─── Backup ────────────────────────────────────────────────────────────────
 
@@ -554,21 +735,107 @@ class Database:
         return "Checked Out" if row else "Available"
 
     def get_instruments_with_status(self, include_inactive=False):
-        """Return instruments joined with current checkout info."""
+        """Return instruments with computed status, handling several active
+        checkouts per instrument and out-on-loan instruments.  Uses scalar
+        subqueries so an instrument is never duplicated in the result."""
         active_filter = "" if include_inactive else "AND i.is_active=1"
         sql = f"""
             SELECT
                 i.*,
-                CASE WHEN c.id IS NOT NULL THEN 'Checked Out' ELSE 'Available' END AS status,
-                c.student_name AS checked_out_to,
-                c.date_assigned AS checkout_date
+                (SELECT COUNT(*) FROM checkouts c
+                    WHERE c.instrument_id = i.id AND c.date_returned IS NULL) AS active_count,
+                (SELECT COUNT(*) FROM loans l
+                    WHERE l.instrument_id = i.id AND l.date_returned IS NULL) AS loan_count,
+                (SELECT c.student_name FROM checkouts c
+                    WHERE c.instrument_id = i.id AND c.date_returned IS NULL
+                    ORDER BY c.id LIMIT 1) AS first_checkout_name,
+                (SELECT c.date_assigned FROM checkouts c
+                    WHERE c.instrument_id = i.id AND c.date_returned IS NULL
+                    ORDER BY c.id LIMIT 1) AS checkout_date,
+                (SELECT l.school FROM loans l
+                    WHERE l.instrument_id = i.id AND l.date_returned IS NULL
+                    ORDER BY l.id LIMIT 1) AS loan_school
             FROM instruments i
-            LEFT JOIN checkouts c ON c.instrument_id = i.id AND c.date_returned IS NULL
             WHERE 1=1 {active_filter}
             ORDER BY i.category, i.description
         """
         with self._connect() as conn:
-            return conn.execute(sql).fetchall()
+            rows = conn.execute(sql).fetchall()
+
+        out = []
+        for r in rows:
+            d = dict(r)
+            ac = d.get("active_count") or 0
+            lc = d.get("loan_count") or 0
+            if lc:
+                d["status"] = "On Loan"
+                d["checked_out_to"] = f"🏫 {d.get('loan_school') or 'Another school'}"
+            elif ac:
+                d["status"] = "Checked Out"
+                name = d.get("first_checkout_name") or ""
+                d["checked_out_to"] = name + (f"  (+{ac - 1} more)" if ac > 1 else "")
+            else:
+                d["status"] = "Available"
+                d["checked_out_to"] = ""
+            out.append(d)
+        return out
+
+    def get_active_checkouts_for_instrument(self, instrument_id):
+        """All open checkouts for one instrument (may be several)."""
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT c.*, s.grade, s.phone, s.parent1_name
+                   FROM checkouts c
+                   LEFT JOIN students s ON s.id = c.student_id
+                   WHERE c.instrument_id=? AND c.date_returned IS NULL
+                   ORDER BY c.id""",
+                (instrument_id,)
+            ).fetchall()
+
+    # ─── Loans (to another school) ──────────────────────────────────────────────
+
+    def add_loan(self, data: dict) -> int:
+        cols = ["instrument_id", "school", "contact_name", "contact_email",
+                "contact_phone", "date_out", "date_due", "notes"]
+        values = [data.get(c) for c in cols]
+        placeholders = ",".join(["?"] * len(cols))
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"INSERT INTO loans ({','.join(cols)}) VALUES ({placeholders})", values
+            )
+            return cur.lastrowid
+
+    def get_active_loan(self, instrument_id: int):
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT * FROM loans
+                   WHERE instrument_id=? AND date_returned IS NULL
+                   ORDER BY id DESC LIMIT 1""",
+                (instrument_id,)
+            ).fetchone()
+
+    def get_all_active_loans(self):
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT l.*, i.description, i.category, i.barcode, i.district_no,
+                          i.serial_no
+                   FROM loans l
+                   JOIN instruments i ON i.id = l.instrument_id
+                   WHERE l.date_returned IS NULL
+                   ORDER BY l.school, i.description"""
+            ).fetchall()
+
+    def return_loan(self, loan_id: int, date_returned: str):
+        with self._connect() as conn:
+            conn.execute("UPDATE loans SET date_returned=? WHERE id=?",
+                         (date_returned, loan_id))
+
+    def get_loan_history(self, instrument_id: int):
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM loans WHERE instrument_id=? ORDER BY date_out DESC",
+                (instrument_id,)
+            ).fetchall()
 
     # ─── Student CRUD ──────────────────────────────────────────────────────────
 
@@ -592,6 +859,25 @@ class Database:
                 "SELECT * FROM students WHERE id=?", (student_id,)
             ).fetchone()
 
+    def get_current_roster(self):
+        """Current, active members only — for every dropdown/autocomplete in the
+        app.  Uses the most recent enrolled school year (so students who left or
+        aged out, i.e. are only on prior-year rosters, are excluded), keeps only
+        active students, and de-duplicates by name (preferring the record that
+        has a district student_id)."""
+        years = self.get_school_years()
+        year = years[0] if years else self.current_school_year()
+        rows = self.get_all_students(school_year=year, include_inactive=False)
+        seen = {}
+        for s in rows:
+            has_sid = bool((s["student_id"] or "").strip())
+            first = (s["first_name"] or "")
+            fw = first.split()[0].lower() if first else ""
+            key = f"{fw}|{(s['last_name'] or '').lower()}"
+            if key not in seen or (has_sid and not seen[key][1]):
+                seen[key] = (dict(s), has_sid)
+        return [s for s, _ in seen.values()]
+
     def find_student_by_name(self, first_name: str, last_name: str, school_year: str = None):
         with self._connect() as conn:
             if school_year:
@@ -610,7 +896,9 @@ class Database:
             "gender", "birth_date", "address", "city", "state", "zip_code",
             "phone", "student_email", "parent1_name", "parent1_relation",
             "parent1_phone", "parent1_email", "parent2_name", "parent2_relation",
-            "parent2_phone", "parent2_email", "notes"
+            "parent2_phone", "parent2_email", "notes",
+            "ensembles", "class_periods", "primary_instrument", "secondary_instrument",
+            "preferred_name"
         ]
         values = [data.get(c) for c in cols]
         placeholders = ",".join(["?"] * len(cols))
@@ -627,7 +915,9 @@ class Database:
             "gender", "birth_date", "address", "city", "state", "zip_code",
             "phone", "student_email", "parent1_name", "parent1_relation",
             "parent1_phone", "parent1_email", "parent2_name", "parent2_relation",
-            "parent2_phone", "parent2_email", "notes", "is_active"
+            "parent2_phone", "parent2_email", "notes",
+            "ensembles", "class_periods", "primary_instrument", "secondary_instrument",
+            "preferred_name", "is_active"
         ]
         set_clause = ", ".join([f"{c}=?" for c in cols])
         values = [data.get(c) for c in cols] + [student_id]
@@ -664,17 +954,206 @@ class Database:
             ).fetchall()
         return [r["school_year"] for r in rows]
 
+    # ─── Bulk ensemble / period / instrument assignment ─────────────────────────
+
+    @staticmethod
+    def _csv_merge(existing: str, values, replace: bool) -> str:
+        """Merge/replace a comma-separated multi-value field, order-preserving,
+        de-duplicated.  `values` is a list of strings to set or add."""
+        wanted = [str(v).strip() for v in values if str(v).strip()]
+        if replace:
+            out = []
+            for v in wanted:
+                if v not in out:
+                    out.append(v)
+            return ",".join(out)
+        out = [p.strip() for p in (existing or "").split(",") if p.strip()]
+        for v in wanted:
+            if v not in out:
+                out.append(v)
+        return ",".join(out)
+
+    def bulk_set_student_multi(self, student_ids, field: str, values, replace: bool = False):
+        """Add (or replace) values in a comma-separated field (ensembles or
+        class_periods) for many students at once."""
+        if field not in ("ensembles", "class_periods"):
+            raise ValueError(f"Unsupported multi-value field: {field}")
+        with self._connect() as conn:
+            for sid in student_ids:
+                row = conn.execute(
+                    f"SELECT {field} FROM students WHERE id=?", (sid,)
+                ).fetchone()
+                current = row[field] if row else ""
+                merged = self._csv_merge(current, values, replace)
+                conn.execute(
+                    f"UPDATE students SET {field}=? WHERE id=?", (merged, sid)
+                )
+
+    def bulk_clear_student_multi(self, student_ids, field: str):
+        if field not in ("ensembles", "class_periods"):
+            raise ValueError(f"Unsupported multi-value field: {field}")
+        with self._connect() as conn:
+            for sid in student_ids:
+                conn.execute(f"UPDATE students SET {field}='' WHERE id=?", (sid,))
+
+    def carry_over_instruments(self, student_ids) -> int:
+        """For each given student, if their instrument is blank, copy it from the
+        same person's most recent prior record (matched by district student_id,
+        else by name).  Students rarely change instruments year to year.
+        Returns how many were filled in."""
+        filled = 0
+        with self._connect() as conn:
+            for sid in student_ids:
+                cur = conn.execute(
+                    """SELECT id, student_id, first_name, last_name,
+                              primary_instrument, secondary_instrument
+                       FROM students WHERE id=?""", (sid,)
+                ).fetchone()
+                if not cur:
+                    continue
+                if (cur["primary_instrument"] or "").strip():
+                    continue  # never overwrite an instrument that's already set
+                sid_str = (cur["student_id"] or "").strip()
+                prior = conn.execute(
+                    """SELECT primary_instrument, secondary_instrument
+                       FROM students
+                       WHERE id != ?
+                         AND ( (?!='' AND student_id=?)
+                               OR (LOWER(first_name)=LOWER(?) AND LOWER(last_name)=LOWER(?)) )
+                         AND primary_instrument IS NOT NULL
+                         AND TRIM(primary_instrument) != ''
+                       ORDER BY school_year DESC, id DESC LIMIT 1""",
+                    (cur["id"], sid_str, sid_str,
+                     cur["first_name"] or "", cur["last_name"] or "")
+                ).fetchone()
+                if prior:
+                    conn.execute(
+                        """UPDATE students
+                           SET primary_instrument=?, secondary_instrument=?
+                           WHERE id=?""",
+                        (prior["primary_instrument"], prior["secondary_instrument"], sid)
+                    )
+                    filled += 1
+        return filled
+
+    def update_student_instruments(self, student_id: int, primary=None, secondary=None):
+        """Set instrument fields only (used by the HS instrument-update import)."""
+        sets, params = [], []
+        if primary is not None:
+            sets.append("primary_instrument=?"); params.append(primary)
+        if secondary is not None:
+            sets.append("secondary_instrument=?"); params.append(secondary)
+        if not sets:
+            return
+        params.append(student_id)
+        with self._connect() as conn:
+            conn.execute(f"UPDATE students SET {', '.join(sets)} WHERE id=?", params)
+
+    def bulk_set_student_field(self, student_ids, field: str, value):
+        """Set a single-value field (primary_instrument / secondary_instrument)
+        on many students at once."""
+        if field not in ("primary_instrument", "secondary_instrument"):
+            raise ValueError(f"Unsupported field: {field}")
+        with self._connect() as conn:
+            for sid in student_ids:
+                conn.execute(
+                    f"UPDATE students SET {field}=? WHERE id=?", (value, sid)
+                )
+
+    def get_students_for_email(self, school_year=None, ensemble=None, period=None,
+                               instrument=None, include_inactive=False):
+        """Return active student rows matching the given filters.  Multi-value
+        fields (ensembles, class_periods) are matched by membership."""
+        sql = "SELECT * FROM students WHERE 1=1"
+        params = []
+        if not include_inactive:
+            sql += " AND is_active=1"
+        if school_year:
+            sql += " AND school_year=?"
+            params.append(school_year)
+        sql += " ORDER BY last_name, first_name"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+
+        def _has(csv_val, target):
+            return target in [p.strip() for p in (csv_val or "").split(",") if p.strip()]
+
+        out = []
+        for r in rows:
+            if ensemble and not _has(r["ensembles"], ensemble):
+                continue
+            if period and not _has(r["class_periods"], str(period)):
+                continue
+            if instrument:
+                prim = (r["primary_instrument"] or "").strip()
+                sec = (r["secondary_instrument"] or "").strip()
+                if instrument not in (prim, sec):
+                    continue
+            out.append(r)
+        return out
+
     # ─── Checkout CRUD ─────────────────────────────────────────────────────────
 
     def checkout_instrument(self, instrument_id: int, student_id: int,
                             student_name: str, date_assigned: str, notes: str = "",
-                            due_date: str = "") -> int:
+                            due_date: str = "", rental_type: str = "school_year") -> int:
         with self._connect() as conn:
             cur = conn.execute(
                 """INSERT INTO checkouts
                    (instrument_id, student_id, student_name, date_assigned, notes, due_date)
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 (instrument_id, student_id, student_name, date_assigned, notes, due_date)
+            )
+            checkout_id = cur.lastrowid
+        # Auto-add the instrument rental fee for this student so it shows up
+        # under Budget ▸ Student Fees (dedup keeps it to one per year; waive or
+        # remove it there if the instrument is the student's own).  rental_type
+        # is "school_year" ($75 default) or "summer" ($20 default).
+        if student_id:
+            try:
+                self._auto_add_rental_fee(student_id, date_assigned, rental_type)
+            except Exception:
+                pass
+        return checkout_id
+
+    def _auto_add_rental_fee(self, student_id: int, date_assigned: str,
+                             rental_type: str = "school_year"):
+        year = self.academic_year_of(date_assigned)
+        if rental_type == "summer":
+            name, amount, want = "Instrument Rental (Summer)", 20.0, "summer"
+        else:
+            name, amount, want = "Instrument Rental (School Year)", 75.0, "school year"
+        for t in self.get_fee_types():
+            n = t["name"] or ""
+            if n.lower().startswith("instrument rental") and want in n.lower():
+                name, amount = n, float(t["default_amount"] or amount)
+                break
+        self.ensure_student_fee(student_id, name, year, amount)
+
+    @staticmethod
+    def academic_year_of(date_str: str) -> str:
+        """Academic year label (Aug–Jul boundary) for a date."""
+        d = (date_str or "")[:10]
+        try:
+            y, m = int(d[:4]), int(d[5:7])
+        except (ValueError, IndexError):
+            from datetime import datetime as _dt
+            t = _dt.today(); y, m = t.year, t.month
+        start = y if m >= 8 else y - 1
+        return f"{start}-{start + 1}"
+
+    def checkout_item(self, student_id, student_name: str, item_description: str,
+                      date_assigned: str, due_date: str = "", notes: str = "") -> int:
+        """Check out a free-text item (mute, lyre, method book, etc.) that has no
+        inventory record.  student_id may be None for a non-student borrower
+        (para, another teacher); student_name then holds whatever was typed."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """INSERT INTO checkouts
+                   (instrument_id, student_id, student_name, item_description,
+                    date_assigned, notes, due_date)
+                   VALUES (NULL, ?, ?, ?, ?, ?, ?)""",
+                (student_id, student_name, item_description, date_assigned, notes, due_date)
             )
             return cur.lastrowid
 
@@ -710,11 +1189,19 @@ class Database:
             )
 
     def get_all_active_checkouts(self):
+        # LEFT JOIN so free-text "random item" checkouts (instrument_id IS NULL)
+        # still appear.  For those rows, fall back to the typed item_description.
         with self._connect() as conn:
             return conn.execute(
-                """SELECT c.*, i.description, i.category, i.barcode, i.district_no
+                """SELECT c.*,
+                          COALESCE(i.description, c.item_description) AS description,
+                          COALESCE(i.category,
+                                   CASE WHEN c.item_description IS NOT NULL
+                                        AND c.item_description != ''
+                                        THEN 'Other Item' END) AS category,
+                          i.barcode, i.district_no
                    FROM checkouts c
-                   JOIN instruments i ON i.id = c.instrument_id
+                   LEFT JOIN instruments i ON i.id = c.instrument_id
                    WHERE c.date_returned IS NULL
                    ORDER BY c.student_name"""
             ).fetchall()
@@ -756,6 +1243,372 @@ class Database:
     def delete_repair(self, repair_id: int):
         with self._connect() as conn:
             conn.execute("DELETE FROM repairs WHERE id=?", (repair_id,))
+
+    def get_pending_repairs(self):
+        """All not-yet-completed repairs (date_repaired blank), joined with the
+        instrument, for the technician printout / needs-repair export."""
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT r.*, i.category, i.description AS instrument_desc,
+                          i.brand, i.model, i.serial_no, i.barcode, i.district_no,
+                          i.condition AS instrument_condition, i.locker
+                   FROM repairs r
+                   LEFT JOIN instruments i ON i.id = r.instrument_id
+                   WHERE r.date_repaired IS NULL OR TRIM(r.date_repaired) = ''
+                   ORDER BY r.priority DESC, i.category, i.description"""
+            ).fetchall()
+
+    def get_instruments_needing_repair(self):
+        """One row per instrument that has at least one open (not-yet-repaired)
+        repair, with the open repairs aggregated.  Used by the Needs/Out-for-
+        Repair views and the technician export so each instrument appears once."""
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT i.id, i.category, i.description AS instrument_desc,
+                          i.brand, i.model, i.serial_no, i.barcode, i.district_no,
+                          i.condition AS instrument_condition, i.locker,
+                          COUNT(r.id) AS open_count,
+                          MAX(r.priority) AS max_priority,
+                          MAX(r.date_added) AS last_reported,
+                          GROUP_CONCAT(NULLIF(TRIM(r.description), ''), '  •  ') AS needs,
+                          MAX(COALESCE(NULLIF(TRIM(r.assigned_to), ''),
+                                       NULLIF(TRIM(r.location), ''), '')) AS shop
+                   FROM instruments i
+                   JOIN repairs r ON r.instrument_id = i.id
+                   WHERE r.date_repaired IS NULL OR TRIM(r.date_repaired) = ''
+                   GROUP BY i.id
+                   ORDER BY max_priority DESC, i.category, i.description"""
+            ).fetchall()
+
+    def get_open_repairs_for_instrument(self, instrument_id):
+        """The individual open repair records for one instrument (for the
+        edit/mark-repaired pickers)."""
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT * FROM repairs
+                   WHERE instrument_id=? AND (date_repaired IS NULL OR TRIM(date_repaired)='')
+                   ORDER BY date_added DESC""",
+                (instrument_id,)
+            ).fetchall()
+
+    def get_all_repairs(self):
+        """Every repair record joined with its instrument, for the repair-hub
+        history view and cost analysis."""
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT r.*, i.category, i.description AS instrument_desc,
+                          i.brand, i.model, i.serial_no, i.barcode, i.district_no,
+                          i.condition AS instrument_condition, i.locker,
+                          i.amount_paid, i.est_value, i.year_purchased
+                   FROM repairs r
+                   LEFT JOIN instruments i ON i.id = r.instrument_id
+                   ORDER BY r.date_added DESC"""
+            ).fetchall()
+
+    def get_repair_cost_summary(self):
+        """Per-instrument repair totals, ranked by total spent (desc), for the
+        'which instruments cost the most' report."""
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT i.id, i.category, i.description AS instrument_desc,
+                          i.brand, i.model, i.serial_no, i.barcode, i.district_no,
+                          i.condition AS instrument_condition,
+                          i.amount_paid, i.est_value, i.year_purchased,
+                          COUNT(r.id) AS repair_count,
+                          COALESCE(SUM(COALESCE(r.act_cost, 0)), 0) AS total_spent,
+                          MAX(COALESCE(r.date_repaired, r.date_added)) AS last_repair
+                   FROM instruments i
+                   JOIN repairs r ON r.instrument_id = i.id
+                   GROUP BY i.id
+                   ORDER BY total_spent DESC, repair_count DESC"""
+            ).fetchall()
+
+    def mark_repair_completed(self, repair_id: int, date_repaired: str):
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE repairs SET date_repaired=? WHERE id=?",
+                (date_repaired, repair_id)
+            )
+
+    def recover_repair_notes_from_checkins(self) -> int:
+        """One-time recovery: convert repair info that was buried in returned
+        check-in notes into real (pending) repair records.  Idempotent — each
+        source checkout is tagged, so re-running never duplicates.  Returns the
+        number of repair records created."""
+        created = 0
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT id, instrument_id, notes, date_returned, student_name
+                   FROM checkouts
+                   WHERE date_returned IS NOT NULL
+                     AND instrument_id IS NOT NULL
+                     AND notes IS NOT NULL AND TRIM(notes) != ''"""
+            ).fetchall()
+            for r in rows:
+                note = (r["notes"] or "").strip()
+                if "repair" not in note.lower():
+                    continue
+                marker = f"[recovered from check-in #{r['id']}]"
+                existing = conn.execute(
+                    "SELECT COUNT(*) FROM repairs WHERE instrument_id=? AND notes LIKE ?",
+                    (r["instrument_id"], f"%{marker}%")
+                ).fetchone()
+                if existing and existing[0]:
+                    continue
+                # Strip the "Condition at return: X." boilerplate for the summary
+                desc = note
+                if desc.lower().startswith("condition at return:"):
+                    parts = desc.split(".", 1)
+                    desc = parts[1].strip() if len(parts) > 1 and parts[1].strip() else note
+                who = (r["student_name"] or "").strip()
+                full_notes = note
+                if who:
+                    full_notes = f"Reported at check-in from {who}. {note}"
+                full_notes = f"{full_notes}\n{marker}"
+                conn.execute(
+                    """INSERT INTO repairs
+                       (instrument_id, priority, date_added, description, notes, date_repaired)
+                       VALUES (?, ?, ?, ?, ?, NULL)""",
+                    (r["instrument_id"], 1, r["date_returned"], desc[:250], full_notes)
+                )
+                created += 1
+            conn.commit()
+        return created
+
+    # ─── Budgeting ───────────────────────────────────────────────────────────────
+
+    FUNDING_SOURCES = ["Building", "ASB", "Boosters", "Other"]
+
+    @staticmethod
+    def school_year_bounds(school_year: str):
+        """('2025-2026') → ('2025-07-01', '2026-06-30')."""
+        try:
+            start = int(school_year.split("-")[0])
+        except (ValueError, AttributeError, IndexError):
+            from datetime import datetime as _dt
+            start = _dt.today().year
+        return f"{start}-07-01", f"{start + 1}-06-30"
+
+    @staticmethod
+    def current_school_year():
+        from datetime import datetime as _dt
+        t = _dt.today()
+        start = t.year if t.month >= 7 else t.year - 1
+        return f"{start}-{start + 1}"
+
+    def get_budget_categories(self, kind: str = None):
+        with self._connect() as conn:
+            if kind:
+                rows = conn.execute(
+                    "SELECT * FROM budget_categories WHERE kind=? ORDER BY name", (kind,)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM budget_categories ORDER BY kind, name").fetchall()
+        return rows
+
+    def add_budget_category(self, name: str, kind: str) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO budget_categories (name, kind) VALUES (?, ?)", (name, kind))
+            return cur.lastrowid
+
+    def delete_budget_category(self, cat_id: int):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM budget_categories WHERE id=?", (cat_id,))
+
+    def add_budget_transaction(self, data: dict) -> int:
+        cols = ["txn_date", "description", "category", "kind", "amount",
+                "funding_source", "student_id", "notes"]
+        vals = [data.get(c) for c in cols]
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"INSERT INTO budget_transactions ({','.join(cols)}) "
+                f"VALUES ({','.join('?' * len(cols))})", vals)
+            return cur.lastrowid
+
+    def update_budget_transaction(self, txn_id: int, data: dict):
+        cols = ["txn_date", "description", "category", "kind", "amount",
+                "funding_source", "student_id", "notes"]
+        set_clause = ", ".join(f"{c}=?" for c in cols)
+        with self._connect() as conn:
+            conn.execute(f"UPDATE budget_transactions SET {set_clause} WHERE id=?",
+                         [data.get(c) for c in cols] + [txn_id])
+
+    def delete_budget_transaction(self, txn_id: int):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM budget_transactions WHERE id=?", (txn_id,))
+
+    def get_budget_transactions(self, school_year: str):
+        """Manual transactions within a school year, plus auto-linked instrument
+        repair costs for that year (as read-only synthetic rows)."""
+        lo, hi = self.school_year_bounds(school_year)
+        with self._connect() as conn:
+            rows = [dict(r) for r in conn.execute(
+                """SELECT t.*, (s.first_name || ' ' || s.last_name) AS student_name
+                   FROM budget_transactions t
+                   LEFT JOIN students s ON s.id = t.student_id
+                   WHERE t.txn_date >= ? AND t.txn_date <= ?
+                   ORDER BY t.txn_date DESC""", (lo, hi)).fetchall()]
+            for r in rows:
+                r["source"] = "manual"
+            # Auto-linked repair expenses (actual costs) in the same window
+            reps = conn.execute(
+                """SELECT r.id, r.act_cost, r.date_repaired, r.date_added, r.description,
+                          i.description AS inst
+                   FROM repairs r LEFT JOIN instruments i ON i.id = r.instrument_id
+                   WHERE COALESCE(NULLIF(r.act_cost,0),0) > 0
+                     AND COALESCE(NULLIF(r.date_repaired,''), r.date_added) >= ?
+                     AND COALESCE(NULLIF(r.date_repaired,''), r.date_added) <= ?""",
+                (lo, hi)).fetchall()
+        for rp in reps:
+            rows.append({
+                "id": None, "source": "repair", "repair_id": rp["id"],
+                "txn_date": rp["date_repaired"] or rp["date_added"] or "",
+                "description": f"Repair: {rp['inst'] or ''} — {rp['description'] or ''}".strip(" —"),
+                "category": "Instrument Repair", "kind": "expense",
+                "amount": float(rp["act_cost"] or 0), "funding_source": "Building",
+                "student_id": None, "student_name": "", "notes": "",
+            })
+        rows.sort(key=lambda r: r.get("txn_date") or "", reverse=True)
+        return rows
+
+    def get_budget_summary(self, school_year: str):
+        """Totals by funding source and kind for the year."""
+        rows = self.get_budget_transactions(school_year)
+        summary = {}
+        for r in rows:
+            src = r.get("funding_source") or "Other"
+            d = summary.setdefault(src, {"expense": 0.0, "income": 0.0})
+            d[r.get("kind") or "expense"] += float(r.get("amount") or 0)
+        return summary
+
+    @staticmethod
+    def _fiscal_year_of(date_str: str):
+        d = (date_str or "")[:10]
+        try:
+            y, m = int(d[:4]), int(d[5:7])
+        except (ValueError, IndexError):
+            return None
+        start = y if m >= 7 else y - 1
+        return f"{start}-{start + 1}"
+
+    def _budget_activity_years(self):
+        """Fiscal years that actually have transactions or repair costs."""
+        years = set()
+        with self._connect() as conn:
+            for r in conn.execute("SELECT txn_date FROM budget_transactions "
+                                  "WHERE txn_date IS NOT NULL").fetchall():
+                fy = self._fiscal_year_of(r["txn_date"])
+                if fy:
+                    years.add(fy)
+            for r in conn.execute(
+                    "SELECT COALESCE(NULLIF(date_repaired,''), date_added) AS d FROM repairs "
+                    "WHERE COALESCE(NULLIF(act_cost,0),0) > 0").fetchall():
+                fy = self._fiscal_year_of(r["d"])
+                if fy:
+                    years.add(fy)
+        return years
+
+    def get_budget_school_years(self):
+        years = set(self._budget_activity_years())
+        cur = self.current_school_year()
+        years.add(cur)
+        start = int(cur.split("-")[0])
+        years.add(f"{start - 1}-{start}")   # also offer the previous fiscal year
+        return sorted(years, reverse=True)
+
+    def get_budget_default_year(self):
+        """Open on the most recent year that has activity — so repairs/expenses
+        show without the user hunting for the right year (fiscal 'current' is
+        often empty right after July 1)."""
+        activity = self._budget_activity_years()
+        return max(activity) if activity else self.current_school_year()
+
+    # ─── Student fees ────────────────────────────────────────────────────────────
+
+    def get_fee_types(self):
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM fee_types ORDER BY name").fetchall()
+
+    def add_fee_type(self, name: str, default_amount: float = 0) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO fee_types (name, default_amount) VALUES (?, ?)",
+                (name, default_amount))
+            return cur.lastrowid
+
+    def ensure_fee_type(self, name: str, default_amount: float = 0):
+        """Create the fee type if absent; update its default amount if present."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT id FROM fee_types WHERE name=?", (name,)).fetchone()
+            if row:
+                conn.execute("UPDATE fee_types SET default_amount=? WHERE id=?",
+                             (default_amount, row["id"]))
+                return row["id"]
+            cur = conn.execute("INSERT INTO fee_types (name, default_amount) VALUES (?, ?)",
+                               (name, default_amount))
+            return cur.lastrowid
+
+    def delete_fee_type(self, fee_id: int):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM fee_types WHERE id=?", (fee_id,))
+
+    def get_student_fees(self, fee_type: str, school_year: str):
+        """All student_fee rows for a fee type + year, joined with the student."""
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT sf.*, s.first_name, s.last_name, s.preferred_name, s.grade,
+                          s.ensembles, s.student_email, s.parent1_email, s.parent2_email
+                   FROM student_fees sf
+                   JOIN students s ON s.id = sf.student_id
+                   WHERE sf.fee_type=? AND sf.school_year=?
+                   ORDER BY s.last_name, s.first_name""",
+                (fee_type, school_year)).fetchall()
+
+    def ensure_student_fee(self, student_id, fee_type, school_year, amount, status="unpaid"):
+        """Create a fee row for a student if one doesn't already exist."""
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM student_fees WHERE student_id=? AND fee_type=? AND school_year=?",
+                (student_id, fee_type, school_year)).fetchone()
+            if existing:
+                return existing["id"]
+            cur = conn.execute(
+                """INSERT INTO student_fees (student_id, fee_type, school_year, amount, status)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (student_id, fee_type, school_year, amount, status))
+            return cur.lastrowid
+
+    def set_student_fee_status(self, fee_id, status, date_paid=None):
+        with self._connect() as conn:
+            conn.execute("UPDATE student_fees SET status=?, date_paid=? WHERE id=?",
+                         (status, date_paid, fee_id))
+
+    def delete_student_fee(self, fee_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM student_fees WHERE id=?", (fee_id,))
+
+    def get_unpaid_fee(self, fee_type, school_year):
+        """All students who still owe this fee (status 'unpaid')."""
+        return [dict(r) for r in self.get_student_fees(fee_type, school_year)
+                if r["status"] == "unpaid"]
+
+    def get_unpaid_fee_with_checkout(self, fee_type, school_year):
+        """Students who owe this fee (status 'unpaid') AND currently have an
+        instrument checked out — the set to nudge for payment."""
+        rows = self.get_student_fees(fee_type, school_year)
+        out = []
+        with self._connect() as conn:
+            for r in rows:
+                if r["status"] != "unpaid":
+                    continue
+                n = conn.execute(
+                    "SELECT COUNT(*) FROM checkouts WHERE student_id=? AND date_returned IS NULL",
+                    (r["student_id"],)).fetchone()[0]
+                if n > 0:
+                    out.append(dict(r))
+        return out
 
     # ─── Stats / Misc ──────────────────────────────────────────────────────────
 
@@ -1012,6 +1865,15 @@ class Database:
                 f"CASE WHEN lp.last_played IS NULL THEN 1 ELSE 0 END, "
                 f"lp.last_played {direction}"
             )
+        elif order_col == "title":
+            # Library-style: ignore a leading article (A / An / The) when sorting.
+            order_sql = (
+                "CASE "
+                "WHEN sm.title LIKE 'A ' || '%' THEN substr(sm.title, 3) "
+                "WHEN sm.title LIKE 'An ' || '%' THEN substr(sm.title, 4) "
+                "WHEN sm.title LIKE 'The ' || '%' THEN substr(sm.title, 5) "
+                "ELSE sm.title END COLLATE NOCASE " + direction
+            )
         else:
             order_sql = f"sm.{order_col} {direction}"
 
@@ -1139,6 +2001,63 @@ class Database:
                 "SELECT * FROM performances WHERE music_id=? ORDER BY performance_date DESC",
                 (music_id,)
             ).fetchall()
+
+    def get_performances_by_ensemble(self, ensemble: str = None):
+        """Performance history joined with the piece, optionally filtered to one
+        ensemble.  A performance may list several comma-separated ensembles
+        (combined performances), so filtering matches membership."""
+        sql = """SELECT p.*, sm.title, sm.composer, sm.arranger,
+                        sm.ensemble_type, sm.difficulty, sm.voicing
+                 FROM performances p
+                 JOIN sheet_music sm ON sm.id = p.music_id
+                 ORDER BY p.performance_date DESC, sm.title"""
+        with self._connect() as conn:
+            rows = conn.execute(sql).fetchall()
+        if not ensemble or ensemble == "All":
+            return rows
+        target = ensemble.strip()
+        out = []
+        for r in rows:
+            members = [e.strip() for e in (r["ensemble"] or "").split(",") if e.strip()]
+            if target in members:
+                out.append(r)
+        return out
+
+    def get_distinct_performance_ensembles(self):
+        """Individual ensemble names across all performances, splitting any
+        comma-separated combined entries."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT ensemble FROM performances "
+                "WHERE ensemble IS NOT NULL AND TRIM(ensemble) != ''"
+            ).fetchall()
+        seen = []
+        for r in rows:
+            for e in (r["ensemble"] or "").split(","):
+                e = e.strip()
+                if e and e not in seen:
+                    seen.append(e)
+        return sorted(seen)
+
+    def get_music_for_matching(self):
+        """Lightweight (id, title, composer) list of active pieces, for matching
+        program entries against the library."""
+        with self._connect() as conn:
+            return [dict(r) for r in conn.execute(
+                "SELECT id, title, composer, arranger, ensemble_type, voicing "
+                "FROM sheet_music WHERE is_active=1"
+            ).fetchall()]
+
+    def performance_exists(self, music_id: int, performance_date: str, ensemble: str) -> bool:
+        """Guard against importing the same program twice."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT 1 FROM performances
+                   WHERE music_id=? AND performance_date=?
+                     AND IFNULL(ensemble,'')=IFNULL(?,'') LIMIT 1""",
+                (music_id, performance_date, ensemble)
+            ).fetchone()
+        return bool(row)
 
     def update_performance(self, performance_id: int, data: dict):
         cols = ["performance_date", "ensemble", "event_name", "notes"]

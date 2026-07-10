@@ -20,6 +20,7 @@ ANTHROPIC_MODELS = [
     "claude-sonnet-4-6",
     "claude-opus-4-6",
     "claude-opus-4-7",
+    "claude-opus-4-8",
 ]
 
 _MAX_RETRIES = 10  # high — prefer waiting over giving up
@@ -140,7 +141,7 @@ def _get_anthropic_key(base_dir: str) -> str:
 
 
 def _query_anthropic(base_dir: str, model: str, user_prompt: str,
-                     system_prompt: str = None, on_retry=None) -> str:
+                     system_prompt: str = None, on_retry=None, max_tokens: int = 1024) -> str:
     """Send a text-only query via the Anthropic API."""
     try:
         from anthropic import Anthropic, RateLimitError, APIStatusError
@@ -156,7 +157,7 @@ def _query_anthropic(base_dir: str, model: str, user_prompt: str,
     client = Anthropic(api_key=api_key)
     kwargs = dict(
         model=model,
-        max_tokens=1024,
+        max_tokens=max_tokens,
         messages=[{"role": "user", "content": user_prompt}],
     )
     if system_prompt:
@@ -381,19 +382,22 @@ def _make_client(api_key: str):
     return OpenAI(base_url=ENDPOINT, api_key=api_key)
 
 
-def query(base_dir: str, user_prompt: str, system_prompt: str = None, on_retry=None) -> str:
+def query(base_dir: str, user_prompt: str, system_prompt: str = None, on_retry=None,
+          max_tokens: int = 1024) -> str:
     """
     Send a single query to the LLM and return the response text.
 
     Automatically routes to Claude Proxy, Anthropic API, or GitHub Models
     based on settings. Retries up to _MAX_RETRIES times on rate-limit errors.
+    max_tokens caps the response length (larger for big structured outputs).
     """
     if _is_proxy_mode(base_dir):
         return _query_proxy(base_dir, user_prompt, system_prompt, on_retry)
 
     model = _get_model(base_dir)
     if _is_anthropic_model(model):
-        return _query_anthropic(base_dir, model, user_prompt, system_prompt, on_retry)
+        return _query_anthropic(base_dir, model, user_prompt, system_prompt, on_retry,
+                                max_tokens=max_tokens)
 
     from openai import RateLimitError, APIStatusError
 
@@ -418,7 +422,7 @@ def query(base_dir: str, user_prompt: str, system_prompt: str = None, on_retry=N
                 model=model,
                 messages=messages,
                 temperature=0.3,
-                max_tokens=1024,
+                max_tokens=max_tokens,
             )
             return response.choices[0].message.content
 

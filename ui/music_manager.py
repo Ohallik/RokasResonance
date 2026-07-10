@@ -14,6 +14,17 @@ from tkinter import filedialog, messagebox
 from datetime import datetime
 from ui.theme import muted_fg, fs, bind_copy_menu
 
+def _display_title(t: str) -> str:
+    """Library-catalog style: move a leading article to the end.
+    'A Little Bit of Sugar' → 'Little Bit of Sugar, A'; 'The Birth' → 'Birth, The'."""
+    t = (t or "").strip()
+    for art in ("A", "An", "The"):
+        prefix = art + " "
+        if t[:len(prefix)].lower() == prefix.lower() and len(t) > len(prefix):
+            return f"{t[len(prefix):].strip()}, {art}"
+    return t
+
+
 # MusicPics folder names to search when resolving source_file paths
 _MUSIC_PICS_FOLDERS = ["MusicPics", "music_pics", "musicpics"]
 # Program directory (RokasResonance/) — used to locate shared MusicPics folder
@@ -215,8 +226,9 @@ class MusicManager(ttk.Frame):
         self.db = db
         self._main_db = db   # always the profile's own DB
         self.base_dir = base_dir
-        self.mode = mode  # "band" or "choir"
-        if mode == "band":
+        self.mode = mode  # "band", "orchestra", or "choir"
+        # Orchestra shares the band (instrumental) layout and external-source feature.
+        if mode in ("band", "orchestra"):
             self._show_external_var = tk.BooleanVar(value=False)
 
         # Pick column config for this mode
@@ -292,10 +304,18 @@ class MusicManager(ttk.Frame):
         ttk.Separator(toolbar, orient=VERTICAL).pack(
             side=LEFT, fill=Y, padx=8, pady=4)
 
+        ttk.Button(toolbar, text="📄 Import Program", bootstyle=(INFO, OUTLINE),
+                   command=self._import_program).pack(side=LEFT, padx=2, pady=6)
+        ttk.Button(toolbar, text="🎼 Performances by Ensemble", bootstyle=(SUCCESS, OUTLINE),
+                   command=self._show_ensemble_performances).pack(side=LEFT, padx=2, pady=6)
+
+        ttk.Separator(toolbar, orient=VERTICAL).pack(
+            side=LEFT, fill=Y, padx=8, pady=4)
+
         ttk.Button(toolbar, text="Refresh", bootstyle=(SECONDARY, OUTLINE),
                    command=self.refresh).pack(side=LEFT, padx=2, pady=6)
 
-        if self.mode == "band":
+        if self.mode in ("band", "orchestra"):
             ttk.Separator(toolbar, orient=VERTICAL).pack(
                 side=LEFT, fill=Y, padx=8, pady=4)
             ttk.Checkbutton(
@@ -846,7 +866,7 @@ class MusicManager(ttk.Frame):
         for row in rows:
             if self.mode == "choir":
                 values = (
-                    row.get("title") or "",
+                    _display_title(row.get("title") or ""),
                     row.get("composer") or "",
                     row.get("arranger") or "",
                     row.get("voicing") or "",
@@ -861,7 +881,7 @@ class MusicManager(ttk.Frame):
                 )
             else:
                 values = (
-                    row["title"] or "",
+                    _display_title(row["title"] or ""),
                     row["composer"] or "",
                     row["arranger"] or "",
                     row["ensemble_type"] or "",
@@ -1124,6 +1144,195 @@ class MusicManager(ttk.Frame):
             return
         self.db.delete_performance(perf_id)
         self._load_performances(self._selected_id)
+
+    # ───────────────────────────── Program import + ensemble overview ──────
+
+    def _import_program(self):
+        from tkinter import filedialog
+        from llm_client import is_configured
+        if not is_configured(self.base_dir):
+            Messagebox.show_warning(
+                "Importing a program uses AI to read it, which needs an LLM configured "
+                "in Settings ▸ LLM Configuration.",
+                title="LLM Not Configured", parent=self.winfo_toplevel())
+            return
+        paths = filedialog.askopenfilenames(
+            title="Select one or more concert programs (PDF, Publisher, or image)",
+            parent=self.winfo_toplevel(),
+            filetypes=[("Programs", "*.pdf *.pub *.png *.jpg *.jpeg *.tif *.tiff"),
+                       ("PDF", "*.pdf"), ("Publisher", "*.pub"),
+                       ("Images", "*.png *.jpg *.jpeg *.tif *.tiff"),
+                       ("All files", "*.*")],
+        )
+        paths = list(paths)
+        if not paths:
+            return
+        bad = [p for p in paths if p.lower().endswith((".pptx", ".docx", ".doc"))]
+        if bad:
+            Messagebox.show_warning(
+                "Word/PowerPoint files can't be read. Export them to PDF first, then import.",
+                title="Unsupported File", parent=self.winfo_toplevel())
+            return
+
+        # The repertoire is almost always on page 1; scanning just that page is
+        # much faster than sending every page to the AI.
+        ans = Messagebox.yesno(
+            f"Scan only the FIRST page of each program?\n\n"
+            f"({len(paths)} file(s) selected.) The first page usually lists all the "
+            "repertoire, and scanning one page each is much faster.\n\n"
+            "Choose 'No' to scan whole programs (slower — only if pieces are on later pages).",
+            title="Program Scan Options", parent=self.winfo_toplevel())
+        if ans not in ("Yes", "No"):
+            return
+        max_pages = 1 if ans == "Yes" else 20
+
+        from ui.program_importer import ProgramImportDialog
+
+        def _done():
+            self.refresh()
+            if self._selected_id:
+                self._load_performances(self._selected_id)
+        dlg = ProgramImportDialog(self.winfo_toplevel(), self.db, self.base_dir,
+                                  paths, mode=self.mode, on_done=_done, max_pages=max_pages)
+        self.wait_window(dlg)
+
+    def _show_ensemble_performances(self):
+        from datetime import datetime
+        from ui.ensembles import progression_levels
+
+        def _sy_of(date_str):
+            """School-year label for a performance date (Aug–Jul)."""
+            try:
+                dt = datetime.strptime((date_str or "")[:10], "%Y-%m-%d")
+            except ValueError:
+                return ""
+            return f"{dt.year}-{dt.year + 1}" if dt.month >= 8 else f"{dt.year - 1}-{dt.year}"
+
+        def _shift_sy(sy, k):
+            try:
+                start = int(sy.split("-")[0])
+                return f"{start - k}-{start - k + 1}"
+            except (ValueError, IndexError):
+                return sy
+
+        def _current_sy():
+            t = datetime.today()
+            return f"{t.year}-{t.year + 1}" if t.month >= 8 else f"{t.year - 1}-{t.year}"
+
+        def _members(row):
+            return [e.strip() for e in (row["ensemble"] or "").split(",") if e.strip()]
+
+        levels = progression_levels(self.mode)
+
+        win = ttk.Toplevel(self.winfo_toplevel())
+        win.title("Performances by Ensemble — Roka's Resonance")
+        win.resizable(True, True)
+        win.lift()
+
+        hdr = ttk.Frame(win, bootstyle=SUCCESS)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text="🎼  Performances by Ensemble", font=("Segoe UI", 13, "bold"),
+                  bootstyle=(INVERSE, SUCCESS)).pack(pady=10, padx=16, anchor=W)
+
+        bar = ttk.Frame(win)
+        bar.pack(fill=X, padx=14, pady=(10, 2))
+        ttk.Label(bar, text="Ensemble:", font=("Segoe UI", 9, "bold")).pack(side=LEFT, padx=(0, 6))
+        ens_var = tk.StringVar(value="All")
+        ensembles = ["All"] + self.db.get_distinct_performance_ensembles()
+        combo = ttk.Combobox(bar, textvariable=ens_var, values=ensembles,
+                             state="readonly", width=26)
+        combo.pack(side=LEFT)
+        count_lbl = ttk.Label(bar, text="", foreground="#666")
+        count_lbl.pack(side=RIGHT)
+
+        bar2 = ttk.Frame(win)
+        bar2.pack(fill=X, padx=14, pady=(0, 2))
+        cohort_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            bar2, variable=cohort_var, bootstyle=SUCCESS,
+            text="Cohort view — what this group's current members have performed in prior years",
+        ).pack(side=LEFT)
+        ttk.Label(bar2, text="  Their current year:", font=("Segoe UI", 8)).pack(side=LEFT)
+        # Years available from history + the current school year
+        yrs = sorted({_sy_of(r["performance_date"])
+                      for r in self.db.get_performances_by_ensemble("All")
+                      if _sy_of(r["performance_date"])} | {_current_sy()}, reverse=True)
+        year_var = tk.StringVar(value=_current_sy() if _current_sy() in yrs else (yrs[0] if yrs else ""))
+        ttk.Combobox(bar2, textvariable=year_var, values=yrs, state="readonly",
+                     width=12).pack(side=LEFT, padx=(4, 0))
+
+        note = ttk.Label(win, text="", font=("Segoe UI", 8), foreground="#666",
+                         wraplength=880, justify=LEFT)
+        note.pack(anchor=W, padx=14, pady=(2, 4))
+
+        frame = ttk.Frame(win)
+        frame.pack(fill=BOTH, expand=True, padx=14, pady=6)
+        cols = ("Date", "SchoolYr", "Title", "Composer", "Ensemble", "Event", "Difficulty")
+        sb = ttk.Scrollbar(frame, orient=VERTICAL)
+        tree = ttk.Treeview(frame, columns=cols, show="headings",
+                            yscrollcommand=sb.set, bootstyle=SUCCESS)
+        sb.config(command=tree.yview)
+        sb.pack(side=RIGHT, fill=Y)
+        tree.pack(fill=BOTH, expand=True)
+        headers = {"SchoolYr": "School Yr"}
+        for c, w in zip(cols, [90, 80, 230, 140, 150, 150, 60]):
+            tree.heading(c, text=headers.get(c, c), anchor=W)
+            tree.column(c, width=w, anchor=W, stretch=c in ("Title", "Event"))
+
+        def _insert(rows):
+            for r in rows:
+                tree.insert("", "end", values=(
+                    r["performance_date"] or "",
+                    _sy_of(r["performance_date"]),
+                    _display_title(r["title"] or ""),
+                    r["composer"] or "",
+                    r["ensemble"] or "",
+                    r["event_name"] or "",
+                    r["difficulty"] or r["voicing"] or "",
+                ))
+
+        def _reload(*_):
+            tree.delete(*tree.get_children())
+            ens = ens_var.get()
+            all_rows = self.db.get_performances_by_ensemble("All")
+
+            if cohort_var.get() and ens != "All" and ens in levels:
+                # Progression cohort: walk this level back one step per prior year.
+                y0 = year_var.get()
+                L = levels.index(ens)
+                chain = [(levels[L - k], _shift_sy(y0, k)) for k in range(L + 1)]
+                wanted = {(lvl, yr) for lvl, yr in chain}
+                rows = [r for r in all_rows
+                        if any((lvl in _members(r) and _sy_of(r["performance_date"]) == yr)
+                               for lvl, yr in wanted)]
+                rows.sort(key=lambda r: r["performance_date"] or "", reverse=True)
+                desc = "  →  ".join(f"{lvl} ({yr})" for lvl, yr in chain)
+                note.config(text=f"Showing what {ens} members in {y0} have performed across "
+                                 f"their progression:  {desc}")
+            elif cohort_var.get() and ens != "All":
+                # Non-leveled (Jazz, Other): its own history, most recent first.
+                rows = [r for r in all_rows if ens in _members(r)]
+                rows.sort(key=lambda r: r["performance_date"] or "", reverse=True)
+                note.config(text=f"Showing all {ens} performances (most recent first) — "
+                                 f"check a current member hasn't already played a piece.")
+            else:
+                rows = self.db.get_performances_by_ensemble(ens)  # newest first
+                note.config(text="See everything an ensemble has performed — handy for spotting "
+                                 "repertoire gaps. Tick 'Cohort view' to trace a group's history "
+                                 "back through Entry → Intermediate → Advanced.")
+
+            _insert(rows)
+            count_lbl.config(text=f"{len(rows)} performance(s)")
+
+        combo.bind("<<ComboboxSelected>>", _reload)
+        cohort_var.trace_add("write", lambda *a: _reload())
+        year_var.trace_add("write", lambda *a: _reload())
+        _reload()
+
+        ttk.Button(win, text="Close", bootstyle=(SECONDARY, OUTLINE),
+                   command=win.destroy).pack(pady=(0, 12))
+        from ui.theme import fit_window
+        fit_window(win, 960, 620)
 
     # ──────────────────────────────────────────────── Pagination ──────────
 

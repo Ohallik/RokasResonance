@@ -18,7 +18,8 @@ from reportlab.platypus import (
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 
-SCHOOL_NAME   = "Chinook Middle School Band"
+# Fallback defaults, used only when the profile's Settings leave these blank.
+SCHOOL_NAME   = "Chinook Middle School"
 DISTRICT_NAME = "Bellevue School District"
 MAINT_YEAR    = "$75"
 MAINT_SUMMER  = "$20"
@@ -145,14 +146,14 @@ def _tbl(data, col_widths, underline_cols=(), top_pad=3, bot_pad=2):
 
 # ── Info rows (matching Charms form line by line) ─────────────────────────────
 
-def _row_student(student_name, grade, s):
-    # STUDENT'S NAME ___  School Chinook Middle School Band  Grade ___
+def _row_student(student_name, grade, s, school_name=SCHOOL_NAME):
+    # STUDENT'S NAME ___  School <school_name>  Grade ___
     cw = [1.3*inch, 1.85*inch, 0.55*inch, 1.95*inch, 0.5*inch, 0.85*inch]
     return _tbl([
         _p("<b>STUDENT'S NAME</b>",   s["b10"]),
         _p(student_name,               s["n10"]),
         _p("<b>School</b>",           s["b10"]),
-        _p(SCHOOL_NAME,                s["n10"]),
+        _p(school_name,                s["n10"]),
         _p("<b>Grade</b>",            s["b10"]),
         _p(grade,                      s["n10"]),
     ], cw, underline_cols=(1, 5), top_pad=6)
@@ -325,7 +326,8 @@ def _sig_line(label, s):
 
 # ── Main entry points ─────────────────────────────────────────────────────────
 
-def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: str) -> str:
+def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: str,
+                       school_name: str = None, district_name: str = None) -> str:
     """
     Generate a Bellevue School District Equipment Loan Form PDF matching
     the Charms single-page layout.
@@ -334,7 +336,13 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
                         phone, parent1_name, date_assigned
     instrument_data keys: description, serial_no, barcode, brand, condition,
                           est_value
+
+    school_name / district_name: pulled from the teacher's Settings by the
+    caller.  Fall back to the module defaults when blank so older callers and
+    empty settings still produce a sensible form.
     """
+    school_name = (school_name or "").strip() or SCHOOL_NAME
+    district_name = (district_name or "").strip() or DISTRICT_NAME
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     doc = SimpleDocTemplate(
@@ -398,13 +406,13 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     accessories = _get_accessories(description)
 
     # ── Title ─────────────────────────────────────────────────────────────
-    story.append(_p(f"{DISTRICT_NAME} Equipment Loan Form", s["title"]))
+    story.append(_p(f"{district_name} Equipment Loan Form", s["title"]))
     story.append(Spacer(1, 4))
     story.append(HRFlowable(width="100%", thickness=1.5, color=colors.black))
     story.append(Spacer(1, 4))
 
     # ── Student / Instrument Info ──────────────────────────────────────────
-    story.append(_row_student(student_name, grade, s))
+    story.append(_row_student(student_name, grade, s, school_name=school_name))
     story.append(_row_address(full_address, phone, parent, s, parent_style))
     story.append(_row_instrument(description, serial_no, barcode, s))
     story.append(_row_make(brand, condition, est_value, s))
@@ -504,10 +512,30 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
         if not checkout:
             raise ValueError(f"Checkout {checkout_id} not found")
 
-        instrument = conn.execute(
-            "SELECT * FROM instruments WHERE id=?",
-            (checkout["instrument_id"],)
-        ).fetchone()
+        instrument = None
+        if checkout["instrument_id"]:
+            instrument = conn.execute(
+                "SELECT * FROM instruments WHERE id=?",
+                (checkout["instrument_id"],)
+            ).fetchone()
+
+    if not instrument:
+        raise ValueError(
+            "This checkout is a free-text item with no inventory record, "
+            "so a loan form cannot be generated for it."
+        )
+
+    # Pull the school/district name from the profile's Settings so the form
+    # prints exactly what the teacher entered (fixes the old hard-coded
+    # "Chinook Middle School Band" that broke non-band accounts).
+    school_name = district_name = None
+    try:
+        from ui.settings_dialog import load_settings
+        teacher = (load_settings(base_dir).get("teacher") or {})
+        school_name = teacher.get("school_name")
+        district_name = teacher.get("school_district")
+    except Exception:
+        pass
 
     safe_name = "".join(
         c for c in (checkout["student_name"] or "unknown")
@@ -518,4 +546,5 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
     out_dir   = os.path.join(base_dir, "checkout_forms")
     out_path  = os.path.join(out_dir, filename)
 
-    return generate_loan_form(dict(checkout), dict(instrument), out_path)
+    return generate_loan_form(dict(checkout), dict(instrument), out_path,
+                              school_name=school_name, district_name=district_name)

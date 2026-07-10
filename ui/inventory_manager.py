@@ -13,7 +13,7 @@ from ui.theme import muted_fg, fs, bind_copy_menu
 
 TREEVIEW_COLS = (
     "status", "category", "description", "brand", "model",
-    "barcode", "district_no", "serial_no", "condition",
+    "barcode", "serial_no", "condition",
     "checked_out_to", "est_value"
 )
 COL_HEADERS = {
@@ -23,7 +23,6 @@ COL_HEADERS = {
     "brand":         "Brand",
     "model":         "Model",
     "barcode":       "Barcode",
-    "district_no":   "District #",
     "serial_no":     "Serial #",
     "condition":     "Condition",
     "checked_out_to": "Assigned To",
@@ -35,8 +34,7 @@ COL_WIDTHS = {
     "description":   180,
     "brand":         90,
     "model":         90,
-    "barcode":       80,
-    "district_no":   80,
+    "barcode":       90,
     "serial_no":     110,
     "condition":     70,
     "checked_out_to": 150,
@@ -45,10 +43,11 @@ COL_WIDTHS = {
 
 
 class InventoryManager(ttk.Frame):
-    def __init__(self, parent, db, base_dir: str):
+    def __init__(self, parent, db, base_dir: str, on_checkouts=None):
         super().__init__(parent)
         self.db = db
         self.base_dir = base_dir
+        self._on_checkouts = on_checkouts
         self._all_rows = []
         self._selected_id = None
         self._sort_col = "category"
@@ -66,6 +65,30 @@ class InventoryManager(ttk.Frame):
         self._load_col_prefs()
         self._apply_col_visibility()
         self.refresh()
+        self.after(400, self._maybe_recover_repairs)
+
+    def _maybe_recover_repairs(self):
+        """One-time: rescue repair info that older check-ins buried in returned
+        checkout notes and turn it into visible pending repair records."""
+        flag = os.path.join(self.base_dir, ".repairs_recovered")
+        if os.path.exists(flag):
+            return
+        try:
+            n = self.db.recover_repair_notes_from_checkins()
+        except Exception:
+            n = 0
+        try:
+            with open(flag, "w") as f:
+                f.write("done")
+        except Exception:
+            pass
+        if n:
+            self.refresh()
+            Messagebox.show_info(
+                f"Recovered {n} repair note(s) that earlier check-ins had saved but "
+                f"never displayed.\n\nThey are now listed as pending repairs — see the "
+                f"Repairs tab, or use '🧾 Repairs Needed' to print them for your technician.",
+                title="Repair Notes Recovered", parent=self.winfo_toplevel())
 
     # ─────────────────────────────────────────────────────────────── Build UI ──
 
@@ -74,29 +97,27 @@ class InventoryManager(ttk.Frame):
         toolbar = ttk.Frame(self, bootstyle=LIGHT)
         toolbar.pack(fill=X, padx=0, pady=0)
 
-        # ── Group 1: single-instrument actions ────────────────────────────
-        ttk.Button(toolbar, text="➕ Add Instrument", bootstyle=SUCCESS,
+        # ── Group 1: core actions ─────────────────────────────────────────
+        ttk.Button(toolbar, text="➕", bootstyle=SUCCESS, width=3,
                    command=self._add_instrument).pack(side=LEFT, padx=6, pady=6)
         ttk.Button(toolbar, text="✏️ Edit", bootstyle=PRIMARY,
                    command=self._edit_instrument).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="📤 Check Out", bootstyle=WARNING,
-                   command=self._checkout).pack(side=LEFT, padx=2, pady=6)
+                   command=self._open_checkout_chooser).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="📥 Check In", bootstyle=INFO,
-                   command=self._checkin).pack(side=LEFT, padx=2, pady=6)
+                   command=self._open_checkin_chooser).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="📄 Generate Form", bootstyle=PRIMARY,
                    command=self._generate_form).pack(side=LEFT, padx=2, pady=6)
 
         ttk.Separator(toolbar, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=4)
 
-        # ── Group 2: bulk / special actions ───────────────────────────────
-        ttk.Button(toolbar, text="📦 Bulk Check Out/In", bootstyle=(WARNING, OUTLINE),
-                   command=self._bulk_checkout).pack(side=LEFT, padx=2, pady=6)
-        ttk.Button(toolbar, text="🔧 Add Repair", bootstyle=SECONDARY,
-                   command=self._add_repair).pack(side=LEFT, padx=2, pady=6)
-        ttk.Button(toolbar, text="📋 Upload Invoice", bootstyle=SECONDARY,
-                   command=self._upload_invoice).pack(side=LEFT, padx=2, pady=6)
-        ttk.Button(toolbar, text="📊 Export Repairs", bootstyle=SECONDARY,
-                   command=self._export_repairs).pack(side=LEFT, padx=2, pady=6)
+        # ── Group 2: repair hub + exports ─────────────────────────────────
+        ttk.Button(toolbar, text="📋 Checkouts", bootstyle=(WARNING, OUTLINE),
+                   command=self._show_checkouts).pack(side=LEFT, padx=2, pady=6)
+        ttk.Button(toolbar, text="🔧 Repair", bootstyle=SECONDARY,
+                   command=self._open_repair_hub).pack(side=LEFT, padx=2, pady=6)
+        ttk.Button(toolbar, text="📊 Exports ▾", bootstyle=SECONDARY,
+                   command=self._open_exports_menu).pack(side=LEFT, padx=2, pady=6)
 
         ttk.Separator(toolbar, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=4)
 
@@ -117,7 +138,7 @@ class InventoryManager(ttk.Frame):
 
         ttk.Label(filter_bar, text="Status:").pack(side=LEFT, padx=(0, 4))
         ttk.Combobox(filter_bar, textvariable=self._filter_status,
-                     values=["All", "Available", "Checked Out"],
+                     values=["All", "Available", "Checked Out", "On Loan"],
                      state="readonly", width=14
                      ).pack(side=LEFT, padx=(0, 10))
         self._filter_status.trace_add("write", lambda *_: self._apply_filters())
@@ -183,6 +204,7 @@ class InventoryManager(ttk.Frame):
 
         self.tree.tag_configure("available", foreground="#1a7a1a")
         self.tree.tag_configure("checkedout", foreground="#8B4000")
+        self.tree.tag_configure("onloan", foreground="#1f5fbf")
         self.tree.tag_configure("inactive", foreground="#AAAAAA")
 
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
@@ -229,7 +251,6 @@ class InventoryManager(ttk.Frame):
             ("Brand", "brand"),
             ("Model", "model"),
             ("Barcode", "barcode"),
-            ("District #", "district_no"),
             ("Serial #", "serial_no"),
             ("Condition", "condition"),
             ("Status", "_status"),
@@ -483,7 +504,12 @@ class InventoryManager(ttk.Frame):
         for row in rows:
             status = row["status"]
             is_active = row["is_active"] if "is_active" in row.keys() else 1
-            tag = "available" if status == "Available" else "checkedout"
+            if status == "Available":
+                tag = "available"
+            elif status == "On Loan":
+                tag = "onloan"
+            else:
+                tag = "checkedout"
             if not is_active:
                 tag = "inactive"
 
@@ -494,13 +520,12 @@ class InventoryManager(ttk.Frame):
                 est_str = str(est or "")
 
             values = (
-                "●" if status == "Available" else "◉",
+                "●" if status == "Available" else ("⇄" if status == "On Loan" else "◉"),
                 row["category"] or "",
                 row["description"] or "",
                 row["brand"] or "",
                 row["model"] or "",
-                row["barcode"] or "",
-                row["district_no"] or "",
+                row["barcode"] or row["district_no"] or "",
                 row["serial_no"] or "",
                 row["condition"] or "",
                 row["checked_out_to"] or "",
@@ -559,16 +584,34 @@ class InventoryManager(ttk.Frame):
         if not instrument:
             return
 
-        # Get current checkout
-        active = self.db.get_active_checkout(instrument_id)
-        status = "Checked Out" if active else "Available"
-        checked_out_to = active["student_name"] if active else ""
-        checkout_date = active["date_assigned"] if active else ""
+        # Current status: on loan takes precedence, then (possibly several) checkouts
+        loan = self.db.get_active_loan(instrument_id)
+        actives = [dict(a) for a in self.db.get_active_checkouts_for_instrument(instrument_id)]
+        if loan:
+            status = "On Loan"
+            parts = [loan["school"] or "Another school"]
+            if loan["contact_name"]:
+                parts.append(loan["contact_name"])
+            checked_out_to = " — ".join(parts)
+            contact_bits = [b for b in (loan["contact_email"], loan["contact_phone"]) if b]
+            if contact_bits:
+                checked_out_to += "  (" + ", ".join(contact_bits) + ")"
+            checkout_date = loan["date_out"] or ""
+        elif actives:
+            status = "Checked Out"
+            checked_out_to = ", ".join(a["student_name"] or "?" for a in actives)
+            checkout_date = actives[0]["date_assigned"] or ""
+        else:
+            status = "Available"
+            checked_out_to = ""
+            checkout_date = ""
 
         row = dict(instrument)
         row["_status"] = status
         row["checked_out_to"] = checked_out_to
         row["checkout_date"] = checkout_date
+        # Barcode and District # are the same identifier — show whichever is set.
+        row["barcode"] = row.get("barcode") or row.get("district_no") or ""
 
         for key, lbl in self._detail_labels.items():
             val = row.get(key, "")
@@ -585,10 +628,8 @@ class InventoryManager(ttk.Frame):
         # Color status label
         status_lbl = self._detail_labels.get("_status")
         if status_lbl:
-            status_lbl.config(
-                foreground="#1a7a1a" if status == "Available" else "#8B4000",
-                font=("Segoe UI", 8, "bold")
-            )
+            color = {"Available": "#1a7a1a", "On Loan": "#1f5fbf"}.get(status, "#8B4000")
+            status_lbl.config(foreground=color, font=("Segoe UI", 8, "bold"))
 
         self._load_history(instrument_id)
         self._load_repairs(instrument_id)
@@ -668,48 +709,261 @@ class InventoryManager(ttk.Frame):
         self.refresh()
         self._load_detail(iid)
 
-    def _checkout(self):
-        iid = self._get_selected_instrument()
-        if iid is None:
-            return
-        active = self.db.get_active_checkout(iid)
-        if active:
+    # ── Check Out / Check In (chooser → single scan, bulk, or item) ────────────
+
+    def _do_single_checkout(self, iid):
+        # Blocked entirely while the instrument is out on loan to another school.
+        loan = self.db.get_active_loan(iid)
+        if loan:
             Messagebox.show_warning(
-                f"This instrument is already checked out to {active['student_name']}.\n"
-                "Check it in first before checking it out again.",
-                title="Already Checked Out", parent=self.winfo_toplevel()
+                f"This instrument is on loan to {loan['school']} and is not available "
+                f"for local checkout.\n\nReturn it from loan first.",
+                title="On Loan", parent=self.winfo_toplevel()
             )
             return
+        # An instrument can be checked out to more than one person; confirm first.
+        active = self.db.get_active_checkouts_for_instrument(iid)
+        if active:
+            names = ", ".join(a["student_name"] or "?" for a in active)
+            if Messagebox.yesno(
+                f"This instrument is already checked out to: {names}.\n\n"
+                "Check it out to an additional person as well?",
+                title="Already Checked Out", parent=self.winfo_toplevel()
+            ) != "Yes":
+                return
         from ui.checkout_dialog import CheckoutDialog
         dlg = CheckoutDialog(self.winfo_toplevel(), self.db, instrument_id=iid, mode="checkout")
         self.wait_window(dlg)
         self.refresh()
         self._load_detail(iid)
 
-    def _checkin(self):
-        iid = self._get_selected_instrument()
-        if iid is None:
+    def _do_single_checkin(self, iid):
+        # On loan → offer to return the loan instead.
+        loan = self.db.get_active_loan(iid)
+        if loan:
+            if Messagebox.yesno(
+                f"This instrument is on loan to {loan['school']}.\n\n"
+                "Mark it as returned from loan?",
+                title="Return from Loan", parent=self.winfo_toplevel()) == "Yes":
+                from datetime import datetime as _dt
+                self.db.return_loan(loan["id"], _dt.today().strftime("%Y-%m-%d"))
+                self.refresh()
+                self._load_detail(iid)
             return
-        active = self.db.get_active_checkout(iid)
+
+        active = [dict(a) for a in self.db.get_active_checkouts_for_instrument(iid)]
         if not active:
             Messagebox.show_warning(
                 "This instrument is not currently checked out.",
                 title="Not Checked Out", parent=self.winfo_toplevel()
             )
             return
+        # If several people have it, choose which checkout to return.
+        checkout = active[0] if len(active) == 1 else self._pick_active_checkout(active, "check in")
+        if not checkout:
+            return
         from ui.checkout_dialog import CheckoutDialog
         dlg = CheckoutDialog(self.winfo_toplevel(), self.db, instrument_id=iid,
-                             mode="checkin", checkout_data=dict(active))
+                             mode="checkin", checkout_data=checkout)
         self.wait_window(dlg)
         self.refresh()
         self._load_detail(iid)
 
-    def _bulk_checkout(self):
-        from ui.bulk_checkout_dialog import BulkCheckoutDialog
-        dlg = BulkCheckoutDialog(self.winfo_toplevel(), self.db, self.base_dir,
-                                 refresh_callback=self.refresh)
+    def _pick_active_checkout(self, active, verb):
+        """Choose one of several active checkouts. Returns a checkout dict or None."""
+        win = ttk.Toplevel(self.winfo_toplevel())
+        win.title(f"Which checkout to {verb}?")
+        win.grab_set()
+        ttk.Label(win, text=f"This instrument is checked out to {len(active)} people.\n"
+                            f"Choose which one to {verb}:", font=("Segoe UI", 9),
+                  justify=LEFT).pack(anchor=W, padx=16, pady=(14, 6))
+        lb = tk.Listbox(win, font=("Segoe UI", 9), height=min(len(active), 10), width=48)
+        lb.pack(fill=BOTH, expand=True, padx=16)
+        for a in active:
+            lb.insert(END, f"{a.get('student_name') or '?'}   (out {a.get('date_assigned') or '—'})")
+        lb.selection_set(0)
+        result = {"c": None}
+
+        def _ok():
+            sel = lb.curselection()
+            if sel:
+                result["c"] = active[sel[0]]
+            win.destroy()
+        btns = ttk.Frame(win); btns.pack(pady=12)
+        ttk.Button(btns, text="OK", bootstyle=PRIMARY, command=_ok).pack(side=LEFT, padx=4)
+        ttk.Button(btns, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=win.destroy).pack(side=LEFT, padx=4)
+        from ui.theme import fit_window
+        fit_window(win, 420, 300)
+        self.wait_window(win)
+        return result["c"]
+
+    def _loan_instrument(self, iid):
+        loan = self.db.get_active_loan(iid)
+        if loan:
+            Messagebox.show_info(f"Already on loan to {loan['school']}.",
+                                 title="On Loan", parent=self.winfo_toplevel())
+            return
+        active = self.db.get_active_checkouts_for_instrument(iid)
+        if active:
+            if Messagebox.yesno(
+                "This instrument is currently checked out locally.\n\n"
+                "Loan it to another school anyway? (Local checkouts remain recorded.)",
+                title="Currently Checked Out", parent=self.winfo_toplevel()) != "Yes":
+                return
+        from ui.checkout_dialog import LoanDialog
+        dlg = LoanDialog(self.winfo_toplevel(), self.db, instrument_id=iid)
         self.wait_window(dlg)
         self.refresh()
+        self._load_detail(iid)
+
+    def _lookup_by_scan(self, text):
+        """Resolve a typed/scanned barcode or serial to an instrument id."""
+        text = (text or "").strip()
+        if not text:
+            return None
+        inst = self.db.get_instrument_by_barcode(text) or self.db.get_instrument_by_serial(text)
+        return inst["id"] if inst else None
+
+    def _open_checkout_chooser(self):
+        self._open_scan_chooser("checkout")
+
+    def _open_checkin_chooser(self):
+        self._open_scan_chooser("checkin")
+
+    def _open_scan_chooser(self, mode):
+        is_out = mode == "checkout"
+        win = ttk.Toplevel(self.winfo_toplevel())
+        win.title("Check Out" if is_out else "Check In")
+        win.resizable(False, False)
+        win.grab_set()
+
+        style = WARNING if is_out else INFO
+        hdr = ttk.Frame(win, bootstyle=style)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text=("📤  Check Out" if is_out else "📥  Check In"),
+                  font=("Segoe UI", 13, "bold"),
+                  bootstyle=(INVERSE, style)).pack(pady=10, padx=16, anchor=W)
+
+        body = ttk.Frame(win)
+        body.pack(fill=BOTH, expand=True, padx=20, pady=14)
+
+        ttk.Label(body, text="Scan or type a barcode / serial number:",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W)
+        scan_var = tk.StringVar()
+        # Pre-fill from the currently selected grid row, if any.
+        sel = self.tree.selection()
+        if sel:
+            inst = self.db.get_instrument(int(sel[0]))
+            if inst:
+                scan_var.set(inst["barcode"] or inst["district_no"] or inst["serial_no"] or "")
+        entry = ttk.Entry(body, textvariable=scan_var, width=34)
+        entry.pack(anchor=W, pady=(3, 2))
+        entry.focus_set()
+        entry.select_range(0, END)
+
+        status_lbl = ttk.Label(body, text="", font=("Segoe UI", 8), foreground="#CC0000")
+        status_lbl.pack(anchor=W)
+
+        def _go(_e=None):
+            iid = self._lookup_by_scan(scan_var.get())
+            if iid is None:
+                status_lbl.config(text="No active instrument found for that barcode / serial #.")
+                entry.select_range(0, END)
+                return
+            win.destroy()
+            if is_out:
+                self._do_single_checkout(iid)
+            else:
+                self._do_single_checkin(iid)
+
+        entry.bind("<Return>", _go)
+        ttk.Button(body, text=("Find & Check Out" if is_out else "Find & Check In"),
+                   bootstyle=style, command=_go).pack(anchor=W, pady=(6, 0))
+
+        ttk.Separator(body, orient=HORIZONTAL).pack(fill=X, pady=12)
+
+        def _bulk():
+            win.destroy()
+            self._open_bulk("checkout" if is_out else "checkin")
+        ttk.Button(body, text=("📦 Bulk Check Out (scan many)" if is_out
+                               else "📦 Bulk Check In (scan many)"),
+                   bootstyle=(style, OUTLINE), command=_bulk).pack(fill=X, pady=2)
+
+        if is_out:
+            def _item():
+                win.destroy()
+                self._checkout_item()
+            ttk.Button(body, text="🎒 Check Out Item (mute, book, lyre…)",
+                       bootstyle=(SECONDARY, OUTLINE), command=_item).pack(fill=X, pady=2)
+
+            def _loan():
+                iid = self._lookup_by_scan(scan_var.get())
+                if iid is None:
+                    status_lbl.config(text="Scan/type the instrument's barcode above first, "
+                                           "then choose Loan.")
+                    entry.focus_set()
+                    return
+                win.destroy()
+                self._loan_instrument(iid)
+            ttk.Button(body, text="🏫 Loan to Another School",
+                       bootstyle=(PRIMARY, OUTLINE), command=_loan).pack(fill=X, pady=2)
+
+        ttk.Button(win, text="Close", bootstyle=(SECONDARY, OUTLINE),
+                   command=win.destroy).pack(pady=(0, 12))
+
+        from ui.theme import fit_window
+        fit_window(win, 380, 320)
+
+    def _open_bulk(self, initial_tab):
+        from ui.bulk_checkout_dialog import BulkCheckoutDialog
+        dlg = BulkCheckoutDialog(self.winfo_toplevel(), self.db, self.base_dir,
+                                 refresh_callback=self.refresh, initial_tab=initial_tab)
+        self.wait_window(dlg)
+        self.refresh()
+
+    def _checkout_item(self):
+        """Check out a free-text item (mute, book, lyre) not in inventory."""
+        from ui.checkout_dialog import ItemCheckoutDialog
+        dlg = ItemCheckoutDialog(self.winfo_toplevel(), self.db)
+        self.wait_window(dlg)
+        self.refresh()
+
+    def _show_checkouts(self):
+        """Open the Active Checkouts window (moved here from the main menu)."""
+        if self._on_checkouts:
+            self._on_checkouts()
+        else:
+            Messagebox.show_info("Active checkouts are available from the main menu.",
+                                 title="Checkouts", parent=self.winfo_toplevel())
+
+    def _open_repair_hub(self):
+        from ui.repair_hub import RepairHub
+        dlg = RepairHub(self.winfo_toplevel(), self)
+        self.wait_window(dlg)
+        self.refresh()
+        if self._selected_id:
+            self._load_detail(self._selected_id)
+
+    def _open_exports_menu(self):
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="📊  Entire Inventory (Excel)…",
+                         command=self._export_inventory)
+        menu.add_command(label="🧾  Instruments Needing Repair…",
+                         command=self._export_repairs_needed)
+        menu.add_command(label="📤  Currently Checked Out…",
+                         command=self._export_checked_out)
+        menu.add_separator()
+        menu.add_command(label="💰  Repair Cost Report (by $ spent)…",
+                         command=self._export_cost_report)
+        menu.add_command(label="🔧  Full Repair Details…",
+                         command=self._export_repairs)
+        try:
+            x = self.winfo_pointerx()
+            y = self.winfo_pointery()
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
 
     def _add_repair(self):
         iid = self._get_selected_instrument()
@@ -754,17 +1008,21 @@ class InventoryManager(ttk.Frame):
         iid = self._get_selected_instrument()
         if iid is None:
             return
-        active = self.db.get_active_checkout(iid)
+        active = [dict(a) for a in self.db.get_active_checkouts_for_instrument(iid)]
         if not active:
             Messagebox.show_warning(
                 "This instrument must be checked out to generate a loan form.",
                 title="Not Checked Out", parent=self.winfo_toplevel()
             )
             return
+        # Several borrowers → let the user pick which loan form to generate.
+        chosen = active[0] if len(active) == 1 else self._pick_active_checkout(active, "make a form for")
+        if not chosen:
+            return
         try:
             from pdf_generator import generate_form_for_checkout
-            path = generate_form_for_checkout(self.db, active["id"], self.base_dir)
-            self.db.mark_form_generated(active["id"])
+            path = generate_form_for_checkout(self.db, chosen["id"], self.base_dir)
+            self.db.mark_form_generated(chosen["id"])
             Messagebox.show_info(
                 f"Loan form generated!\n\n{path}\n\nOpening now...",
                 title="Form Generated", parent=self.winfo_toplevel()
@@ -1072,3 +1330,379 @@ class InventoryManager(ttk.Frame):
         if answer == "Yes":
             import subprocess
             subprocess.Popen(["start", "", path], shell=True)
+
+    # ── Excel helpers (shared by the inventory / repairs-needed exports) ────────
+
+    def _excel_styles(self):
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+        def _fill(hex_color):
+            return PatternFill("solid", fgColor=hex_color)
+
+        def _border():
+            s = Side(style="thin", color="CCCCCC")
+            return Border(left=s, right=s, top=s, bottom=s)
+
+        return {
+            "hdr_font":  Font(bold=True, color="FFFFFF", size=10),
+            "hdr_fill":  _fill("2E5E8E"),
+            "total_font": Font(bold=True, size=9),
+            "total_fill": _fill("E2EFDA"),
+            "alt_fill":  _fill("F5F5F5"),
+            "border":    _border,
+            "align":     Alignment,
+            "money_fmt": '"$"#,##0.00',
+        }
+
+    def _save_and_open(self, wb, default_name):
+        from tkinter import filedialog
+        path = filedialog.asksaveasfilename(
+            title="Save Export", parent=self.winfo_toplevel(),
+            defaultextension=".xlsx", initialfile=default_name,
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            wb.save(path)
+        except Exception as e:
+            Messagebox.show_error(f"Could not save file:\n{e}", title="Save Error",
+                                  parent=self.winfo_toplevel())
+            return
+        if Messagebox.yesno("Export complete.\n\nOpen the file now?",
+                            title="Export Complete", parent=self.winfo_toplevel()) == "Yes":
+            import subprocess
+            subprocess.Popen(["start", "", path], shell=True)
+
+    # ── #6: Full inventory export for district personnel ────────────────────────
+
+    def _export_inventory(self):
+        try:
+            import openpyxl
+            from openpyxl.styles import Alignment
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            Messagebox.show_error("openpyxl is required. Run: pip install openpyxl",
+                                  title="Missing Dependency", parent=self.winfo_toplevel())
+            return
+
+        include_inactive = bool(self._show_inactive.get())
+        instruments = [dict(r) for r in self.db.get_all_instruments(include_inactive=include_inactive)]
+        if not instruments:
+            Messagebox.show_info("No instruments to export.", title="Nothing to Export",
+                                 parent=self.winfo_toplevel())
+            return
+
+        import datetime
+        this_year = datetime.date.today().year
+
+        def _age(inst):
+            yr = str(inst.get("year_purchased") or "").strip()[:4]
+            if yr.isdigit():
+                a = this_year - int(yr)
+                return a if a >= 0 else ""
+            return ""
+
+        st = self._excel_styles()
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Instrument Inventory"
+        ws.freeze_panes = "A2"
+
+        headers = ["Category", "Instrument", "Brand", "Model", "Serial #",
+                   "Barcode", "Condition", "Status",
+                   "Assigned To", "Year Purchased", "Age (yrs)",
+                   "Amount Paid", "Est. Value", "Repair $ Spent", "Location", "Comments"]
+
+        def _row(r, values, font=None, fill=None, money_cols=()):
+            for c, val in enumerate(values, 1):
+                cell = ws.cell(row=r, column=c, value=val)
+                cell.border = st["border"]()
+                cell.alignment = Alignment(vertical="center")
+                if font:
+                    cell.font = font
+                if fill:
+                    cell.fill = fill
+                if c in money_cols:
+                    cell.number_format = st["money_fmt"]
+
+        _row(1, headers, font=st["hdr_font"], fill=st["hdr_fill"])
+        ws.row_dimensions[1].height = 18
+
+        money_cols = (12, 13, 14)
+        grand_paid = grand_value = grand_repair = 0.0
+        r = 2
+        for inst in sorted(instruments, key=lambda x: (x.get("category") or "", x.get("description") or "")):
+            repairs = [dict(x) for x in self.db.get_repairs(inst["id"])]
+            # Only actual recorded costs count as money spent — estimates are not
+            # reliable enough to report to the district.
+            repair_spent = sum(float(x.get("act_cost") or 0) for x in repairs)
+            loan = self.db.get_active_loan(inst["id"])
+            actives = self.db.get_active_checkouts_for_instrument(inst["id"])
+            if loan:
+                status = "On Loan"
+                assigned = loan["school"] or ""
+            elif actives:
+                status = "Checked Out"
+                assigned = ", ".join(a["student_name"] or "?" for a in actives)
+            else:
+                status = "Available"
+                assigned = ""
+            paid = float(inst.get("amount_paid") or 0)
+            value = float(inst.get("est_value") or 0)
+            grand_paid += paid; grand_value += value; grand_repair += repair_spent
+            fill = st["alt_fill"] if r % 2 == 0 else None
+            _row(r, [
+                inst.get("category") or "",
+                inst.get("description") or "",
+                inst.get("brand") or "",
+                inst.get("model") or "",
+                inst.get("serial_no") or "",
+                inst.get("barcode") or inst.get("district_no") or "",
+                inst.get("condition") or "",
+                status,
+                assigned,
+                inst.get("year_purchased") or inst.get("date_purchased") or "",
+                _age(inst),
+                paid,
+                value,
+                repair_spent,
+                inst.get("locker") or "",
+                inst.get("comments") or "",
+            ], fill=fill, money_cols=money_cols)
+            r += 1
+
+        _row(r, ["", "", "", "", "", "", "", "", "", "", "TOTALS",
+                 grand_paid, grand_value, grand_repair, "", ""],
+             font=st["total_font"], fill=st["total_fill"], money_cols=money_cols)
+
+        widths = [14, 24, 14, 14, 14, 14, 12, 12, 18, 12, 9, 12, 12, 13, 12, 30]
+        for col, w in zip(range(1, len(widths) + 1), widths):
+            ws.column_dimensions[get_column_letter(col)].width = w
+
+        import datetime as _d
+        self._save_and_open(wb, f"Instrument_Inventory_{_d.date.today().isoformat()}.xlsx")
+
+    # ── #8: Repairs-needed printout for the technician ──────────────────────────
+
+    def _export_repairs_needed(self):
+        try:
+            import openpyxl
+            from openpyxl.styles import Alignment
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            Messagebox.show_error("openpyxl is required. Run: pip install openpyxl",
+                                  title="Missing Dependency", parent=self.winfo_toplevel())
+            return
+
+        pending = [dict(r) for r in self.db.get_instruments_needing_repair()]
+        if not pending:
+            Messagebox.show_info(
+                "No outstanding repairs. Everything is marked repaired!",
+                title="Nothing to Export", parent=self.winfo_toplevel())
+            return
+
+        PRI = {3: "Urgent", 2: "High", 1: "Normal", 0: "Low"}
+        st = self._excel_styles()
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Repairs Needed"
+        ws.freeze_panes = "A2"
+
+        headers = ["Priority", "Category", "Instrument", "Brand", "Model",
+                   "Serial #", "Barcode", "Repair(s) Needed",
+                   "Reported", "Shop / Location"]
+
+        def _row(r, values, font=None, fill=None):
+            for c, val in enumerate(values, 1):
+                cell = ws.cell(row=r, column=c, value=val)
+                cell.border = st["border"]()
+                cell.alignment = Alignment(vertical="center", wrap_text=(c == 8))
+                if font:
+                    cell.font = font
+                if fill:
+                    cell.fill = fill
+
+        _row(1, headers, font=st["hdr_font"], fill=st["hdr_fill"])
+        ws.row_dimensions[1].height = 18
+
+        r = 2
+        for rep in pending:
+            fill = st["alt_fill"] if r % 2 == 0 else None
+            _row(r, [
+                PRI.get(int(rep.get("max_priority") or 0), ""),
+                rep.get("category") or "",
+                rep.get("instrument_desc") or "",
+                rep.get("brand") or "",
+                rep.get("model") or "",
+                rep.get("serial_no") or "",
+                rep.get("barcode") or rep.get("district_no") or "",
+                rep.get("needs") or "",
+                rep.get("last_reported") or "",
+                rep.get("shop") or "",
+            ], fill=fill)
+            r += 1
+
+        widths = [9, 14, 22, 14, 14, 14, 14, 46, 13, 18]
+        for col, w in zip(range(1, len(widths) + 1), widths):
+            ws.column_dimensions[get_column_letter(col)].width = w
+
+        import datetime as _d
+        self._save_and_open(wb, f"Repairs_Needed_{_d.date.today().isoformat()}.xlsx")
+
+    # ── Currently-checked-out export ────────────────────────────────────────────
+
+    def _export_checked_out(self):
+        try:
+            import openpyxl
+            from openpyxl.styles import Alignment
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            Messagebox.show_error("openpyxl is required. Run: pip install openpyxl",
+                                  title="Missing Dependency", parent=self.winfo_toplevel())
+            return
+
+        rows = [dict(r) for r in self.db.get_all_active_checkouts()]
+        if not rows:
+            Messagebox.show_info("Nothing is currently checked out.",
+                                 title="Nothing to Export", parent=self.winfo_toplevel())
+            return
+
+        st = self._excel_styles()
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Checked Out"
+        ws.freeze_panes = "A2"
+        headers = ["Checked Out To", "Item / Instrument", "Category",
+                   "Barcode", "Serial #", "Date Out", "Due Date", "Type"]
+
+        def _row(r, values, font=None, fill=None):
+            for c, val in enumerate(values, 1):
+                cell = ws.cell(row=r, column=c, value=val)
+                cell.border = st["border"]()
+                cell.alignment = Alignment(vertical="center")
+                if font:
+                    cell.font = font
+                if fill:
+                    cell.fill = fill
+
+        _row(1, headers, font=st["hdr_font"], fill=st["hdr_fill"])
+        ws.row_dimensions[1].height = 18
+        r = 2
+        for c in rows:
+            is_item = not c.get("instrument_id")
+            fill = st["alt_fill"] if r % 2 == 0 else None
+            _row(r, [
+                c.get("student_name") or "",
+                c.get("description") or "",
+                c.get("category") or "",
+                c.get("barcode") or c.get("district_no") or "",
+                c.get("serial_no") or "",
+                c.get("date_assigned") or "",
+                c.get("due_date") or "",
+                "Item" if is_item else "Instrument",
+            ], fill=fill)
+            r += 1
+        # Instruments out on loan to other schools
+        for l in (dict(x) for x in self.db.get_all_active_loans()):
+            who = l.get("school") or ""
+            if l.get("contact_name"):
+                who += f" — {l['contact_name']}"
+            fill = st["alt_fill"] if r % 2 == 0 else None
+            _row(r, [
+                who,
+                l.get("description") or "",
+                l.get("category") or "",
+                l.get("barcode") or l.get("district_no") or "",
+                l.get("serial_no") or "",
+                l.get("date_out") or "",
+                l.get("date_due") or "",
+                "On Loan",
+            ], fill=fill)
+            r += 1
+
+        widths = [22, 26, 14, 14, 14, 13, 13, 12]
+        for col, w in zip(range(1, len(widths) + 1), widths):
+            ws.column_dimensions[get_column_letter(col)].width = w
+
+        import datetime as _d
+        self._save_and_open(wb, f"Checked_Out_{_d.date.today().isoformat()}.xlsx")
+
+    # ── Repair cost report (for district / PTSA replacement decisions) ──────────
+
+    def _export_cost_report(self):
+        try:
+            import openpyxl
+            from openpyxl.styles import Alignment
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            Messagebox.show_error("openpyxl is required. Run: pip install openpyxl",
+                                  title="Missing Dependency", parent=self.winfo_toplevel())
+            return
+
+        summary = [dict(r) for r in self.db.get_repair_cost_summary()]
+        if not summary:
+            Messagebox.show_info("No repair spending recorded yet.",
+                                 title="Nothing to Export", parent=self.winfo_toplevel())
+            return
+
+        import datetime
+        this_year = datetime.date.today().year
+        st = self._excel_styles()
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Repair Cost Analysis"
+        ws.freeze_panes = "A2"
+        headers = ["Rank", "Category", "Instrument", "Brand", "Serial #", "Barcode",
+                   "# Repairs", "Total Repair $", "Est. Value", "Amount Paid",
+                   "Age (yrs)", "Last Repaired"]
+
+        def _row(r, values, font=None, fill=None, money_cols=()):
+            for c, val in enumerate(values, 1):
+                cell = ws.cell(row=r, column=c, value=val)
+                cell.border = st["border"]()
+                cell.alignment = Alignment(vertical="center")
+                if font:
+                    cell.font = font
+                if fill:
+                    cell.fill = fill
+                if c in money_cols:
+                    cell.number_format = st["money_fmt"]
+
+        _row(1, headers, font=st["hdr_font"], fill=st["hdr_fill"])
+        ws.row_dimensions[1].height = 18
+        money_cols = (8, 9, 10)
+        grand = 0.0
+        r = 2
+        for rank, s in enumerate(summary, 1):
+            total = float(s.get("total_spent") or 0)
+            grand += total
+            yr = str(s.get("year_purchased") or "").strip()[:4]
+            age = (this_year - int(yr)) if yr.isdigit() else ""
+            fill = st["alt_fill"] if r % 2 == 0 else None
+            _row(r, [
+                rank,
+                s.get("category") or "",
+                s.get("instrument_desc") or "",
+                s.get("brand") or "",
+                s.get("serial_no") or "",
+                s.get("barcode") or s.get("district_no") or "",
+                s.get("repair_count") or 0,
+                total,
+                float(s.get("est_value") or 0),
+                float(s.get("amount_paid") or 0),
+                age,
+                s.get("last_repair") or "",
+            ], fill=fill, money_cols=money_cols)
+            r += 1
+
+        _row(r, ["", "", "", "", "", "", "GRAND TOTAL", grand, "", "", "", ""],
+             font=st["total_font"], fill=st["total_fill"], money_cols=money_cols)
+
+        widths = [6, 14, 24, 14, 14, 14, 10, 14, 12, 12, 9, 13]
+        for col, w in zip(range(1, len(widths) + 1), widths):
+            ws.column_dimensions[get_column_letter(col)].width = w
+
+        import datetime as _d
+        self._save_and_open(wb, f"Repair_Cost_Report_{_d.date.today().isoformat()}.xlsx")

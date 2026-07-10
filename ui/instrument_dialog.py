@@ -81,6 +81,12 @@ class InstrumentDialog(ttk.Toplevel):
 
         self._build_sections(content)
 
+        # ── Quick actions (only when editing an existing instrument) ──────────
+        if self.instrument_id:
+            self._action_bar = ttk.Frame(self, bootstyle=LIGHT)
+            self._action_bar.pack(fill=X)
+            self._refresh_action_bar()
+
         # Buttons
         btn_frame = ttk.Frame(self)
         btn_frame.pack(fill=X, padx=16, pady=10)
@@ -128,8 +134,7 @@ class InstrumentDialog(ttk.Toplevel):
 
         row3 = ttk.Frame(ids)
         row3.pack(fill=X, pady=2)
-        self._field(row3, "Barcode", "barcode", side=LEFT, width=22)
-        self._field(row3, "District #", "district_no", side=LEFT, width=22)
+        self._field(row3, "Barcode (District #)", "barcode", side=LEFT, width=22)
         self._field(row3, "Serial #", "serial_no", side=LEFT, width=22)
 
         row4 = ttk.Frame(ids)
@@ -181,6 +186,115 @@ class InstrumentDialog(ttk.Toplevel):
                                        relief="solid", bd=1, wrap=WORD)
         self._comments_text.pack(fill=X, pady=2)
 
+    def _refresh_action_bar(self):
+        """(Re)build the quick-action buttons based on the instrument's current
+        checkout / loan status."""
+        for w in self._action_bar.winfo_children():
+            w.destroy()
+        ttk.Label(self._action_bar, text="Quick actions:",
+                  font=("Segoe UI", 8, "bold")).pack(side=LEFT, padx=(10, 6), pady=6)
+
+        loan = self.db.get_active_loan(self.instrument_id)
+        if loan:
+            ttk.Label(self._action_bar,
+                      text=f"🏫 On loan to {loan['school']}",
+                      font=("Segoe UI", 8), foreground="#1f5fbf").pack(side=LEFT, padx=(0, 8))
+            ttk.Button(self._action_bar, text="↩ Return from Loan", bootstyle=PRIMARY,
+                       command=self._return_loan_action).pack(side=LEFT, padx=2, pady=4)
+            ttk.Button(self._action_bar, text="🔧 Add Repair", bootstyle=SECONDARY,
+                       command=self._repair_action).pack(side=LEFT, padx=2, pady=4)
+            return
+
+        actives = self.db.get_active_checkouts_for_instrument(self.instrument_id)
+        if actives:
+            names = ", ".join(a["student_name"] or "?" for a in actives)
+            ttk.Label(self._action_bar, text=f"Checked out to {names}",
+                      font=("Segoe UI", 8), foreground="#8B4000").pack(side=LEFT, padx=(0, 8))
+            ttk.Button(self._action_bar, text="📥 Check In", bootstyle=INFO,
+                       command=self._checkin_action).pack(side=LEFT, padx=2, pady=4)
+        ttk.Button(self._action_bar, text="📤 Check Out", bootstyle=WARNING,
+                   command=self._checkout_action).pack(side=LEFT, padx=2, pady=4)
+        ttk.Button(self._action_bar, text="🏫 Loan to School", bootstyle=(PRIMARY, OUTLINE),
+                   command=self._loan_action).pack(side=LEFT, padx=2, pady=4)
+        ttk.Button(self._action_bar, text="🔧 Add Repair", bootstyle=SECONDARY,
+                   command=self._repair_action).pack(side=LEFT, padx=2, pady=4)
+
+    def _checkout_action(self):
+        from ui.checkout_dialog import CheckoutDialog
+        dlg = CheckoutDialog(self, self.db, instrument_id=self.instrument_id, mode="checkout")
+        self.wait_window(dlg)
+        self._result = "saved"
+        self._load_instrument(self.instrument_id)
+        self._refresh_action_bar()
+
+    def _checkin_action(self):
+        actives = [dict(a) for a in self.db.get_active_checkouts_for_instrument(self.instrument_id)]
+        if not actives:
+            self._refresh_action_bar()
+            return
+        checkout = actives[0] if len(actives) == 1 else self._pick_checkout(actives)
+        if not checkout:
+            return
+        from ui.checkout_dialog import CheckoutDialog
+        dlg = CheckoutDialog(self, self.db, instrument_id=self.instrument_id,
+                             mode="checkin", checkout_data=checkout)
+        self.wait_window(dlg)
+        self._result = "saved"
+        self._load_instrument(self.instrument_id)
+        self._refresh_action_bar()
+
+    def _pick_checkout(self, actives):
+        win = ttk.Toplevel(self)
+        win.title("Which checkout to check in?")
+        win.grab_set()
+        ttk.Label(win, text="Choose which person is returning it:",
+                  font=("Segoe UI", 9)).pack(anchor=W, padx=16, pady=(14, 6))
+        lb = tk.Listbox(win, font=("Segoe UI", 9), height=min(len(actives), 8), width=44)
+        lb.pack(fill=BOTH, expand=True, padx=16)
+        for a in actives:
+            lb.insert("end", f"{a.get('student_name') or '?'}   (out {a.get('date_assigned') or '—'})")
+        lb.selection_set(0)
+        res = {"c": None}
+        def _ok():
+            sel = lb.curselection()
+            if sel:
+                res["c"] = actives[sel[0]]
+            win.destroy()
+        btns = ttk.Frame(win); btns.pack(pady=12)
+        ttk.Button(btns, text="OK", bootstyle=PRIMARY, command=_ok).pack(side=LEFT, padx=4)
+        ttk.Button(btns, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=win.destroy).pack(side=LEFT, padx=4)
+        from ui.theme import fit_window
+        fit_window(win, 400, 260)
+        self.wait_window(win)
+        return res["c"]
+
+    def _loan_action(self):
+        from ui.checkout_dialog import LoanDialog
+        dlg = LoanDialog(self, self.db, instrument_id=self.instrument_id)
+        self.wait_window(dlg)
+        self._result = "saved"
+        self._load_instrument(self.instrument_id)
+        self._refresh_action_bar()
+
+    def _return_loan_action(self):
+        loan = self.db.get_active_loan(self.instrument_id)
+        if not loan:
+            self._refresh_action_bar()
+            return
+        if Messagebox.yesno(f"Mark this instrument as returned from {loan['school']}?",
+                            title="Return from Loan", parent=self) == "Yes":
+            self.db.return_loan(loan["id"], datetime.today().strftime("%Y-%m-%d"))
+            self._result = "saved"
+            self._refresh_action_bar()
+
+    def _repair_action(self):
+        from ui.repair_dialog import RepairDialog
+        dlg = RepairDialog(self, self.db, instrument_id=self.instrument_id, repair_id=None)
+        self.wait_window(dlg)
+        self._result = "saved"
+        self._load_instrument(self.instrument_id)
+
     def _section(self, parent, title):
         f = ttk.Frame(parent)
         f.pack(fill=X, padx=8, pady=(10, 2))
@@ -212,6 +326,12 @@ class InstrumentDialog(ttk.Toplevel):
             val = row[key] if key in row.keys() else None
             var.set("" if val is None else str(val))
 
+        # Barcode and District # are one identifier now — show whichever is set.
+        if "barcode" in self._vars and not self._vars["barcode"].get():
+            dn = row["district_no"] if "district_no" in row.keys() else None
+            if dn:
+                self._vars["barcode"].set(str(dn))
+
         comments = row["comments"] or ""
         self._comments_text.delete("1.0", "end")
         self._comments_text.insert("1.0", comments)
@@ -219,6 +339,9 @@ class InstrumentDialog(ttk.Toplevel):
     def _collect_data(self) -> dict:
         data = {k: v.get().strip() for k, v in self._vars.items()}
         data["comments"] = self._comments_text.get("1.0", "end").strip()
+        # Keep district_no in sync with the merged Barcode field so existing
+        # code that reads either column stays consistent.
+        data["district_no"] = data.get("barcode", "")
 
         # Type coercions
         for f in ("amount_paid", "est_value"):
