@@ -7,6 +7,12 @@ import re
 from datetime import datetime
 
 
+# Repair shops BSD programs actually use.  Detected anywhere in the invoice
+# text (so "BandWright Repair, LLC" in the letterhead → "BandWright"); the
+# same list feeds the Repair Shop dropdown in the repair dialog.
+KNOWN_SHOPS = ["BandWright", "Kennelly Keys", "Precision Woodwind", "Music & Arts"]
+
+
 def extract_pdf_text(pdf_path: str) -> str:
     """
     Extract all text from a PDF file using pypdf.
@@ -155,21 +161,58 @@ def _parse_cost_from_context(context: str) -> float:
     return amounts[0] if amounts else 0.0
 
 
-def _parse_invoice_number(text: str) -> str:
-    """Try to extract an invoice / work-order number."""
-    patterns = [
-        r'(?:invoice|inv)[\s#:\-]*([A-Z0-9\-]{3,20})',
-        r'(?:work\s*order|wo)[\s#:\-]*([A-Z0-9\-]{3,20})',
-        r'(?:order\s*(?:no|#|number))[\s:.\-]*([A-Z0-9\-]{3,20})',
-        r'#\s*([A-Z0-9\-]{4,20})',
-    ]
-    for pat in patterns:
+def _parse_invoice_number(text: str, source_name: str = "") -> str:
+    """Extract the invoice / work-order number.
+
+    The number usually sits next to an 'Invoice #' header at the top of page 1,
+    but text extraction can shuffle the header cells (which is how a naive
+    pattern once captured the word 'Date').  So: only accept values that
+    contain a digit, then fall back to the filename — shops like BandWright
+    put it right in the file name (Invoice_2139_BandWrightRepair.pdf)."""
+    def _plausible(val):
+        val = (val or "").strip()
+        return (bool(val) and any(ch.isdigit() for ch in val)
+                and not re.fullmatch(r'\d{1,2}', val) and '/' not in val)
+
+    # "Invoice #" followed (possibly on the next line) by the number itself
+    m = re.search(r'Invoice\s*#\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{2,19})',
+                  text, re.IGNORECASE)
+    if m and _plausible(m.group(1)):
+        return m.group(1).strip()
+    # QuickBooks-style header block: "Date  Invoice #" / "10/1/2025  2139"
+    m = re.search(r'Invoice\s*#.{0,80}?\b\d{1,2}/\d{1,2}/\d{2,4}\s+(\d{3,12})\b',
+                  text, re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1)
+    # Filename
+    m = re.search(r'(?:invoice|inv)[\s_#\-]*(\d{3,12})', source_name, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    # Work-order style
+    for pat in (r'(?:work\s*order|wo)[\s#:\-]*([A-Z0-9\-]{3,20})',
+                r'(?:order\s*(?:no|#|number))[\s:.\-]*([A-Z0-9\-]{3,20})'):
         m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            val = m.group(1).strip()
-            if not re.fullmatch(r'\d{1,2}', val):
-                return val
+        if m and _plausible(m.group(1)):
+            return m.group(1).strip()
     return ""
+
+
+def _parse_invoice_total(text: str) -> float:
+    """The invoice's grand total (bottom of the page).  Prefer 'Balance Due',
+    then 'Total' ('Subtotal' can't match — \\b requires a word boundary).
+    Multi-page invoices repeat the footer with blanks on early pages, so take
+    the last non-zero value."""
+    for pat in (r'Balance\s+Due\s*:?\s*\$?\s*([\d,]+\.\d{2})',
+                r'\bTotal\b\s*:?\s*\$?\s*([\d,]+\.\d{2})'):
+        try:
+            vals = [float(v.replace(',', ''))
+                    for v in re.findall(pat, text, re.IGNORECASE)]
+        except ValueError:
+            continue
+        vals = [v for v in vals if v > 0]
+        if vals:
+            return vals[-1]
+    return 0.0
 
 
 def _parse_repair_description(text: str, match_pos: int) -> str:
@@ -189,29 +232,7 @@ def _parse_repair_description(text: str, match_pos: int) -> str:
     the next line item (or a section boundary like Subtotal).
     """
     lines = text.split('\n')
-
-    # Locate the line index that contains match_pos
-    cumulative = 0
-    match_line_idx = 0
-    for i, line in enumerate(lines):
-        cumulative += len(line) + 1
-        if cumulative > match_pos:
-            match_line_idx = i
-            break
-
-    # Patterns that signal the start of a NEW line item (left-aligned item types)
-    _ITEM_RE = re.compile(
-        r'^\s{0,4}'  # at most 4 leading spaces (left-aligned)
-        r'(?:Repair|Neck Cork|Minimum Shop|Service|Parts|Supplies|'
-        r'Repad|Overhaul|Dent Removal|Play Test|Emergency|'
-        r'Rental|Accessory|Assembly|Cleaning|Custom)',
-        re.IGNORECASE
-    )
-    # Boundaries that end the line-item section entirely
-    _BOUNDARY_RE = re.compile(
-        r'(?:Subtotal|Total|Sales Tax|Balance Due|Thank|BandWright stands)',
-        re.IGNORECASE
-    )
+    match_line_idx = _line_index_of(lines, match_pos)
 
     desc_parts = []
     for i in range(match_line_idx + 1, min(match_line_idx + 12, len(lines))):
@@ -250,12 +271,106 @@ def _parse_repair_description(text: str, match_pos: int) -> str:
 
 
 def _parse_vendor(text: str) -> str:
-    """Return the first non-empty line (usually the company/shop name)."""
+    """Identify the repair shop.  Known BSD shops are matched anywhere in the
+    text (letterheads say things like 'BandWright Repair, LLC'); otherwise
+    fall back to the first line that isn't boilerplate like 'Repair Invoice'."""
+    low = text.lower()
+    for shop in KNOWN_SHOPS:
+        keys = [shop.lower()]
+        if "&" in shop:
+            keys.append(shop.replace("&", "and").lower())
+        if any(k in low for k in keys):
+            return shop
+    skip = re.compile(r'^(repair\s+)?invoice$|^date$|^customer$|^invoice\s*#'
+                      r'|^page\b|^p\.?o\.?\s*number|^project\s+name',
+                      re.IGNORECASE)
     for line in text.split('\n'):
         line = line.strip()
-        if line and len(line) > 2:
+        if line and len(line) > 2 and not skip.match(line):
             return line[:80]
     return ""
+
+
+# ── Line-item structure (shared by description + cost extraction) ─────────────
+
+# Left-aligned Item-column values that start a NEW line item
+_ITEM_RE = re.compile(
+    r'^\s{0,4}'
+    r'(?:Repair|Neck Cork|Minimum Shop|Service|Parts|Supplies|'
+    r'Repad|Overhaul|Dent Removal|Play Test|Emergency|Soldering|'
+    r'Rental|Accessory|Assembly|Cleaning|Custom|Clarinet PC|Tenon Cork|'
+    r'No Charge)',
+    re.IGNORECASE
+)
+# A parts line that belongs to the labor item above it
+_PARTS_LINE_RE = re.compile(r'(?:repair\s+)?parts\s*/\s*supplies', re.IGNORECASE)
+# Boundaries that end the line-item section entirely
+_BOUNDARY_RE = re.compile(
+    r'(?:Subtotal|Total|Sales Tax|Balance Due|Thank|BandWright stands)',
+    re.IGNORECASE
+)
+
+
+def _line_index_of(lines, pos: int) -> int:
+    """Index of the line containing character offset pos."""
+    cumulative = 0
+    for i, line in enumerate(lines):
+        cumulative += len(line) + 1
+        if cumulative > pos:
+            return i
+    return max(0, len(lines) - 1)
+
+
+def _amount_on_line(line: str) -> float:
+    """The line-item amount on one text line.  Prefer the taxable-marker form
+    ('14.00T', unambiguous); otherwise the last reasonable decimal, which is
+    the Amount column (Rate comes before Amount)."""
+    taxable = re.findall(r'(\d+(?:,\d{3})*\.\d{2})T\b', line)
+    if taxable:
+        try:
+            return float(taxable[-1].replace(',', ''))
+        except ValueError:
+            pass
+    plain = re.findall(r'\b(\d{1,4}\.\d{2})\b', line)
+    valid = [float(p) for p in plain if 1.0 <= float(p) <= 9999.0]
+    return valid[-1] if valid else 0.0
+
+
+def _parse_instrument_cost(text: str, match_pos: int, match_val_len: int,
+                           tax_rate: float):
+    """Full cost of one instrument's repair: labor + its parts lines + tax.
+
+    BandWright lists each instrument as a labor line (e.g. 'Minimum Shop
+    Charge  Tuba, Yamaha YBB-103, SN: 009690 … 30.00T'), then description
+    lines, then any 'Repair Parts/Supplies' lines for that same instrument.
+    The next labor item (or an SN: line, or the invoice footer) ends the
+    block.  Returns (labor, parts_total, cost_with_tax)."""
+    lines = text.split('\n')
+    li = _line_index_of(lines, match_pos)
+
+    labor = _amount_on_line(lines[li])
+    if labor <= 0:
+        labor = _parse_line_amount(text, match_pos, match_val_len)
+
+    parts = 0.0
+    for i in range(li + 1, min(li + 14, len(lines))):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _BOUNDARY_RE.search(stripped):
+            break
+        if _PARTS_LINE_RE.search(line):
+            parts += _amount_on_line(line)
+            continue
+        # A new labor item (or another instrument's serial) ends this block
+        if _ITEM_RE.match(line) and _amount_on_line(line) > 0:
+            break
+        if re.search(r'\bSN\s*[:#]', line, re.IGNORECASE):
+            break
+
+    total = round((labor + parts) * (1 + tax_rate), 2) if labor > 0 else 0.0
+    return labor, parts, total
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -268,12 +383,15 @@ def parse_invoices(pdf_paths: list, instruments: list) -> list:
     Values shorter than 4 characters are skipped to avoid false positives.
 
     Cost logic (per instrument):
-      1. Find the amount on/near the specific line containing the serial/barcode
-      2. Extract the invoice-level tax rate (e.g. 'Sales Tax (10.3%)')
-      3. act_cost = line_amount * (1 + tax_rate)
+      1. Labor: the amount on the line containing the serial/barcode
+      2. Parts: any 'Repair Parts/Supplies' lines below it (before the next item)
+      3. cost = (labor + parts) * (1 + invoice tax rate)
       4. Fall back to the smallest $X.XX in context if no line amount found
 
-    Returns a list of dicts; error entries contain an "error" key.
+    Returns a list of dicts; error entries contain an "error" key.  Each file
+    with matches also yields one reconciliation entry ({"summary": True, ...})
+    comparing the matched records' cost sum against the invoice's grand total,
+    so the caller can flag line items that didn't match any instrument.
     """
     results = []
     seen = set()  # (instrument_id, pdf_path) to avoid duplicate entries
@@ -287,10 +405,13 @@ def parse_invoices(pdf_paths: list, instruments: list) -> list:
             continue
 
         # Invoice-level fields — computed once per file
-        invoice_number = _parse_invoice_number(text)
+        invoice_number = _parse_invoice_number(text, source_name)
         vendor         = _parse_vendor(text)
-        invoice_date   = _parse_date(text)
+        invoice_date   = _parse_date(text)       # header date = when repaired
         tax_rate       = _parse_tax_rate(text)   # e.g. 0.103 for 10.3%
+        invoice_total  = _parse_invoice_total(text)
+        scan_date      = datetime.today().strftime("%Y-%m-%d")
+        file_matches   = []
 
         for instr in instruments:
             if not instr.get("is_active", 1):
@@ -327,22 +448,15 @@ def parse_invoices(pdf_paths: list, instruments: list) -> list:
             m_obj   = re.search(r'\b' + re.escape(matched_val) + r'\b', text, re.IGNORECASE)
             match_pos = m_obj.start() if m_obj else text.lower().find(matched_val.lower())
 
-            # ── Cost ─────────────────────────────────────────────────────────
-            line_amount = _parse_line_amount(text, match_pos, len(matched_val))
+            # ── Cost: labor + this instrument's parts lines + tax ────────────
+            labor, parts, act_cost = _parse_instrument_cost(
+                text, match_pos, len(matched_val), tax_rate)
 
-            if line_amount > 0:
-                act_cost = round(line_amount * (1 + tax_rate), 2)
-            else:
+            if act_cost <= 0:
                 # Fallback: smallest explicit $X.XX in surrounding context
                 ctx_start = max(0, match_pos - 400)
                 ctx_end   = min(len(text), match_pos + 600)
                 act_cost  = _parse_cost_from_context(text[ctx_start:ctx_end])
-
-            # ── Other fields ─────────────────────────────────────────────────
-            ctx_start   = max(0, match_pos - 400)
-            ctx_end     = min(len(text), match_pos + 600)
-            context     = text[ctx_start:ctx_end]
-            repair_date = _parse_date(context)
 
             # Extract the actual repair description from the invoice
             repair_desc = _parse_repair_description(text, match_pos)
@@ -352,14 +466,13 @@ def parse_invoices(pdf_paths: list, instruments: list) -> list:
             label = desc + (f" — {brand}" if brand else "")
             label += f" ({matched_by.replace('_', ' ').title()}: {matched_val})"
 
-            if line_amount > 0 and tax_rate > 0:
-                cost_note = (
-                    f"Line item: ${line_amount:.2f}  "
-                    f"+ tax ({tax_rate*100:.1f}%)  "
-                    f"= ${act_cost:.2f}"
-                )
-            elif line_amount > 0:
-                cost_note = f"Line item: ${line_amount:.2f}"
+            if labor > 0:
+                bits = [f"Labor ${labor:.2f}"]
+                if parts > 0:
+                    bits.append(f"parts ${parts:.2f}")
+                if tax_rate > 0:
+                    bits.append(f"tax ({tax_rate*100:.1f}%)")
+                cost_note = " + ".join(bits) + f" = ${act_cost:.2f}"
             else:
                 cost_note = ""
 
@@ -372,21 +485,41 @@ def parse_invoices(pdf_paths: list, instruments: list) -> list:
 
             prefill = {
                 "description":    repair_desc if repair_desc else f"Repair — see {source_name}",
+                "priority":       1,                # Normal
                 "assigned_to":    vendor,
-                "date_added":     invoice_date,
-                "date_repaired":  repair_date,
+                "date_added":     scan_date,        # when the invoice was scanned
+                "date_repaired":  invoice_date,     # the invoice's own date
                 "act_cost":       f"{act_cost:.2f}" if act_cost else "",
                 "invoice_number": invoice_number,
                 "notes":          "\n".join(notes_parts),
             }
 
-            results.append({
+            entry = {
                 "instrument_id":    instr["id"],
                 "instrument_label": label,
                 "matched_by":       matched_by,
                 "matched_value":    matched_val,
                 "source_file":      source_name,
                 "prefill":          prefill,
+            }
+            results.append(entry)
+            file_matches.append(entry)
+
+        # ── Reconciliation: do the matched records add up to the invoice? ──
+        # Per-instrument tax rounding can drift a cent or two per line, so
+        # allow 2¢ per matched record before calling it a mismatch.
+        if file_matches:
+            matched_total = round(sum(
+                float(m["prefill"]["act_cost"] or 0) for m in file_matches), 2)
+            tolerance = 0.02 * len(file_matches)
+            results.append({
+                "summary":       True,
+                "source_file":   source_name,
+                "invoice_total": invoice_total,
+                "matched_total": matched_total,
+                "n_matched":     len(file_matches),
+                "balanced":      (invoice_total > 0
+                                  and abs(invoice_total - matched_total) <= tolerance),
             })
 
     return results

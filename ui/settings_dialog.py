@@ -696,6 +696,8 @@ class SettingsDialog(ttk.Toplevel):
             import ttkbootstrap as ttk_mod
             ttk_mod.Style().theme_use(chosen_theme_id)
             set_theme_name(chosen_theme_id)
+            from ui.theme import apply_contrast_fixes
+            apply_contrast_fixes()
         except Exception:
             pass
 

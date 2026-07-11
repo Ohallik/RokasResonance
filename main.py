@@ -476,6 +476,18 @@ def _load_profile(app, profile_name: str):
     _run_backups(db, data_dir, profile_name)
     db.relink_checkouts_to_students()
 
+    # Fold "Chinook Jazz 1"-style names (imported from joint-concert programs)
+    # into the teacher's own cohorts ("Jazz 1"), using Settings' school name.
+    try:
+        from ui.settings_dialog import load_settings
+        school = ((load_settings(data_dir).get("teacher") or {})
+                  .get("school_name") or "")
+        if school.strip():
+            db.normalize_performance_ensembles(school)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+
     # Stash current profile state on the app so the close handler can back it up
     app._current_db = db
     app._current_data_dir = data_dir
@@ -508,7 +520,38 @@ def _resolve_startup_display(profiles, last_used):
     return "litera", "normal"
 
 
+_single_instance_mutex = None    # keep a reference so it lives for the run
+
+
+def _already_running() -> bool:
+    """Single-instance guard: duplicate launches stack identical windows on
+    top of each other, which reads as an 'unclosable' app (and two instances
+    share the same database files).  A second launch tells the user and
+    exits instead."""
+    global _single_instance_mutex
+    try:
+        import win32event
+        import win32api
+        import winerror
+        _single_instance_mutex = win32event.CreateMutex(
+            None, False, "RokasResonance_SingleInstance")
+        return win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS
+    except Exception:
+        return False    # no pywin32? just allow the launch
+
+
 def main():
+    if _already_running():
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showinfo(
+            "Roka's Resonance",
+            "Roka's Resonance is already running.\n\n"
+            "Check your taskbar for the existing window.")
+        return
+
     # Move profiles to AppData if coming from an older version
     _migrate_to_appdata()
     # Migrate legacy (pre-profile) data if needed
@@ -523,6 +566,12 @@ def main():
     )
     startup_theme, startup_font_size = _resolve_startup_display(profiles, last_used)
     set_theme_name(startup_theme)
+
+    # Darken theme accents that fail WCAG contrast with white button text
+    # (litera's amber/gray/green, sandstone's lime).  Patches the theme
+    # definitions, so it must happen BEFORE the window is created.
+    from ui.theme import apply_contrast_fixes
+    apply_contrast_fixes()
     _scale_map = {
         "normal": NORMAL_FONT_SCALE,
         "large": LARGE_FONT_SCALE,

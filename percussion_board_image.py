@@ -49,6 +49,38 @@ def _draw_arrowhead(draw, tip, direction, size, color):
     draw.polygon([tip, p1, p2], fill=color)
 
 
+def _draw_mallet_glyph(draw, box, family):
+    """Small crossed-mallets glyph inside box: warm red heads for yarn
+    mallets (marimba, vibraphone), white heads for rubber/plastic (xylophone,
+    bells) — the same visual cue as on the app's board."""
+    x0, y0, x1, y1 = box
+    W, H = x1 - x0, y1 - y0
+    sw = max(2, int(W * 0.10))
+    stick = (70, 70, 70)
+    draw.line([(x0 + W * 0.22, y0 + H * 0.90), (x0 + W * 0.64, y0 + H * 0.34)],
+              fill=stick, width=sw)
+    draw.line([(x0 + W * 0.78, y0 + H * 0.90), (x0 + W * 0.36, y0 + H * 0.34)],
+              fill=stick, width=sw)
+    if family == "yarn":
+        head, hi = (211, 78, 55), (242, 150, 120)
+    else:
+        head, hi = (232, 232, 235), (255, 255, 255)
+    r = int(W * 0.18)
+    for cx, cy in [(x0 + W * 0.64, y0 + H * 0.30), (x0 + W * 0.36, y0 + H * 0.30)]:
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=head,
+                     outline=(60, 60, 60), width=max(1, sw // 2))
+        draw.ellipse([cx - r * 0.5, cy - r * 0.5, cx + r * 0.1, cy + r * 0.1],
+                     fill=hi)
+
+
+def _mallet_family(station):
+    try:
+        import percussion_rotation as pr
+        return pr.mallet_family(station)
+    except Exception:
+        return None
+
+
 def _draw_rotation_icon(img, box, color):
     """Draw a double-arrow 'rotation' glyph inside box=(x0,y0,x1,y1)."""
     from PIL import ImageDraw
@@ -98,7 +130,9 @@ def render_board(day_number, rows, color_for, section_name="",
     name_w = max([_text_size(d0, n, font_b)[0] for n, _ in rows] + [_text_size(d0, "Player", font_b)[0]])
     stn_w = max([_text_size(d0, st, font)[0] for _, st in rows] + [_text_size(d0, "Drum set", font)[0]])
     name_w += cell_pad * 2
-    stn_w += cell_pad * 2
+    # Room for a mallet-type glyph in front of mallet-instrument names.
+    glyph_w = int(fs * 1.7)
+    stn_w += cell_pad * 2 + glyph_w
     table_w = name_w + stn_w
 
     # Header holds the icon + day number.
@@ -146,8 +180,15 @@ def render_board(day_number, rows, color_for, section_name="",
         draw.rectangle([pad + name_w, y, pad + table_w, y + row_h], fill=bg, outline=grid)
         nw, nh = _text_size(draw, name, font_b)
         draw.text((pad + cell_pad, y + (row_h - nh) / 2), name, font=font_b, fill="#000000")
+        sx = pad + name_w + cell_pad
+        fam = _mallet_family(station)
+        if fam:
+            gsz = int(row_h * 0.62)
+            gy = y + (row_h - gsz) / 2
+            _draw_mallet_glyph(draw, (sx, gy, sx + gsz, gy + gsz), fam)
+            sx += gsz + int(cell_pad * 0.7)
         sw, sh = _text_size(draw, station, font)
-        draw.text((pad + name_w + cell_pad, y + (row_h - sh) / 2), station, font=font, fill="#000000")
+        draw.text((sx, y + (row_h - sh) / 2), station, font=font, fill="#000000")
         y += row_h
 
     if s != 1:

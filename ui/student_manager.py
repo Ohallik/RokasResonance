@@ -1490,10 +1490,21 @@ class StudentDialog(ttk.Toplevel):
         instr_row = ttk.Frame(parent)
         instr_row.pack(fill=X, padx=16, pady=(6, 0))
         instr_opts = instruments_for(self.program_type)
-        self._field(instr_row, "Primary Instrument", "primary_instrument",
+        self._field(instr_row, "Concert Instrument (Primary)", "primary_instrument",
                     widget="combobox", options=instr_opts, side=LEFT, width=22)
-        self._field(instr_row, "Secondary Instrument", "secondary_instrument",
+        self._field(instr_row, "Concert Instrument (Secondary)", "secondary_instrument",
                     widget="combobox", options=instr_opts, side=LEFT, width=22)
+
+        jazz_row = ttk.Frame(parent)
+        jazz_row.pack(fill=X, padx=16, pady=(4, 0))
+        from ui.ensembles import JAZZ_INSTRUMENTS
+        self._field(jazz_row, "Jazz Band Instrument", "jazz_instrument",
+                    widget="combobox", options=[""] + JAZZ_INSTRUMENTS,
+                    side=LEFT, width=22)
+        ttk.Label(jazz_row, text="Only if different in jazz band (e.g. Horn "
+                                 "player on Guitar) — used for jazz rosters.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=260, justify=LEFT).pack(side=LEFT, padx=(8, 0))
 
         self._section(parent, "Contact Information")
         row2 = ttk.Frame(parent)
@@ -1653,10 +1664,10 @@ class _BulkAssignDialog(ttk.Toplevel):
         mode_row = ttk.Frame(mode_box)
         mode_row.pack(fill=X)
         ttk.Radiobutton(mode_row, text="➕  Add to existing  (default)", value="add",
-                        variable=self._mode_var, bootstyle=(SUCCESS, TOOLBUTTON),
+                        variable=self._mode_var, bootstyle=(SUCCESS, OUTLINE, TOOLBUTTON),
                         width=24, command=self._update_mode_hint).pack(side=LEFT, padx=(0, 6))
         ttk.Radiobutton(mode_row, text="⚠  Replace existing", value="replace",
-                        variable=self._mode_var, bootstyle=(WARNING, TOOLBUTTON),
+                        variable=self._mode_var, bootstyle=(WARNING, OUTLINE, TOOLBUTTON),
                         width=20, command=self._update_mode_hint).pack(side=LEFT)
         self._mode_hint = ttk.Label(mode_box, text="", font=("Segoe UI", 8),
                                     foreground=muted_fg(), wraplength=440, justify=LEFT)

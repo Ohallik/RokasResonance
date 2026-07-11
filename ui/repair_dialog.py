@@ -11,6 +11,10 @@ from datetime import datetime
 
 PRIORITY_OPTIONS = ["0 - Low", "1 - Normal", "2 - High", "3 - Urgent"]
 
+# The repair shops BSD programs actually send instruments to.  The combobox
+# stays editable so anything else can still be typed in.
+REPAIR_SHOPS = ["BandWright", "Kennelly Keys", "Precision Woodwind", "Music & Arts"]
+
 
 class RepairDialog(ttk.Toplevel):
     def __init__(self, parent, db, instrument_id: int, repair_id=None,
@@ -20,6 +24,12 @@ class RepairDialog(ttk.Toplevel):
         self.instrument_id = instrument_id
         self.repair_id = repair_id
         self.saved = False
+        # Reviewing a scanned invoice: the work is already done, so Est. Cost
+        # is noise — it's only shown when adding/editing a repair by hand.
+        self._invoice_review = bool(prefill_data) and not repair_id
+        # The legacy 'location' column is no longer shown (it duplicated the
+        # shop); preserve whatever an existing record has so edits don't lose it.
+        self._orig_location = ""
 
         if repair_id:
             title = "Edit Repair Record"
@@ -91,48 +101,48 @@ class RepairDialog(ttk.Toplevel):
             ttk.Label(form, text=text, font=("Segoe UI", 9, "bold")).grid(
                 row=r, column=0, sticky=W, pady=4, padx=(0, 10))
 
-        def entry(key, r, width=24, widget="entry", options=None):
+        def entry(key, r, width=24, widget="entry", options=None, editable=False):
             var = tk.StringVar()
             self._vars[key] = var
             if widget == "combobox":
                 w = ttk.Combobox(form, textvariable=var, values=options or [],
-                                  width=width, state="readonly")
+                                  width=width,
+                                  state="normal" if editable else "readonly")
             else:
                 w = ttk.Entry(form, textvariable=var, width=width)
             w.grid(row=r, column=1, sticky=W, pady=4)
             return var
 
-        lbl("Description:", row_num)
+        lbl("Repair Notes:", row_num)
         entry("description", row_num, width=36)
         row_num += 1
 
         lbl("Priority:", row_num)
-        entry("priority", row_num, widget="combobox",
-              options=PRIORITY_OPTIONS, width=18)
+        var = entry("priority", row_num, widget="combobox",
+                    options=PRIORITY_OPTIONS, width=18)
+        var.set("1 - Normal")
         row_num += 1
 
-        lbl("Date Added:", row_num)
+        lbl("Date Entered:", row_num)
         var = entry("date_added", row_num, width=16)
         var.set(datetime.today().strftime("%Y-%m-%d"))
         row_num += 1
 
-        lbl("Sent To (shop):", row_num)
-        entry("assigned_to", row_num, width=28)
+        lbl("Repair Shop:", row_num)
+        entry("assigned_to", row_num, widget="combobox",
+              options=REPAIR_SHOPS, width=26, editable=True)
         row_num += 1
 
         lbl("Date Repaired:", row_num)
         entry("date_repaired", row_num, width=16)
         row_num += 1
 
-        lbl("Location:", row_num)
-        entry("location", row_num, width=28)
-        row_num += 1
+        if not self._invoice_review:
+            lbl("Est. Cost ($):", row_num)
+            entry("est_cost", row_num, width=14)
+            row_num += 1
 
-        lbl("Est. Cost ($):", row_num)
-        entry("est_cost", row_num, width=14)
-        row_num += 1
-
-        lbl("Actual Cost ($):", row_num)
+        lbl("Cost ($):", row_num)
         entry("act_cost", row_num, width=14)
         row_num += 1
 
@@ -140,7 +150,7 @@ class RepairDialog(ttk.Toplevel):
         entry("invoice_number", row_num, width=20)
         row_num += 1
 
-        lbl("Notes:", row_num)
+        lbl("Source Notes:", row_num)
         self._notes_text = tk.Text(form, height=3, width=36, font=("Segoe UI", 9),
                                     relief="solid", bd=1, wrap=WORD)
         self._notes_text.grid(row=row_num, column=1, pady=4, sticky=W)
@@ -177,6 +187,16 @@ class RepairDialog(ttk.Toplevel):
             else:
                 var.set("" if val is None else str(val))
 
+        # Location is no longer a field — old records that used it as the shop
+        # show it in Repair Shop; otherwise it's preserved untouched on save.
+        loc = ((repair["location"] or "").strip()
+               if "location" in repair.keys() else "")
+        if loc and not (self._vars["assigned_to"].get() or "").strip():
+            self._vars["assigned_to"].set(loc)
+            self._orig_location = ""
+        else:
+            self._orig_location = loc
+
         notes = repair["notes"] or ""
         self._notes_text.delete("1.0", "end")
         self._notes_text.insert("1.0", notes)
@@ -185,6 +205,7 @@ class RepairDialog(ttk.Toplevel):
         data = {k: v.get().strip() for k, v in self._vars.items()}
         data["notes"] = self._notes_text.get("1.0", "end").strip()
         data["instrument_id"] = self.instrument_id
+        data["location"] = self._orig_location
 
         # Parse priority number from option string
         pri_raw = data.get("priority", "")
@@ -203,7 +224,7 @@ class RepairDialog(ttk.Toplevel):
 
     def _validate(self, data: dict) -> bool:
         if not data.get("description"):
-            Messagebox.show_warning("Description is required.", title="Validation")
+            Messagebox.show_warning("Repair notes are required.", title="Validation")
             return False
         return True
 

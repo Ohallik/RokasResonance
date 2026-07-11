@@ -46,6 +46,14 @@ def _last_word(s: str) -> str:
 
 MATCH_THRESHOLD = 0.82
 
+# Signals that an ensemble name belongs to a school ("Bellevue High School
+# Wind Ensemble", "BHS Jazz Band") — used to spot OTHER schools' groups on
+# joint-concert programs.
+_SCHOOL_WORD_RE = re.compile(
+    r"\b(high school|middle school|junior high|intermediate school|elementary)\b",
+    re.IGNORECASE)
+_SCHOOL_ABBREV_RE = re.compile(r"\b[A-Z]{0,4}(?:HS|MS|JH)\b")
+
 PROGRAM_SYSTEM = (
     "You extract structured performance data from school concert programs. "
     "Return only valid JSON."
@@ -73,7 +81,10 @@ def _build_prompt(text: str) -> str:
         '"event_name":"", "performance_date":"", "notes":""}]\n'
         "- title: the piece title as printed.\n"
         "- composer: the name after the piece; if it starts with 'arr.' put it in arranger instead.\n"
-        "- ensemble: the performing ensemble's heading.\n"
+        "- ensemble: the performing ensemble's heading. If the program includes "
+        "ensembles from more than one school (a joint concert), keep the school "
+        "name in the ensemble exactly as printed (e.g. 'Bellevue High School "
+        "Wind Ensemble').\n"
         "- event_name: the concert's name/title (same for every piece).\n"
         "- performance_date: the concert date as YYYY-MM-DD if shown, else empty.\n"
         "- notes: soloists or notable details, else empty.\n"
@@ -253,6 +264,10 @@ class ProgramImportDialog(ttk.Toplevel):
         self._items = []          # parsed rows (dicts, augmented with match info)
         self._failed = []         # (filename, reason)
         self._library = db.get_music_for_matching()
+        from ui.settings_dialog import load_settings
+        self._school = ((load_settings(base_dir).get("teacher") or {})
+                        .get("school_name") or "").strip()
+        self._known = None        # lazy: lowercased own-ensemble vocabulary
 
         self.title("Import Concert Program(s)")
         self.resizable(True, True)
@@ -344,12 +359,14 @@ class ProgramImportDialog(ttk.Toplevel):
             Messagebox.show_info(msg, title="Nothing Found", parent=self)
             self.destroy()
             return
-        # Match each item to the library
+        # Fold our own school's name out of ensemble headings and flag other
+        # schools' groups (joint concerts), then match each item to the library
         for it in items:
+            self._classify_school(it)
             m = self._match(it["title"], it["composer"])
             it["match_id"] = m["id"] if m else None
             it["match_title"] = m["title"] if m else ""
-            it["include"] = True
+            it["include"] = not it["other_school"]
         self._items = items
         for w in self._progress_frame.winfo_children():
             w.destroy()
@@ -373,6 +390,62 @@ class ProgramImportDialog(ttk.Toplevel):
                 best_score, best = score, m
         return best if best_score >= MATCH_THRESHOLD else None
 
+    # ── School filtering ────────────────────────────────────────────────────
+
+    def _known_ensembles(self):
+        """Lowercased names of the teacher's own ensembles: the program type's
+        standard classes plus everything already in performance history."""
+        if self._known is None:
+            from ui.ensembles import ensembles_for
+            from database import strip_school_prefix
+            names = {e.lower() for e in ensembles_for(self.mode)}
+            try:
+                for e in self.db.get_distinct_performance_ensembles():
+                    names.add(strip_school_prefix(e, self._school).lower())
+            except Exception:
+                pass
+            self._known = names
+        return self._known
+
+    def _classify_school(self, it):
+        """Normalize one parsed item's ensemble in place: strip our own
+        school's name, and set it['other_school'] for other schools' groups."""
+        from database import strip_school_prefix
+        raw = (it.get("ensemble") or "").strip()
+        stripped = strip_school_prefix(raw, self._school)
+        it["ensemble"] = stripped
+        # Our school's name was on the heading — definitely ours.
+        it["other_school"] = False if stripped != raw else self._is_other_school(stripped)
+
+    def _is_other_school(self, ensemble: str) -> bool:
+        from database import school_name_variants
+        e = (ensemble or "").strip()
+        if not e:
+            return False
+        low = e.lower()
+        known = self._known_ensembles()
+        if low in known:
+            return False
+        own = [v.lower() for v in school_name_variants(self._school)]
+        # Mentions a school ("… High School …", "BHS …") that isn't ours
+        if ((_SCHOOL_WORD_RE.search(e) or _SCHOOL_ABBREV_RE.search(e))
+                and not any(v in low for v in own)):
+            return True
+        # "Bellevue Jazz 1" — one of OUR ensemble names with a foreign prefix
+        for k in known:
+            if low.endswith(" " + k):
+                prefix = low[: -len(k)].strip(" -–—:")
+                if prefix and prefix not in own:
+                    return True
+        return False
+
+    def _own_only(self) -> bool:
+        var = getattr(self, "_own_only_var", None)
+        return bool(var.get()) if var else True
+
+    def _is_hidden(self, it) -> bool:
+        return self._own_only() and bool(it.get("other_school"))
+
     # ── Phase 2: review ─────────────────────────────────────────────────────
 
     def _build_review(self):
@@ -389,6 +462,19 @@ class ProgramImportDialog(ttk.Toplevel):
                                     "its details or library match. ✓ = matched to your library.",
                   font=("Segoe UI", 8), foreground="#666", wraplength=880,
                   justify=LEFT).pack(anchor=W, padx=16, pady=(8, 4))
+
+        # Joint concerts list other schools' groups too — hide those by default.
+        filt = ttk.Frame(self)
+        filt.pack(fill=X, padx=16, pady=(0, 4))
+        self._own_only_var = tk.BooleanVar(value=True)
+        school_label = self._school or "my school's"
+        ttk.Checkbutton(filt, variable=self._own_only_var, bootstyle=PRIMARY,
+                        text=f"Look ONLY for {school_label} ensembles and ignore "
+                             "other schools' ensembles",
+                        command=self._on_own_only_toggle).pack(side=LEFT)
+        self._hidden_lbl = ttk.Label(filt, text="", font=("Segoe UI", 8),
+                                     foreground="#8B4000")
+        self._hidden_lbl.pack(side=LEFT, padx=(10, 0))
 
         # Bulk-correct date/event for the ticked rows (handy if AI missed a date)
         top = ttk.Frame(self)
@@ -467,8 +553,14 @@ class ProgramImportDialog(ttk.Toplevel):
 
     def _refill(self):
         self.tree.delete(*self.tree.get_children())
+        hidden = 0
         for i, it in enumerate(self._items):
+            if self._is_hidden(it):
+                hidden += 1
+                continue
             match = it["match_title"] if it["match_id"] else "＋ new piece"
+            if it.get("other_school"):
+                match = "⚠ other school?"
             self.tree.insert("", "end", iid=str(i), values=(
                 "☑" if it["include"] else "☐",
                 it["performance_date"] or "—",
@@ -478,6 +570,19 @@ class ProgramImportDialog(ttk.Toplevel):
                 it["event_name"] or "—",
                 match,
             ))
+        if getattr(self, "_hidden_lbl", None):
+            self._hidden_lbl.config(
+                text=(f"{hidden} piece(s) by other schools' ensembles hidden "
+                      "— untick to review them" if hidden else ""))
+
+    def _on_own_only_toggle(self):
+        # Re-hiding also un-ticks other-school rows so they can't sneak in.
+        if self._own_only():
+            for it in self._items:
+                if it.get("other_school"):
+                    it["include"] = False
+        self._refill()
+        self._update_summary()
 
     def _on_click(self, event):
         if self.tree.identify("region", event.x, event.y) != "cell":
@@ -494,12 +599,14 @@ class ProgramImportDialog(ttk.Toplevel):
 
     def _set_all(self, val):
         for it in self._items:
-            it["include"] = val
+            if not self._is_hidden(it):
+                it["include"] = val
         self._refill()
         self._update_summary()
 
     def _update_summary(self):
-        inc = [it for it in self._items if it["include"]]
+        inc = [it for it in self._items
+               if it["include"] and not self._is_hidden(it)]
         matched = sum(1 for it in inc if it["match_id"])
         unknown = len(inc) - matched
         create = getattr(self, "_create_var", None)
@@ -513,7 +620,8 @@ class ProgramImportDialog(ttk.Toplevel):
         seen, out = set(), []
         # The program's own classes first, then anything parsed, then history.
         pools = [ensembles_for(self.mode),
-                 [it.get("ensemble", "") for it in self._items]]
+                 [it.get("ensemble", "") for it in self._items
+                  if not it.get("other_school")]]
         try:
             pools.append(self.db.get_distinct_performance_ensembles())
         except Exception:
@@ -605,6 +713,9 @@ class ProgramImportDialog(ttk.Toplevel):
                 it[key] = v.get().strip()
             it["match_id"] = match_state["id"]
             it["match_title"] = match_state["title"]
+            # Re-normalize the (possibly corrected) ensemble and refresh the
+            # other-school flag — renaming to one of our groups un-hides it.
+            self._classify_school(it)
             win.destroy()
             self._refill()
             self.tree.selection_set(str(i))
@@ -677,7 +788,7 @@ class ProgramImportDialog(ttk.Toplevel):
         seen_batch = set()   # (mid, date, ensemble) recorded in THIS run
 
         for it in self._items:
-            if not it["include"]:
+            if not it["include"] or self._is_hidden(it):
                 continue
             date = (it.get("performance_date") or "").strip()
             event = (it.get("event_name") or "").strip()

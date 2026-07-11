@@ -285,7 +285,8 @@ class CheckoutDialog(ttk.Toplevel):
             row=3, column=0, sticky=W, pady=4)
         self._condition_var = tk.StringVar()
         ttk.Combobox(form, textvariable=self._condition_var,
-                     values=["New", "Excellent", "Good", "Fair", "Poor", "Needs Repair"],
+                     values=["New", "Excellent", "Good", "Fair", "Poor",
+                             "Needs Repair", "Unrepairable"],
                      width=18, state="readonly").grid(row=3, column=1, sticky=W, pady=4, padx=6)
 
         ttk.Label(form, text="Notes:", font=("Segoe UI", 9, "bold")).grid(

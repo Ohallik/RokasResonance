@@ -9,7 +9,8 @@ from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
 
 
-CONDITION_OPTIONS = ["New", "Excellent", "Good", "Fair", "Poor", "Needs Repair", "Unknown"]
+CONDITION_OPTIONS = ["New", "Excellent", "Good", "Fair", "Poor", "Needs Repair",
+                     "Unrepairable", "Unknown"]
 CATEGORY_OPTIONS = [
     "Flute", "Oboe", "Clarinet", "Bass Clarinet", "Bassoon",
     "Alto Saxophone", "Tenor Saxophone", "Baritone Saxophone",

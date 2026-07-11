@@ -5,7 +5,40 @@ database.py - SQLite database layer for Roka's Resonance
 import sqlite3
 import shutil
 import os
+import re
 from datetime import datetime
+
+
+def school_name_variants(school_name: str):
+    """Ways the teacher's school may be written in front of an ensemble name.
+    'Chinook Middle School' -> ['Chinook Middle School', 'Chinook MS',
+    'Chinook', ...], longest first so the most specific prefix wins."""
+    s = (school_name or "").strip()
+    if not s:
+        return []
+    variants = {s}
+    base = re.sub(
+        r"\s+(middle school|high school|elementary school|junior high school|"
+        r"junior high|intermediate school|school|m\.?s\.?|h\.?s\.?)\.?$",
+        "", s, flags=re.IGNORECASE).strip()
+    if base:
+        variants |= {base, f"{base} Middle School", f"{base} High School",
+                     f"{base} MS", f"{base} HS"}
+    return sorted((v for v in variants if v), key=len, reverse=True)
+
+
+def strip_school_prefix(ensemble: str, school_name: str) -> str:
+    """Fold the teacher's own school out of an ensemble name so joint-concert
+    listings like 'Chinook Jazz 1' land in the existing 'Jazz 1' cohort."""
+    e = (ensemble or "").strip()
+    low = e.lower()
+    for v in school_name_variants(school_name):
+        vl = v.lower()
+        if low.startswith(vl) and (len(e) == len(v) or not e[len(v)].isalnum()):
+            rest = e[len(v):].lstrip(" -–—:")
+            if rest:
+                return rest
+    return e
 
 
 def _dict_factory(cursor, row):
@@ -507,9 +540,15 @@ class Database:
             # Migrate: student ensemble / class-period / instrument fields.
             # Stored as comma-separated strings (e.g. "Advanced Band,Jazz 1"
             # and "1,3,5") so a student can belong to several at once.
+            # honors / all_state: program-recognition flags ("♪ = Honors in
+            # Band", Jr. All-State) shown next to names on concert programs.
+            # jazz_instrument: what they play in jazz band when it differs
+            # from their concert instrument (e.g. Horn player on Guitar).
             for col in ("ensembles TEXT", "class_periods TEXT",
                         "primary_instrument TEXT", "secondary_instrument TEXT",
-                        "preferred_name TEXT"):
+                        "preferred_name TEXT",
+                        "honors INTEGER DEFAULT 0", "all_state INTEGER DEFAULT 0",
+                        "jazz_instrument TEXT"):
                 try:
                     conn.execute(f"ALTER TABLE students ADD COLUMN {col}")
                     conn.commit()
@@ -568,21 +607,61 @@ class Database:
 
     # ─── Backup ────────────────────────────────────────────────────────────────
 
-    def backup(self, max_backups: int = 10) -> str | None:
-        """
-        Copy the database file to a timestamped backup in a 'backups' folder
-        next to the database. Keeps the most recent *max_backups* copies.
-        Returns the backup path on success, or None if the db file doesn't exist.
-        """
-        if not os.path.exists(self.db_path):
-            return None
+    def _companion_files(self):
+        """Everything else in the profile folder that holds user data and
+        must ride along in backups: the per-year Teacher Tools databases
+        (seating charts, percussion rotations, concerts, field trips) and
+        settings.json."""
+        base = os.path.dirname(os.path.abspath(self.db_path))
+        out = []
+        try:
+            for fn in os.listdir(base):
+                if fn.startswith("lesson_plans_") and fn.endswith(".db"):
+                    out.append(os.path.join(base, fn))
+        except OSError:
+            pass
+        settings = os.path.join(base, "settings.json")
+        if os.path.exists(settings):
+            out.append(settings)
+        return out
 
-        backup_dir = os.path.join(os.path.dirname(self.db_path), "backups")
-        os.makedirs(backup_dir, exist_ok=True)
+    @staticmethod
+    def _checkpoint_sqlite(path):
+        """Flush a WAL journal into the main file so the copy is complete."""
+        try:
+            conn = sqlite3.connect(path)
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.close()
+        except Exception:
+            pass
 
+    @staticmethod
+    def _rotate_backups(dir_, max_backups):
+        """Keep the newest max_backups per file family — a family is the
+        name before the _YYYYMMDD_HHMMSS timestamp, so the main database,
+        each year's Teacher Tools file, and settings rotate independently."""
+        try:
+            files = os.listdir(dir_)
+        except OSError:
+            return
+        groups = {}
+        for f in files:
+            m = re.match(r"(.+)_\d{8}_\d{6}(\.\w+)$", f)
+            if not m:
+                continue
+            groups.setdefault(m.group(1) + m.group(2), []).append(f)
+        for fam_files in groups.values():
+            for old in sorted(fam_files, reverse=True)[max_backups:]:
+                try:
+                    os.remove(os.path.join(dir_, old))
+                except OSError:
+                    pass
+
+    def _backup_all_to(self, dest_dir: str, max_backups: int) -> str:
+        """Copy the main database plus all companion files (per-year Teacher
+        Tools DBs, settings.json) into dest_dir with a shared timestamp."""
+        os.makedirs(dest_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_name = f"rokas_resonance_{timestamp}.db"
-        backup_path = os.path.join(backup_dir, backup_name)
 
         # Flush WAL to main db before copying
         try:
@@ -590,60 +669,46 @@ class Database:
                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         except Exception:
             pass
-
+        backup_path = os.path.join(dest_dir, f"rokas_resonance_{timestamp}.db")
         shutil.copy2(self.db_path, backup_path)
 
-        # Rotate: keep only the newest max_backups files
-        backups = sorted(
-            [f for f in os.listdir(backup_dir) if f.endswith(".db")],
-            reverse=True,
-        )
-        for old in backups[max_backups:]:
+        for path in self._companion_files():
             try:
-                os.remove(os.path.join(backup_dir, old))
+                if path.endswith(".db"):
+                    self._checkpoint_sqlite(path)
+                stem, ext = os.path.splitext(os.path.basename(path))
+                shutil.copy2(path, os.path.join(dest_dir,
+                                                f"{stem}_{timestamp}{ext}"))
             except OSError:
-                pass
+                pass    # one bad companion shouldn't sink the whole backup
 
+        self._rotate_backups(dest_dir, max_backups)
         return backup_path
+
+    def backup(self, max_backups: int = 10) -> str | None:
+        """
+        Copy the database — plus the per-year Teacher Tools databases and
+        settings.json — to timestamped backups in a 'backups' folder next to
+        the database. Keeps the most recent *max_backups* copies of each.
+        Returns the main backup path, or None if the db file doesn't exist.
+        """
+        if not os.path.exists(self.db_path):
+            return None
+        backup_dir = os.path.join(os.path.dirname(self.db_path), "backups")
+        return self._backup_all_to(backup_dir, max_backups)
 
     def backup_to_external(self, external_dir: str, profile_name: str = "", max_backups: int = 30) -> str:
         """
-        Copy the database to a user-specified external folder (e.g. OneDrive, network drive).
-        Files are stored in a subfolder named after the profile so multiple profiles
-        don't overwrite each other.  Keeps the most recent *max_backups* copies.
-        Returns the backup path on success, raises on failure.
+        Copy the database — plus the per-year Teacher Tools databases and
+        settings.json — to a user-specified external folder (e.g. OneDrive,
+        network drive).  Files are stored in a subfolder named after the
+        profile so multiple profiles don't overwrite each other.  Keeps the
+        most recent *max_backups* copies of each file.
         """
         if not os.path.exists(self.db_path):
             raise FileNotFoundError(f"Database not found: {self.db_path}")
-
-        # Use a subfolder per profile so multiple teachers' backups don't collide
         dest_dir = os.path.join(external_dir, profile_name) if profile_name else external_dir
-        os.makedirs(dest_dir, exist_ok=True)
-
-        # Flush WAL before copying
-        try:
-            with self._connect() as conn:
-                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        except Exception:
-            pass
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_name = f"rokas_resonance_{timestamp}.db"
-        backup_path = os.path.join(dest_dir, backup_name)
-        shutil.copy2(self.db_path, backup_path)
-
-        # Rotate: keep only the newest max_backups files
-        backups = sorted(
-            [f for f in os.listdir(dest_dir) if f.endswith(".db")],
-            reverse=True,
-        )
-        for old in backups[max_backups:]:
-            try:
-                os.remove(os.path.join(dest_dir, old))
-            except OSError:
-                pass
-
-        return backup_path
+        return self._backup_all_to(dest_dir, max_backups)
 
     # ─── Instrument CRUD ───────────────────────────────────────────────────────
 
@@ -898,7 +963,7 @@ class Database:
             "parent1_phone", "parent1_email", "parent2_name", "parent2_relation",
             "parent2_phone", "parent2_email", "notes",
             "ensembles", "class_periods", "primary_instrument", "secondary_instrument",
-            "preferred_name"
+            "preferred_name", "jazz_instrument"
         ]
         values = [data.get(c) for c in cols]
         placeholders = ",".join(["?"] * len(cols))
@@ -917,7 +982,7 @@ class Database:
             "parent1_phone", "parent1_email", "parent2_name", "parent2_relation",
             "parent2_phone", "parent2_email", "notes",
             "ensembles", "class_periods", "primary_instrument", "secondary_instrument",
-            "preferred_name", "is_active"
+            "preferred_name", "jazz_instrument", "is_active"
         ]
         set_clause = ", ".join([f"{c}=?" for c in cols])
         values = [data.get(c) for c in cols] + [student_id]
@@ -953,6 +1018,32 @@ class Database:
                 "SELECT DISTINCT school_year FROM students WHERE school_year IS NOT NULL ORDER BY school_year DESC"
             ).fetchall()
         return [r["school_year"] for r in rows]
+
+    def archive_school_year(self, school_year: str) -> int:
+        """Close out a school year: mark its active students inactive.  Their
+        records stay in the database and can be reactivated (or picked up by
+        the New School Year class-list import).  Honors / Jr. All-State marks
+        are cleared — they must be earned again each year.  Returns the
+        count archived."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE students SET is_active=0, honors=0, all_state=0 "
+                "WHERE school_year=? AND is_active=1", (school_year,))
+            return cur.rowcount
+
+    def set_student_honors(self, student_id: int, honors=None, all_state=None):
+        """Set the concert-program recognition flags.  Deliberately separate
+        from update_student so ordinary edits can't wipe them."""
+        sets, vals = [], []
+        if honors is not None:
+            sets.append("honors=?"); vals.append(1 if honors else 0)
+        if all_state is not None:
+            sets.append("all_state=?"); vals.append(1 if all_state else 0)
+        if not sets:
+            return
+        vals.append(student_id)
+        with self._connect() as conn:
+            conn.execute(f"UPDATE students SET {', '.join(sets)} WHERE id=?", vals)
 
     # ─── Bulk ensemble / period / instrument assignment ─────────────────────────
 
@@ -1261,7 +1352,9 @@ class Database:
     def get_instruments_needing_repair(self):
         """One row per instrument that has at least one open (not-yet-repaired)
         repair, with the open repairs aggregated.  Used by the Needs/Out-for-
-        Repair views and the technician export so each instrument appears once."""
+        Repair views and the technician export so each instrument appears once.
+        Instruments whose condition is 'Unrepairable' are excluded — they are
+        beyond salvage, so open repairs shouldn't keep surfacing them."""
         with self._connect() as conn:
             return conn.execute(
                 """SELECT i.id, i.category, i.description AS instrument_desc,
@@ -1275,7 +1368,8 @@ class Database:
                                        NULLIF(TRIM(r.location), ''), '')) AS shop
                    FROM instruments i
                    JOIN repairs r ON r.instrument_id = i.id
-                   WHERE r.date_repaired IS NULL OR TRIM(r.date_repaired) = ''
+                   WHERE (r.date_repaired IS NULL OR TRIM(r.date_repaired) = '')
+                     AND LOWER(TRIM(IFNULL(i.condition,''))) != 'unrepairable'
                    GROUP BY i.id
                    ORDER BY max_priority DESC, i.category, i.description"""
             ).fetchall()
@@ -2022,6 +2116,34 @@ class Database:
             if target in members:
                 out.append(r)
         return out
+
+    def normalize_performance_ensembles(self, school_name: str) -> int:
+        """Strip the teacher's own school name from recorded performance
+        ensembles so 'Chinook Jazz 1' and 'Jazz 1' are one cohort.  Ensembles
+        may be comma-separated (combined performances); each member is folded
+        and de-duplicated.  Idempotent — safe to run every launch.  Returns
+        the number of rows rewritten."""
+        if not school_name_variants(school_name):
+            return 0
+        changed = 0
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, ensemble FROM performances "
+                "WHERE ensemble IS NOT NULL AND TRIM(ensemble) != ''"
+            ).fetchall()
+            for r in rows:
+                parts = [p.strip() for p in (r["ensemble"] or "").split(",")
+                         if p.strip()]
+                new_parts = []
+                for p in parts:
+                    np = strip_school_prefix(p, school_name)
+                    if np not in new_parts:
+                        new_parts.append(np)
+                if new_parts != parts:
+                    conn.execute("UPDATE performances SET ensemble=? WHERE id=?",
+                                 (", ".join(new_parts), r["id"]))
+                    changed += 1
+        return changed
 
     def get_distinct_performance_ensembles(self):
         """Individual ensemble names across all performances, splitting any

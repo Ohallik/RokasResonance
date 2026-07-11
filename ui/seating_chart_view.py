@@ -319,7 +319,12 @@ class SeatingChartView(ttk.Frame):
         return None
 
     def _student_year(self):
+        """Rosters follow the hub's selected school year (matching how the
+        concert program picks students); fall back to the newest year."""
         years = self.main_db.get_school_years()
+        hub_year = self._year()
+        if hub_year and hub_year in years:
+            return hub_year
         return years[0] if years else None
 
     def _effective_instrument(self, student_id, primary, secondary):

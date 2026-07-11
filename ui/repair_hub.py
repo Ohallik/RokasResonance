@@ -81,7 +81,7 @@ class RepairHub(ttk.Toplevel):
         ttk.Label(views, text="View:", font=("Segoe UI", 9, "bold")).pack(side=LEFT, padx=(0, 8))
         for value, label in VIEWS:
             ttk.Radiobutton(views, text=label, value=value, variable=self._view,
-                            bootstyle=(SECONDARY, TOOLBUTTON),
+                            bootstyle=(SECONDARY, OUTLINE, TOOLBUTTON),
                             command=self._reload, width=15).pack(side=LEFT, padx=2)
         self._summary_lbl = ttk.Label(views, text="", foreground="#666")
         self._summary_lbl.pack(side=RIGHT, padx=8)

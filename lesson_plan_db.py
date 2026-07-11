@@ -238,7 +238,138 @@ class LessonPlanDatabase:
                     buffer INTEGER DEFAULT 0,
                     UNIQUE(school_year, student_name)
                 );
+
+                CREATE TABLE IF NOT EXISTS concerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    school_year TEXT,
+                    title TEXT NOT NULL,
+                    concert_date TEXT,
+                    start_time TEXT,
+                    end_time TEXT,
+                    location TEXT,
+                    offsite INTEGER DEFAULT 0,
+                    ensembles TEXT,
+                    attire TEXT,
+                    bring TEXT,
+                    arrival TEXT,
+                    rehearsals TEXT,
+                    itinerary TEXT,
+                    perf_order TEXT,
+                    acknowledgements TEXT,
+                    upcoming TEXT,
+                    notes TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS concert_pieces (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    concert_id INTEGER NOT NULL,
+                    ensemble TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    composer TEXT,
+                    arranger TEXT,
+                    position INTEGER DEFAULT 0,
+                    FOREIGN KEY (concert_id) REFERENCES concerts(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS concert_reminders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    concert_id INTEGER NOT NULL,
+                    stage TEXT NOT NULL,
+                    sent_date TEXT,
+                    UNIQUE(concert_id, stage),
+                    FOREIGN KEY (concert_id) REFERENCES concerts(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS program_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS field_trips (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    school_year TEXT,
+                    name TEXT NOT NULL,
+                    groups_list TEXT,
+                    destination TEXT,
+                    depart_date TEXT,
+                    depart_time TEXT,
+                    return_date TEXT,
+                    return_time TEXT,
+                    travel_method TEXT,
+                    entry_fee REAL DEFAULT 0,
+                    transport_cost REAL DEFAULT 0,
+                    food_cost REAL DEFAULT 0,
+                    sub_cost REAL DEFAULT 0,
+                    other_cost REAL DEFAULT 0,
+                    funding TEXT DEFAULT 'curricular',
+                    covered INTEGER DEFAULT 0,
+                    approved INTEGER DEFAULT 0,
+                    sub_assigned INTEGER DEFAULT 0,
+                    bus_requested INTEGER DEFAULT 0,
+                    notes TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS field_trip_exclusions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trip_id INTEGER NOT NULL,
+                    student_id INTEGER NOT NULL,
+                    UNIQUE(trip_id, student_id),
+                    FOREIGN KEY (trip_id) REFERENCES field_trips(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS field_trip_chaperones (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trip_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    phone TEXT,
+                    email TEXT,
+                    cleared INTEGER DEFAULT 0,
+                    FOREIGN KEY (trip_id) REFERENCES field_trips(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS field_trip_reminders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trip_id INTEGER NOT NULL,
+                    stage TEXT NOT NULL,
+                    sent_date TEXT,
+                    UNIQUE(trip_id, stage),
+                    FOREIGN KEY (trip_id) REFERENCES field_trips(id)
+                );
             """)
+            # Migration: structured itinerary fields on older concerts tables,
+            # plus the tri-state prep checklist (0 to do / 1 done / 2 N/A).
+            for col in ("setup TEXT", "seated_by TEXT", "directors TEXT",
+                        "extra_info TEXT", "special_guests TEXT",
+                        "venue_reserved INTEGER DEFAULT 0",
+                        "tutorials_scheduled INTEGER DEFAULT 0",
+                        "repertoire_final INTEGER DEFAULT 0",
+                        "details_sent INTEGER DEFAULT 0",
+                        "program_printed INTEGER DEFAULT 0",
+                        "setup_ready INTEGER DEFAULT 0",
+                        "email_staff TEXT"):
+                try:
+                    conn.execute(f"ALTER TABLE concerts ADD COLUMN {col}")
+                    conn.commit()
+                except Exception:
+                    pass
+            # Migration: per-trip saved email templates (reused year to year)
+            # + tri-state checklist items (0 = to do, 1 = done, 2 = N/A).
+            # FinalForms replaced paper permission slips: the office builds a
+            # participant group giving realtime medical / emergency info.
+            for col in ("email_families TEXT", "email_chaperones TEXT",
+                        "email_teachers TEXT",
+                        "registration_done INTEGER DEFAULT 0",
+                        "finalforms_done INTEGER DEFAULT 0",
+                        "nurse_check INTEGER DEFAULT 0"):
+                try:
+                    conn.execute(f"ALTER TABLE field_trips ADD COLUMN {col}")
+                    conn.commit()
+                except Exception:
+                    pass
             # Migration: add the buffer column to older seating_pins tables.
             try:
                 conn.execute("ALTER TABLE seating_pins ADD COLUMN buffer INTEGER DEFAULT 0")
@@ -1043,6 +1174,245 @@ class LessonPlanDatabase:
             conn.execute(
                 "DELETE FROM seating_pins WHERE school_year=? AND student_name=?",
                 (school_year, student_name))
+
+    # ─── Concerts (planning / programs / reminders) ──────────────────────────
+
+    _CONCERT_COLS = ["school_year", "title", "concert_date", "start_time",
+                     "end_time", "location", "offsite", "ensembles", "attire",
+                     "bring", "arrival", "setup", "seated_by", "rehearsals",
+                     "itinerary", "perf_order", "directors", "special_guests",
+                     "acknowledgements", "upcoming", "extra_info",
+                     "venue_reserved", "tutorials_scheduled",
+                     "repertoire_final", "details_sent", "program_printed",
+                     "setup_ready", "email_staff", "notes"]
+
+    def get_program_setting(self, key, default=""):
+        """Year-wide program values (e.g. the standing acknowledgements list) —
+        entered once, used by every concert in this school year's file."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM program_settings WHERE key=?",
+                               (key,)).fetchone()
+        return row["value"] if row and row["value"] is not None else default
+
+    def set_program_setting(self, key, value):
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO program_settings (key, value) VALUES (?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value))
+
+    def get_concerts(self, school_year=None):
+        with self._connect() as conn:
+            if school_year:
+                return conn.execute(
+                    "SELECT * FROM concerts WHERE school_year=? "
+                    "ORDER BY concert_date, title", (school_year,)).fetchall()
+            return conn.execute(
+                "SELECT * FROM concerts ORDER BY concert_date, title").fetchall()
+
+    def get_concert(self, concert_id):
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM concerts WHERE id=?",
+                                (concert_id,)).fetchone()
+
+    def add_concert(self, data):
+        cols = self._CONCERT_COLS
+        vals = [data.get(c) for c in cols]
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"INSERT INTO concerts ({','.join(cols)}) "
+                f"VALUES ({','.join(['?'] * len(cols))})", vals)
+            return cur.lastrowid
+
+    def update_concert(self, concert_id, data):
+        cols = [c for c in self._CONCERT_COLS if c in data]
+        if not cols:
+            return
+        set_clause = ", ".join(f"{c}=?" for c in cols) + ", updated_at=datetime('now')"
+        vals = [data[c] for c in cols] + [concert_id]
+        with self._connect() as conn:
+            conn.execute(f"UPDATE concerts SET {set_clause} WHERE id=?", vals)
+
+    def delete_concert(self, concert_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM concert_pieces WHERE concert_id=?", (concert_id,))
+            conn.execute("DELETE FROM concert_reminders WHERE concert_id=?", (concert_id,))
+            conn.execute("DELETE FROM concerts WHERE id=?", (concert_id,))
+
+    # ── Repertoire per ensemble ──
+
+    def get_concert_pieces(self, concert_id, ensemble=None):
+        with self._connect() as conn:
+            if ensemble:
+                return conn.execute(
+                    "SELECT * FROM concert_pieces WHERE concert_id=? AND ensemble=? "
+                    "ORDER BY position, id", (concert_id, ensemble)).fetchall()
+            return conn.execute(
+                "SELECT * FROM concert_pieces WHERE concert_id=? "
+                "ORDER BY ensemble, position, id", (concert_id,)).fetchall()
+
+    def add_concert_piece(self, data):
+        cols = ["concert_id", "ensemble", "title", "composer", "arranger", "position"]
+        vals = [data.get(c) for c in cols]
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"INSERT INTO concert_pieces ({','.join(cols)}) "
+                f"VALUES ({','.join(['?'] * len(cols))})", vals)
+            return cur.lastrowid
+
+    def update_concert_piece(self, piece_id, data):
+        cols = [c for c in ("ensemble", "title", "composer", "arranger", "position")
+                if c in data]
+        if not cols:
+            return
+        set_clause = ", ".join(f"{c}=?" for c in cols)
+        vals = [data[c] for c in cols] + [piece_id]
+        with self._connect() as conn:
+            conn.execute(f"UPDATE concert_pieces SET {set_clause} WHERE id=?", vals)
+
+    def delete_concert_piece(self, piece_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM concert_pieces WHERE id=?", (piece_id,))
+
+    # ── Reminder tracking ──
+
+    def get_concert_reminders(self, concert_id):
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM concert_reminders WHERE concert_id=?",
+                (concert_id,)).fetchall()
+
+    def mark_concert_reminder(self, concert_id, stage, sent_date):
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO concert_reminders (concert_id, stage, sent_date) "
+                "VALUES (?,?,?) ON CONFLICT(concert_id, stage) "
+                "DO UPDATE SET sent_date=excluded.sent_date",
+                (concert_id, stage, sent_date))
+
+    def clear_concert_reminder(self, concert_id, stage):
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM concert_reminders WHERE concert_id=? AND stage=?",
+                (concert_id, stage))
+
+    # ─── Field trips ──────────────────────────────────────────────────────────
+
+    _TRIP_COLS = ["school_year", "name", "groups_list", "destination",
+                  "depart_date", "depart_time", "return_date", "return_time",
+                  "travel_method", "entry_fee", "transport_cost", "food_cost",
+                  "sub_cost", "other_cost", "funding", "covered", "approved",
+                  "sub_assigned", "bus_requested", "registration_done",
+                  "finalforms_done", "nurse_check", "notes",
+                  "email_families", "email_chaperones", "email_teachers"]
+
+    def get_field_trips(self, school_year=None):
+        with self._connect() as conn:
+            if school_year:
+                return conn.execute(
+                    "SELECT * FROM field_trips WHERE school_year=? "
+                    "ORDER BY depart_date, name", (school_year,)).fetchall()
+            return conn.execute(
+                "SELECT * FROM field_trips ORDER BY depart_date, name").fetchall()
+
+    def get_field_trip(self, trip_id):
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM field_trips WHERE id=?",
+                                (trip_id,)).fetchone()
+
+    def add_field_trip(self, data):
+        cols = self._TRIP_COLS
+        vals = [data.get(c) for c in cols]
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"INSERT INTO field_trips ({','.join(cols)}) "
+                f"VALUES ({','.join(['?'] * len(cols))})", vals)
+            return cur.lastrowid
+
+    def update_field_trip(self, trip_id, data):
+        cols = [c for c in self._TRIP_COLS if c in data]
+        if not cols:
+            return
+        set_clause = ", ".join(f"{c}=?" for c in cols) + ", updated_at=datetime('now')"
+        vals = [data[c] for c in cols] + [trip_id]
+        with self._connect() as conn:
+            conn.execute(f"UPDATE field_trips SET {set_clause} WHERE id=?", vals)
+
+    def delete_field_trip(self, trip_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM field_trip_exclusions WHERE trip_id=?", (trip_id,))
+            conn.execute("DELETE FROM field_trip_chaperones WHERE trip_id=?", (trip_id,))
+            conn.execute("DELETE FROM field_trip_reminders WHERE trip_id=?", (trip_id,))
+            conn.execute("DELETE FROM field_trips WHERE id=?", (trip_id,))
+
+    # ── Who's NOT going ──
+
+    def get_trip_exclusions(self, trip_id):
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT student_id FROM field_trip_exclusions WHERE trip_id=?",
+                (trip_id,)).fetchall()
+        return {r["student_id"] for r in rows}
+
+    def set_trip_exclusions(self, trip_id, student_ids):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM field_trip_exclusions WHERE trip_id=?",
+                         (trip_id,))
+            conn.executemany(
+                "INSERT OR IGNORE INTO field_trip_exclusions (trip_id, student_id) "
+                "VALUES (?,?)", [(trip_id, sid) for sid in student_ids])
+
+    # ── Chaperones ──
+
+    def get_trip_chaperones(self, trip_id):
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM field_trip_chaperones WHERE trip_id=? "
+                "ORDER BY name", (trip_id,)).fetchall()
+
+    def add_trip_chaperone(self, trip_id, name, phone="", email="", cleared=0):
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO field_trip_chaperones "
+                "(trip_id, name, phone, email, cleared) VALUES (?,?,?,?,?)",
+                (trip_id, name, phone, email, 1 if cleared else 0))
+            return cur.lastrowid
+
+    def update_trip_chaperone(self, chap_id, data):
+        cols = [c for c in ("name", "phone", "email", "cleared") if c in data]
+        if not cols:
+            return
+        set_clause = ", ".join(f"{c}=?" for c in cols)
+        vals = [data[c] for c in cols] + [chap_id]
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE field_trip_chaperones SET {set_clause} WHERE id=?", vals)
+
+    def delete_trip_chaperone(self, chap_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM field_trip_chaperones WHERE id=?", (chap_id,))
+
+    # ── Reminder tracking (stage e.g. 'families-2 weeks') ──
+
+    def get_trip_reminders(self, trip_id):
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM field_trip_reminders WHERE trip_id=?",
+                (trip_id,)).fetchall()
+
+    def mark_trip_reminder(self, trip_id, stage, sent_date):
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO field_trip_reminders (trip_id, stage, sent_date) "
+                "VALUES (?,?,?) ON CONFLICT(trip_id, stage) "
+                "DO UPDATE SET sent_date=excluded.sent_date",
+                (trip_id, stage, sent_date))
+
+    def clear_trip_reminder(self, trip_id, stage):
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM field_trip_reminders WHERE trip_id=? AND stage=?",
+                (trip_id, stage))
 
     # ─── Stats ────────────────────────────────────────────────────────────────
 

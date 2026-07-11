@@ -26,31 +26,102 @@ CLASS_TYPE_LABELS = {
 }
 LABEL_TO_CLASS_TYPE = {v: k for k, v in CLASS_TYPE_LABELS.items()}
 
+# Two brand-new mallet colours signify the STICK a student grabs:
+YARN_COLOR = "#ffd8a8"      # orange — yarn mallets (marimba, vibraphone)
+RUBBER_COLOR = "#ffffff"    # white  — rubber/plastic mallets (xylophone, bells)
+
+# Fixed station colours (the teacher's original board scheme).
 STATION_COLORS = {
-    pr.MALLETS:   "#f6d9d9",
-    pr.SD:        "#fbeecb",
-    pr.TIMP_AUX:  "#d6e4f5",
-    pr.BD_SD:     "#d9ecd2",
-    pr.DRUM_SET:  "#e6dbf1",
+    pr.MALLETS:   "#f6d9d9",   # reddish — full-rotation free-choice mallet day
+    pr.SD:        "#fbeecb",   # light yellow — snare
+    pr.BD_SD:     "#d9ecd2",   # green — bass drum
+    pr.TIMP_AUX:  "#e6dbf1",   # purple — timpani / auxiliary
+    pr.DRUM_SET:  "#d6e4f5",   # blue — drum set
     pr.ALL_SNARE_LABEL: "#fbeecb",
+    pr.PAD:       "#ececec",   # gray — practice pad
 }
-_MALLET_INST_COLOR = "#eef4fb"
+
+
+def _color_for_station(station: str) -> str:
+    """Background colour for a station: fixed stations by name, mallet
+    instruments by stick family (yarn = orange, rubber/plastic = white)."""
+    if station in STATION_COLORS:
+        return STATION_COLORS[station]
+    fam = pr.mallet_family(station)
+    if fam == pr.YARN_MALLETS:
+        return YARN_COLOR
+    if fam == pr.RUBBER_MALLETS:
+        return RUBBER_COLOR
+    return "#ffffff"
 
 
 def _station_tag(station: str) -> str:
-    """Treeview tag name for a station's color (configured on each tree)."""
-    if station in STATION_COLORS:
-        return "st_" + station.replace("/", "_").replace(" ", "_")
-    if station in pr.MALLET_INSTRUMENTS:
-        return "st_mallet_inst"
-    return "st_default"
+    return "bg_" + _color_for_station(station).lstrip("#")
 
 
 def _configure_station_tags(tree: ttk.Treeview):
-    for station, color in STATION_COLORS.items():
-        tree.tag_configure(_station_tag(station), background=color)
-    tree.tag_configure("st_mallet_inst", background=_MALLET_INST_COLOR)
-    tree.tag_configure("st_default", background="#ffffff")
+    colors = set(STATION_COLORS.values()) | {YARN_COLOR, RUBBER_COLOR, "#ffffff"}
+    for c in colors:
+        tree.tag_configure("bg_" + c.lstrip("#"), background=c)
+
+
+# ── Mallet-type icons: crossed mallets, red/yarn vs white/rubber ──────────────
+# Students see at a glance which sticks to grab.  Drawn with PIL and cached on
+# the toplevel (so each window keeps its own live PhotoImage references).
+
+def _mallet_icon_image(family, px=18):
+    from PIL import Image, ImageDraw
+    s = 4
+    W = H = px * s
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    sw = max(2, int(W * 0.08))
+    stick = (70, 70, 70, 255)
+    d.line([(W * 0.22, H * 0.90), (W * 0.64, H * 0.34)], fill=stick, width=sw)
+    d.line([(W * 0.78, H * 0.90), (W * 0.36, H * 0.34)], fill=stick, width=sw)
+    if family == pr.YARN_MALLETS:
+        head, hi = (211, 78, 55, 255), (242, 150, 120, 255)     # warm red/orange
+    else:
+        head, hi = (232, 232, 235, 255), (255, 255, 255, 255)   # white/silver
+    r = int(W * 0.18)
+    for cx, cy in [(W * 0.64, H * 0.30), (W * 0.36, H * 0.30)]:
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=head,
+                  outline=(60, 60, 60, 255), width=max(1, sw // 2))
+        d.ellipse([cx - r * 0.5, cy - r * 0.5, cx + r * 0.1, cy + r * 0.1], fill=hi)
+    return img.resize((px, px), Image.LANCZOS)
+
+
+def _mallet_icon(widget, family):
+    top = widget.winfo_toplevel()
+    cache = getattr(top, "_mallet_icons", None)
+    if cache is None:
+        cache = {}
+        top._mallet_icons = cache
+    if family not in cache:
+        try:
+            from PIL import ImageTk
+            cache[family] = ImageTk.PhotoImage(_mallet_icon_image(family),
+                                               master=top)
+        except Exception:
+            cache[family] = None
+    return cache[family]
+
+
+def _yarn_icon(widget):
+    return _mallet_icon(widget, pr.YARN_MALLETS)
+
+
+def _rubber_icon(widget):
+    return _mallet_icon(widget, pr.RUBBER_MALLETS)
+
+
+def _icon_for_station(widget, station):
+    fam = pr.mallet_family(station)
+    if fam == pr.YARN_MALLETS:
+        return _yarn_icon(widget)
+    if fam == pr.RUBBER_MALLETS:
+        return _rubber_icon(widget)
+    return None
 
 
 class PercussionRotationView(ttk.Frame):
@@ -72,6 +143,8 @@ class PercussionRotationView(ttk.Frame):
                    command=self._edit_group).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="🗑️ Delete", bootstyle=DANGER,
                    command=self._delete_group).pack(side=LEFT, padx=2, pady=6)
+        ttk.Button(toolbar, text="🎵 Mallet Equipment…", bootstyle=(INFO, OUTLINE),
+                   command=self._edit_equipment).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="🔄 Refresh", bootstyle=(SECONDARY, OUTLINE),
                    command=self.refresh).pack(side=LEFT, padx=6, pady=6)
         ttk.Label(toolbar,
@@ -158,14 +231,40 @@ class PercussionRotationView(ttk.Frame):
         board_frame = ttk.Labelframe(self._content, text=" Today's Assignment ", padding=4)
         board_frame.pack(fill=BOTH, expand=True, pady=(4, 6))
         bcols = ("Player", "Station")
-        self._board = ttk.Treeview(board_frame, columns=bcols, show="headings",
+        # "tree headings": the #0 column carries the mallet-type icon per row.
+        self._board = ttk.Treeview(board_frame, columns=bcols,
+                                   show="tree headings",
                                    selectmode="none", bootstyle=INFO)
+        self._board.heading("#0", text="")
+        self._board.column("#0", width=34, minwidth=34, stretch=False,
+                           anchor=CENTER)
         self._board.heading("Player", text="Player", anchor=W)
         self._board.heading("Station", text="Working On", anchor=W)
         self._board.column("Player", width=160, anchor=W, stretch=True)
         self._board.column("Station", width=160, anchor=W, stretch=True)
         _configure_station_tags(self._board)
         self._board.pack(fill=BOTH, expand=True)
+
+        # Legend: what the colours + icons mean.
+        legend = ttk.Frame(self._content)
+        legend.pack(fill=X, pady=(0, 4))
+
+        def swatch(color, text, icon=None):
+            cell = ttk.Frame(legend)
+            cell.pack(side=LEFT, padx=(0, 10))
+            tk.Label(cell, width=2, background=color, relief="solid",
+                     borderwidth=1).pack(side=LEFT)
+            if icon is not None:
+                tk.Label(cell, image=icon).pack(side=LEFT, padx=(2, 0))
+            ttk.Label(cell, text=text, font=("Segoe UI", fs(8))).pack(
+                side=LEFT, padx=(3, 0))
+
+        swatch(STATION_COLORS[pr.MALLETS], "Mallets (free choice)")
+        swatch(YARN_COLOR, "Marimba / Vibraphone — yarn mallets",
+               icon=_yarn_icon(self._board))
+        swatch(RUBBER_COLOR, "Xylophone / Bells — rubber/plastic mallets",
+               icon=_rubber_icon(self._board))
+        swatch(STATION_COLORS[pr.PAD], "Practice pad")
 
         # -- Roster editor --
         roster_frame = ttk.Labelframe(self._content, text=" Percussionists ", padding=4)
@@ -217,6 +316,50 @@ class PercussionRotationView(ttk.Frame):
         else:
             self._selected_group_id = None
             self._show_placeholder(True)
+
+    def _inventory(self):
+        """The room's mallet equipment [(name, students-at-a-time), ...] as
+        set in “Mallet Equipment…”; None means the built-in default room."""
+        if not hasattr(self, "_inv_cache"):
+            self._inv_cache = self._load_inventory()
+        return self._inv_cache
+
+    def _load_inventory(self):
+        import json
+        raw = self.db.get_program_setting("mallet_inventory")
+        if raw:
+            try:
+                return pr._norm_inventory(json.loads(raw))
+            except Exception:
+                pass
+        # No list saved for this year yet: inherit from the most recent
+        # year that has one.  Buying a new marimba is rare — the room list
+        # carries forward indefinitely until the teacher edits it.
+        from lesson_plan_db import (list_available_school_years,
+                                    get_lesson_plan_db)
+        base_dir = os.path.dirname(os.path.abspath(self.db.db_path))
+        cur = self._year_from_db()
+        for y in list_available_school_years(base_dir):     # newest first
+            if y == cur:
+                continue
+            try:
+                raw = get_lesson_plan_db(base_dir, y).get_program_setting(
+                    "mallet_inventory")
+                if raw:
+                    return pr._norm_inventory(json.loads(raw))
+            except Exception:
+                continue
+        return None
+
+    def _edit_equipment(self):
+        dlg = _MalletEquipmentDialog(self.winfo_toplevel(), self.db,
+                                     initial=self._inventory())
+        self.wait_window(dlg)
+        if dlg.saved:
+            if hasattr(self, "_inv_cache"):
+                del self._inv_cache
+            if self._selected_group_id is not None:
+                self._render()
 
     def _school_year(self):
         return getattr(self.db, "_school_year_hint", None) or self._year_from_db()
@@ -294,10 +437,22 @@ class PercussionRotationView(ttk.Frame):
             summary = f"{n_full} in full rotation → " + ",  ".join(parts) + " each day."
             if n_mallet_only:
                 summary += f"   ({n_mallet_only} on mallets-only, earning their rotation.)"
+            mallet_load = (dict(pr.station_summary(n_full, g["class_type"]))
+                           .get(pr.MALLETS, 0) + n_mallet_only)
         elif payload:
             summary = f"All {len(payload)} players on mallets-only (earning their rotation)."
+            mallet_load = len(payload)
         else:
             summary = "No players yet — click “Add Players”."
+            mallet_load = 0
+        # The room only fits so many mallet players at once — see the
+        # “Mallet Equipment…” button for what's available and its capacity.
+        cap = sum(c for _, c in pr._norm_inventory(self._inventory()))
+        if bool(g["mallet_subrotation"]) and mallet_load > cap:
+            summary += (f"   ⚠ {mallet_load} mallet players share the "
+                        f"{cap} instrument spots (see Mallet Equipment) — "
+                        f"the extras rotate to a practice pad, which "
+                        f"lengthens the cycle.")
         self._summary_lbl.config(text=summary)
 
         day = self._day()
@@ -314,11 +469,14 @@ class PercussionRotationView(ttk.Frame):
         # Board
         assignments = pr.day_assignments(
             payload, day, g["class_type"],
-            mallet_subrotation=bool(g["mallet_subrotation"]), mode=mode)
+            mallet_subrotation=bool(g["mallet_subrotation"]), mode=mode,
+            inventory=self._inventory())
         self._board.delete(*self._board.get_children())
         for name, station in assignments:
-            self._board.insert("", "end", values=(name, station),
-                               tags=(_station_tag(station),))
+            icon = _icon_for_station(self._board, station)
+            kw = {"image": icon} if icon is not None else {}
+            self._board.insert("", "end", text="", values=(name, station),
+                               tags=(_station_tag(station),), **kw)
 
         # Roster
         self._roster.delete(*self._roster.get_children())
@@ -339,15 +497,14 @@ class PercussionRotationView(ttk.Frame):
             return 1
 
     def _cycle_length(self):
-        """Days in one full round = number of full-rotation players (min 1)."""
+        """Days in one full round (see percussion_rotation.cycle_length)."""
         g = self._current_group()
         if not g:
             return 1
         payload, _ = self._students_payload(g)
-        n_full = sum(1 for p in payload if not p["mallets_only"])
-        if n_full > 0:
-            return n_full
-        return max(len(payload), 1)
+        return pr.cycle_length(payload,
+                               mallet_subrotation=bool(g["mallet_subrotation"]),
+                               inventory=self._inventory())
 
     def _on_day_edited(self):
         g = self._current_group()
@@ -518,11 +675,7 @@ class PercussionRotationView(ttk.Frame):
         return "\n".join(lines)
 
     def _color_for(self, station):
-        if station in STATION_COLORS:
-            return STATION_COLORS[station]
-        if station in pr.MALLET_INSTRUMENTS:
-            return _MALLET_INST_COLOR
-        return "#ffffff"
+        return _color_for_station(station)
 
     def _icon_path(self):
         """The teacher's own rotation icon, if they dropped one in assets/."""
@@ -567,10 +720,142 @@ class PercussionRotationView(ttk.Frame):
         if not payload:
             Messagebox.show_info("Add players first.", title="No Players", parent=self)
             return
-        _FullGridDialog(self.winfo_toplevel(), g, payload, 1)
+        _FullGridDialog(self.winfo_toplevel(), g, payload, 1,
+                        inventory=self._inventory())
 
 
 # ══════════════════════════════════════════════════════════════ dialogs ══════
+
+class _MalletEquipmentDialog(ttk.Toplevel):
+    """What mallet equipment the room actually has, and how many students
+    can play each at a time.  Saved once per school year and used by every
+    section's rotation."""
+
+    def __init__(self, parent, db, initial=None):
+        super().__init__(parent)
+        self.db = db
+        self._initial = initial
+        self.saved = False
+        self.title("Mallet Equipment")
+        self.resizable(False, False)
+        self.grab_set()
+        self.lift()
+
+        hdr = ttk.Frame(self, bootstyle=INFO)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text="🎵  Mallet Equipment in Your Room",
+                  font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, INFO)).pack(pady=10, padx=16, anchor=W)
+
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
+        ttk.Label(body, text="One row per kind of equipment, with how many "
+                             "students can use it at once:",
+                  font=("Segoe UI", 9), wraplength=410,
+                  justify=LEFT).pack(anchor=W)
+        for bullet in [
+                "A 4 1/3-octave marimba fits 3 players; a 5-octave fits 4.",
+                "Bell sets fit ONE student each — enter how many sets you "
+                "have (3 sets = 3).",
+                "Add anything you pull out for a big section (e.g. a mini "
+                "practice xylophone, 1).",
+                "Rotations never exceed these numbers; extra players rotate "
+                "to a practice pad."]:
+            ttk.Label(body, text="  •  " + bullet, font=("Segoe UI", 8),
+                      foreground=muted_fg(), wraplength=400,
+                      justify=LEFT).pack(anchor=W)
+        ttk.Label(body, text="This list stays with you from year to year "
+                             "(new school years inherit it automatically) "
+                             "and each year stays editable, so update it "
+                             "only when the room actually changes.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=400, justify=LEFT).pack(anchor=W, pady=(8, 8))
+
+        cols = ttk.Frame(body)
+        cols.pack(fill=X)
+        ttk.Label(cols, text="Equipment", font=("Segoe UI", 9, "bold"),
+                  width=30).pack(side=LEFT)
+        ttk.Label(cols, text="Students at a time",
+                  font=("Segoe UI", 9, "bold")).pack(side=LEFT)
+        self._rows_frame = ttk.Frame(body)
+        self._rows_frame.pack(fill=X)
+        self._rows = []
+
+        brow = ttk.Frame(body)
+        brow.pack(fill=X, pady=(6, 0))
+        ttk.Button(brow, text="➕ Add Equipment", bootstyle=(SUCCESS, OUTLINE),
+                   command=lambda: self._add_row("", 1)).pack(side=LEFT)
+        ttk.Button(brow, text="↺ Reset to Defaults",
+                   bootstyle=(SECONDARY, OUTLINE),
+                   command=self._reset).pack(side=LEFT, padx=6)
+
+        btn = ttk.Frame(self)
+        btn.pack(fill=X, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Save", bootstyle=SUCCESS,
+                   command=self._save).pack(side=RIGHT, padx=4)
+
+        start = self._initial if self._initial is not None else self._load()
+        for name, cap in pr._norm_inventory(start):
+            self._add_row(name, cap)
+        from ui.theme import fit_window
+        fit_window(self, 460, 560)
+
+    def _load(self):
+        import json
+        raw = self.db.get_program_setting("mallet_inventory")
+        if raw:
+            try:
+                return json.loads(raw)
+            except Exception:
+                pass
+        return None
+
+    def _add_row(self, name, cap):
+        row = ttk.Frame(self._rows_frame)
+        row.pack(fill=X, pady=2)
+        nv = tk.StringVar(value=name)
+        cv = tk.StringVar(value=str(cap))
+        ttk.Entry(row, textvariable=nv, width=30).pack(side=LEFT)
+        ttk.Spinbox(row, from_=1, to=8, width=4,
+                    textvariable=cv).pack(side=LEFT, padx=(8, 0))
+        entry = (row, nv, cv)
+
+        def remove():
+            row.destroy()
+            self._rows.remove(entry)
+        ttk.Button(row, text="✕", width=3, bootstyle=(DANGER, OUTLINE, LINK),
+                   command=remove).pack(side=LEFT, padx=(8, 0))
+        self._rows.append(entry)
+
+    def _reset(self):
+        for row, _n, _c in self._rows:
+            row.destroy()
+        self._rows = []
+        for name, cap in pr._norm_inventory(None):
+            self._add_row(name, cap)
+
+    def _save(self):
+        import json
+        items = []
+        for _row, nv, cv in self._rows:
+            name = nv.get().strip()
+            try:
+                cap = max(1, int(cv.get()))
+            except (TypeError, ValueError):
+                cap = 1
+            if name:
+                items.append({"name": name, "capacity": cap})
+        if not items:
+            Messagebox.show_warning("Keep at least one piece of equipment "
+                                    "(or Reset to Defaults).",
+                                    title="Nothing Listed", parent=self)
+            return
+        self.db.set_program_setting("mallet_inventory", json.dumps(items))
+        self.saved = True
+        self.destroy()
+
 
 class _GroupDialog(ttk.Toplevel):
     def __init__(self, parent, db, school_year, group=None):
@@ -618,9 +903,15 @@ class _GroupDialog(ttk.Toplevel):
 
         self._sub = tk.BooleanVar(
             value=bool(self.group["mallet_subrotation"]) if self.group else True)
-        ttk.Checkbutton(body, text="Rotate mallets-only players through mallet instruments "
-                                   "(xylophone, bells, marimba, vibraphone)",
+        ttk.Checkbutton(body, text="Assign specific mallet instruments each day",
                         variable=self._sub, bootstyle=INFO).pack(anchor=W)
+        ttk.Label(body,
+                  text="Respects what the room actually has — set it with the "
+                       "“🎵 Mallet Equipment…” button (e.g. 1 marimba ×3 "
+                       "players, 1 vibraphone ×2, 1 xylophone ×2, 3 bell "
+                       "sets ×1). Extra mallet players rotate to a practice pad.",
+                  font=("Segoe UI", 8), foreground=muted_fg(), justify=LEFT,
+                  wraplength=360).pack(anchor=W)
 
         btn = ttk.Frame(self)
         btn.pack(fill=X, padx=16, pady=12)
@@ -742,7 +1033,7 @@ class _SpecialDayDialog(ttk.Toplevel):
 
 
 class _FullGridDialog(ttk.Toplevel):
-    def __init__(self, parent, group, payload, start_day):
+    def __init__(self, parent, group, payload, start_day, inventory=None):
         super().__init__(parent)
         self.title(f"Full Rotation Grid — {group['name']}")
         self.grab_set()
@@ -750,7 +1041,8 @@ class _FullGridDialog(ttk.Toplevel):
 
         day_numbers, rows = pr.full_grid(
             payload, group["class_type"],
-            mallet_subrotation=bool(group["mallet_subrotation"]), start_day=start_day)
+            mallet_subrotation=bool(group["mallet_subrotation"]),
+            start_day=start_day, inventory=inventory)
 
         hdr = ttk.Frame(self, bootstyle=PRIMARY)
         hdr.pack(fill=X)

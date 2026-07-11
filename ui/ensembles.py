@@ -29,6 +29,14 @@ ORCHESTRA_INSTRUMENTS = [
 ]
 CHOIR_PARTS = ["Soprano", "Alto", "Tenor", "Baritone", "Bass"]
 
+# Jazz-band instrument choices: everything from concert band plus the rhythm
+# section.  Used for the per-student "Jazz Band Instrument" override (a Horn
+# player who plays Guitar in Jazz 1, etc.).
+JAZZ_INSTRUMENTS = BAND_INSTRUMENTS + [
+    "Drums", "Vibraphone", "Piano", "Guitar", "Bass",
+    "Violin", "Viola", "Cello", "String Bass", "Voice", "Other",
+]
+
 
 def ensembles_for(program_type: str):
     """The performing ensembles / classes for this program type."""

@@ -394,10 +394,10 @@ class _TxnDialog(ttk.Toplevel):
         krow = ttk.Frame(m); krow.pack(fill=X, pady=(0, 6))
         ttk.Label(krow, text="Type:", font=("Segoe UI", 9, "bold")).pack(side=LEFT, padx=(0, 8))
         ttk.Radiobutton(krow, text="Expense", value="expense", variable=self._kind,
-                        bootstyle=(DANGER, TOOLBUTTON), width=10,
+                        bootstyle=(DANGER, OUTLINE, TOOLBUTTON), width=10,
                         command=self._reload_cats).pack(side=LEFT, padx=2)
         ttk.Radiobutton(krow, text="Income", value="income", variable=self._kind,
-                        bootstyle=(SUCCESS, TOOLBUTTON), width=10,
+                        bootstyle=(SUCCESS, OUTLINE, TOOLBUTTON), width=10,
                         command=self._reload_cats).pack(side=LEFT, padx=2)
 
         def field(label):

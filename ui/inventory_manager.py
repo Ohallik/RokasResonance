@@ -1062,8 +1062,10 @@ class InventoryManager(ttk.Frame):
                                   parent=self.winfo_toplevel())
             return
 
-        errors  = [r for r in results if "error" in r]
-        matches = [r for r in results if "error" not in r]
+        errors    = [r for r in results if "error" in r]
+        summaries = [r for r in results if r.get("summary")]
+        matches   = [r for r in results
+                     if "error" not in r and not r.get("summary")]
 
         if not matches:
             msg = "No instrument matches found in the selected invoice(s)."
@@ -1073,11 +1075,36 @@ class InventoryManager(ttk.Frame):
                                  parent=self.winfo_toplevel())
             return
 
+        # Reconciliation: matched records vs each invoice's grand total
+        recon_lines = []
+        for s in summaries:
+            name = s["source_file"]
+            if s["invoice_total"] <= 0:
+                recon_lines.append(f"• {name}: couldn't read the invoice total "
+                                   "to double-check the costs.")
+            elif s["balanced"]:
+                recon_lines.append(f"• {name}: records add up to the invoice "
+                                   f"total (${s['invoice_total']:,.2f}) ✓")
+            else:
+                diff = s["invoice_total"] - s["matched_total"]
+                if diff > 0:
+                    recon_lines.append(
+                        f"• {name}: ⚠ records total ${s['matched_total']:,.2f} of the "
+                        f"${s['invoice_total']:,.2f} invoice — ${diff:,.2f} unaccounted "
+                        "for (line items that didn't match an inventory instrument?)")
+                else:
+                    recon_lines.append(
+                        f"• {name}: ⚠ records total ${s['matched_total']:,.2f}, MORE than "
+                        f"the ${s['invoice_total']:,.2f} invoice — a cost may be "
+                        "double-counted; check each amount while reviewing.")
+        recon_note = ("\n\nCost check:\n" + "\n".join(recon_lines)) if recon_lines else ""
+
         # Confirm before opening dialogs
         error_note = f"\n\n({len(errors)} file(s) could not be parsed)" if errors else ""
         answer = Messagebox.yesno(
             f"Found {len(matches)} repair record(s) across "
-            f"{len(set(m['source_file'] for m in matches))} invoice file(s).{error_note}\n\n"
+            f"{len(set(m['source_file'] for m in matches))} invoice file(s)."
+            f"{recon_note}{error_note}\n\n"
             "Review each repair record now?",
             title="Invoice Parsed", parent=self.winfo_toplevel()
         )

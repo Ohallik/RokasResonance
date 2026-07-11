@@ -260,7 +260,7 @@ class MainMenu(ttk.Frame):
         ).grid(row=cur_row, column=0, sticky="ew", padx=(0, 3), pady=2, ipady=btn_pad)
 
         ttk.Button(
-            btn_area, text="  📝  Lesson Plans  (Beta)",
+            btn_area, text="  🧰  Teacher Tools",
             command=self._open_lesson_plans,
             style=f"Nav.{PRIMARY}.TButton",
         ).grid(row=cur_row, column=1, sticky="ew", padx=(3, 0), pady=2, ipady=btn_pad)
@@ -567,7 +567,7 @@ class MainMenu(ttk.Frame):
             return
         from ui.lesson_plans_hub import LessonPlansHub
         win = ttk.Toplevel(self.winfo_toplevel())
-        win.title("Lesson Plans — Roka's Resonance")
+        win.title("Teacher Tools — Roka's Resonance")
         win.state("zoomed")
         hub = LessonPlansHub(win, self.db)
         hub.pack(fill=BOTH, expand=True)

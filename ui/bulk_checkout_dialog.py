@@ -461,7 +461,8 @@ class BulkCheckoutDialog(ttk.Toplevel):
                   font=("Segoe UI", 9, "bold")).pack(anchor=W)
         self._ci_condition_var = tk.StringVar()
         ttk.Combobox(cond_frame, textvariable=self._ci_condition_var,
-                     values=["New", "Excellent", "Good", "Fair", "Poor", "Needs Repair"],
+                     values=["New", "Excellent", "Good", "Fair", "Poor",
+                             "Needs Repair", "Unrepairable"],
                      width=20, state="readonly").pack(anchor=W, pady=(2, 0))
 
         # ── Notes ──────────────────────────────────────────────────────────

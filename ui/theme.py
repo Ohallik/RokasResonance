@@ -174,6 +174,70 @@ def fit_window(win, min_w: int = 200, min_h: int = 200, margin: int = 80):
     win.deiconify()
 
 
+def _rel_luminance(hexcolor: str) -> float:
+    """WCAG relative luminance of a #rrggbb color."""
+    h = hexcolor.lstrip("#")
+    rgb = [int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4)]
+    lin = [(v / 12.92) if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+           for v in rgb]
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+
+def contrast_ratio(c1: str, c2: str) -> float:
+    """WCAG contrast ratio between two #rrggbb colors (1.0–21.0)."""
+    l1, l2 = _rel_luminance(c1), _rel_luminance(c2)
+    lighter, darker = max(l1, l2), min(l1, l2)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _darken_until(hexcolor: str, against: str = "#ffffff",
+                  target: float = 4.5) -> str:
+    """Scale a color darker until it reaches the target contrast ratio
+    against `against` (default: white button text)."""
+    h = hexcolor.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    for _ in range(60):
+        if contrast_ratio(f"#{r:02x}{g:02x}{b:02x}", against) >= target:
+            break
+        r, g, b = (max(0, int(v * 0.96)) for v in (r, g, b))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def apply_contrast_fixes():
+    """Make every colored button readable.
+
+    The stock light themes ship accent colors that can't carry white button
+    text — litera's amber 'warning' (2.2:1), light-gray 'secondary' (2.3:1),
+    and bright-green 'success' (2.4:1); sandstone's lime 'success' is 2.0:1.
+    The same pale colors are also unreadable as OUTLINE-button text on a
+    white background.  Darkening the theme color fixes both at the source,
+    for every widget.
+
+    Patches the ttkbootstrap theme DEFINITIONS in place, so it must run
+    before the main window is created; runtime theme switches then inherit
+    the fixed palette automatically.  Idempotent.  Dark themes are left
+    alone: their bright accents are exactly what makes outline text readable
+    on a dark background.
+    """
+    try:
+        from ttkbootstrap.themes.standard import STANDARD_THEMES
+    except Exception:
+        return
+    for theme_id in DISPLAY_THEMES.values():
+        spec = STANDARD_THEMES.get(theme_id)
+        if not spec or spec.get("type") == "dark":
+            continue
+        cols = spec.get("colors") or {}
+        for name in ("primary", "secondary", "success", "info",
+                     "warning", "danger"):
+            val = cols.get(name)
+            # < 3.0 is unreadable even as large/bold button text; anything
+            # above that (litera's primary blue, danger red) is left as
+            # designed to avoid changing the app's whole look.
+            if val and contrast_ratio("#ffffff", val) < 3.0:
+                cols[name] = _darken_until(val)
+
+
 def apply_global_font_scaling():
     """
     Scale all named tkinter fonts and set the ttkbootstrap style default font.
