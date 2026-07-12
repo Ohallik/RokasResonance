@@ -1374,6 +1374,46 @@ class Database:
                    ORDER BY max_priority DESC, i.category, i.description"""
             ).fetchall()
 
+    def get_instruments_marked_needs_repair(self):
+        """Instruments whose condition is 'Needs Repair' but that have NO open
+        repair record — they'd otherwise be invisible in the Needs-Repair list
+        even though the teacher flagged them on the instrument itself.  Returned
+        in the same shape as get_instruments_needing_repair() so the two can be
+        combined.  'Unrepairable' is still excluded (beyond salvage)."""
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT i.id, i.category, i.description AS instrument_desc,
+                          i.brand, i.model, i.serial_no, i.barcode, i.district_no,
+                          i.condition AS instrument_condition, i.locker,
+                          0 AS open_count, 0 AS max_priority,
+                          '' AS last_reported, '' AS needs, '' AS shop
+                   FROM instruments i
+                   WHERE LOWER(TRIM(IFNULL(i.condition,''))) = 'needs repair'
+                     AND COALESCE(i.is_active, 1) = 1
+                     AND NOT EXISTS (
+                         SELECT 1 FROM repairs r
+                         WHERE r.instrument_id = i.id
+                           AND (r.date_repaired IS NULL OR TRIM(r.date_repaired) = ''))
+                   ORDER BY i.category, i.description"""
+            ).fetchall()
+
+    def clear_needs_repair_if_done(self, instrument_id: int) -> bool:
+        """Once an instrument has no open repairs left, reset a lingering
+        'Needs Repair' condition to 'Good' so it stops resurfacing on the
+        Needs-Repair list.  Returns True if the condition was changed."""
+        with self._connect() as conn:
+            open_ct = conn.execute(
+                "SELECT COUNT(*) FROM repairs WHERE instrument_id=? "
+                "AND (date_repaired IS NULL OR TRIM(date_repaired) = '')",
+                (instrument_id,)).fetchone()[0]
+            if open_ct:
+                return False
+            cur = conn.execute(
+                "UPDATE instruments SET condition='Good' WHERE id=? "
+                "AND LOWER(TRIM(IFNULL(condition,''))) = 'needs repair'",
+                (instrument_id,))
+            return cur.rowcount > 0
+
     def get_open_repairs_for_instrument(self, instrument_id):
         """The individual open repair records for one instrument (for the
         edit/mark-repaired pickers)."""

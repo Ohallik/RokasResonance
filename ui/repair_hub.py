@@ -55,6 +55,7 @@ class RepairHub(ttk.Toplevel):
         self.inv = inventory_manager
         self.db = inventory_manager.db
         self._view = tk.StringVar(value="needs")
+        self._sort_state = {}
 
         self.title("Repair Center — Roka's Resonance")
         self.resizable(True, True)
@@ -91,8 +92,11 @@ class RepairHub(ttk.Toplevel):
         bar.pack(fill=X, padx=12, pady=(2, 6))
         ttk.Button(bar, text="📋 Upload Invoice", bootstyle=(SECONDARY, OUTLINE),
                    command=self._upload_invoice).pack(side=LEFT, padx=2)
-        ttk.Button(bar, text="🔧 Mark Needs Repair", bootstyle=(WARNING, OUTLINE),
+        ttk.Button(bar, text="➕ Add Repair", bootstyle=(SECONDARY, OUTLINE),
                    command=self._add_repair_scan).pack(side=LEFT, padx=2)
+        self._out_btn = ttk.Button(bar, text="🚚 Mark Out for Repair", bootstyle=(WARNING, OUTLINE),
+                                   command=self._mark_out_for_repair)
+        self._out_btn.pack(side=LEFT, padx=2)
         self._edit_btn = ttk.Button(bar, text="✏️ Edit", bootstyle=(PRIMARY, OUTLINE),
                                     command=self._edit_selected)
         self._edit_btn.pack(side=LEFT, padx=2)
@@ -123,10 +127,35 @@ class RepairHub(ttk.Toplevel):
         self.tree.config(columns=cols)
         stretch = {"instrument", "needed"}
         for c in cols:
-            self.tree.heading(c, text=hdrs[c], anchor=W)
+            self.tree.heading(c, text=hdrs[c], anchor=W,
+                              command=lambda col=c: self._sort_by(col))
             anchor = E if c in ("est", "total", "value", "count") else W
             self.tree.column(c, width=widths[c], anchor=anchor,
                              minwidth=40, stretch=c in stretch)
+
+    # Ranks for the text-labelled priority column so sorting is meaningful
+    # (Urgent > High > Normal > Low) rather than alphabetical.
+    _PRIORITY_RANK = {"Urgent": 3, "High": 2, "Normal": 1, "Low": 0, "": -1}
+
+    def _sort_by(self, col):
+        """Sort the visible rows by a clicked column header; click again to
+        reverse.  Numbers/money sort numerically, priority by severity."""
+        reverse = self._sort_state.get(col, False)
+
+        def key(iid):
+            raw = (self.tree.set(iid, col) or "").strip()
+            if col == "priority":
+                return (0, self._PRIORITY_RANK.get(raw, -1))
+            cleaned = raw.lstrip("(").rstrip(")").replace("$", "").replace(",", "")
+            try:
+                return (0, float(cleaned))
+            except ValueError:
+                return (1, raw.lower())
+
+        items = sorted(self.tree.get_children(""), key=key, reverse=reverse)
+        for idx, iid in enumerate(items):
+            self.tree.move(iid, "", idx)
+        self._sort_state = {col: not reverse}   # reset others; toggle this one
 
     # ─────────────────────────────────────────────────────────── Data ──────────
 
@@ -139,6 +168,7 @@ class RepairHub(ttk.Toplevel):
         is_repair_view = view in ("needs", "out")
         self._edit_btn.config(state=NORMAL if view in ("needs", "out", "history") else DISABLED)
         self._done_btn.config(state=NORMAL if is_repair_view else DISABLED)
+        self._out_btn.config(state=NORMAL if view == "needs" else DISABLED)
 
         if cost:
             self._load_cost()
@@ -148,8 +178,11 @@ class RepairHub(ttk.Toplevel):
             rows = [r for r in self.db.get_instruments_needing_repair()
                     if (r["shop"] or "").strip()]
             self._load_needs(rows)
-        else:  # needs
-            self._load_needs(self.db.get_instruments_needing_repair())
+        else:  # needs — instruments with an open repair OR flagged on the
+               # instrument itself (condition = 'Needs Repair') but not yet logged
+            rows = list(self.db.get_instruments_needing_repair())
+            rows += list(self.db.get_instruments_marked_needs_repair())
+            self._load_needs(rows)
 
     def _load_needs(self, rows):
         """One row per instrument (tag = 'inst:<id>')."""
@@ -347,10 +380,20 @@ class RepairHub(ttk.Toplevel):
             return
         kind, tid = tag
         if kind == "rep":
+            with self.db._connect() as conn:
+                row = conn.execute("SELECT instrument_id FROM repairs WHERE id=?",
+                                   (tid,)).fetchone()
+            instrument_id = row["instrument_id"] if row else None
             repair_ids = [tid]
         else:
+            instrument_id = tid
             repair_ids = [r["id"] for r in self.db.get_open_repairs_for_instrument(tid)]
         if not repair_ids:
+            # Flagged on the instrument only (condition = 'Needs Repair', nothing
+            # logged) — just clear the flag rather than dead-ending.
+            if instrument_id is not None and self.db.clear_needs_repair_if_done(instrument_id):
+                self._after_change()
+                return
             Messagebox.show_info("This instrument has no open repairs.",
                                  title="Nothing to Mark", parent=self)
             return
@@ -361,9 +404,102 @@ class RepairHub(ttk.Toplevel):
                                            (repair_ids[0],)).fetchone())
         else:
             repair = {}
-        self._open_mark_dialog(repair_ids, repair)
+        self._open_mark_dialog(instrument_id, repair_ids, repair)
 
-    def _open_mark_dialog(self, repair_ids, repair):
+    def _mark_out_for_repair(self):
+        """Record that a needs-repair instrument has gone to the shop.  Sets the
+        shop on its open repair(s); if it was only flagged on the instrument
+        (condition = 'Needs Repair', no repair logged yet) a repair record is
+        created so it can be tracked.  Moves the row into the Out-for-Repair view."""
+        tag = self._selected_tag()
+        if tag is None:
+            Messagebox.show_warning("Select an instrument first.", title="No Selection",
+                                    parent=self)
+            return
+        kind, tid = tag
+        if kind == "rep":
+            with self.db._connect() as conn:
+                row = conn.execute("SELECT instrument_id FROM repairs WHERE id=?",
+                                   (tid,)).fetchone()
+            instrument_id = row["instrument_id"] if row else None
+            repair_ids = [tid]
+        else:
+            instrument_id = tid
+            repair_ids = [r["id"] for r in self.db.get_open_repairs_for_instrument(tid)]
+        self._open_out_dialog(instrument_id, repair_ids)
+
+    def _open_out_dialog(self, instrument_id, repair_ids):
+        win = ttk.Toplevel(self)
+        win.title("Mark Out for Repair")
+        win.resizable(False, False)
+        win.grab_set()
+
+        hdr = ttk.Frame(win, bootstyle=WARNING)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text="🚚  Mark Out for Repair", font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, WARNING)).pack(pady=10, padx=16, anchor=W)
+
+        body = ttk.Frame(win)
+        body.pack(fill=BOTH, expand=True, padx=18, pady=12)
+        note = ("Record where this instrument went and when. It stays on the "
+                "Needs / Out list until you mark it repaired.")
+        ttk.Label(body, text=note, font=("Segoe UI", 8), foreground="#666",
+                  wraplength=380, justify=LEFT).pack(anchor=W, pady=(0, 8))
+
+        grid = ttk.Frame(body)
+        grid.pack(fill=X)
+        grid.columnconfigure(1, weight=1)
+        shop_var = tk.StringVar()
+        sent_var = tk.StringVar(value=datetime.today().strftime("%Y-%m-%d"))
+        for i, (label, var) in enumerate([("Shop / Location:", shop_var),
+                                          ("Date Sent (YYYY-MM-DD):", sent_var)]):
+            ttk.Label(grid, text=label, font=("Segoe UI", 9)).grid(
+                row=i, column=0, sticky=W, pady=4, padx=(0, 8))
+            ttk.Entry(grid, textvariable=var, width=26).grid(row=i, column=1, sticky=EW, pady=4)
+
+        def _save():
+            shop_val = shop_var.get().strip()
+            if not shop_val:
+                Messagebox.show_warning("Enter the shop or location it went to.",
+                                        title="Shop Required", parent=win)
+                return
+            sent_val = sent_var.get().strip()
+            ids = list(repair_ids)
+            if not ids:               # flagged on the instrument only — log one now
+                if instrument_id is None:
+                    win.destroy()
+                    return
+                ids = [self.db.add_repair({
+                    "instrument_id": instrument_id, "priority": 1,
+                    "date_added": sent_val or datetime.today().strftime("%Y-%m-%d"),
+                    "assigned_to": shop_val, "date_repaired": "",
+                    "description": "Sent for repair", "location": shop_val,
+                    "est_cost": 0, "act_cost": 0, "invoice_number": "", "notes": "",
+                })]
+            for rid in ids:
+                with self.db._connect() as conn:
+                    existing = conn.execute("SELECT * FROM repairs WHERE id=?",
+                                            (rid,)).fetchone()
+                if not existing:
+                    continue
+                data = dict(existing)
+                data["assigned_to"] = shop_val
+                if sent_val:
+                    data["date_added"] = sent_val
+                self.db.update_repair(rid, data)
+            win.destroy()
+            self._after_change()
+
+        btn = ttk.Frame(win)
+        btn.pack(fill=X, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=win.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Save", bootstyle=WARNING, command=_save).pack(side=RIGHT, padx=4)
+
+        from ui.theme import fit_window
+        fit_window(win, 430, 250)
+
+    def _open_mark_dialog(self, instrument_id, repair_ids, repair):
         multi = len(repair_ids) > 1
 
         win = ttk.Toplevel(self)
@@ -436,6 +572,10 @@ class RepairHub(ttk.Toplevel):
                 if act_cost is not None:
                     data["act_cost"] = act_cost
                 self.db.update_repair(rid, data)
+            # If that cleared the instrument's last open repair, drop a lingering
+            # 'Needs Repair' condition flag so it leaves the list for good.
+            if date_val and instrument_id is not None:
+                self.db.clear_needs_repair_if_done(instrument_id)
             win.destroy()
             self._after_change()
 
