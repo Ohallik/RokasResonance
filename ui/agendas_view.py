@@ -150,6 +150,8 @@ class AgendasView(ttk.Frame):
         bar.pack(fill=X)
         ttk.Label(bar, text="📋  Entry Band — Daily Agenda",
                   font=("Segoe UI", fs(12), "bold")).pack(side=LEFT, padx=10, pady=8)
+        self._section_bar = ttk.Frame(bar)      # P1/P2 toggle (populated on render)
+        self._section_bar.pack(side=LEFT)
         ttk.Button(bar, text="🖥 Present", bootstyle=SUCCESS,
                    command=self._open_present).pack(side=RIGHT, padx=8, pady=6)
         ttk.Button(bar, text="🎯 Assessments…", bootstyle=(INFO, OUTLINE),
@@ -348,11 +350,22 @@ class AgendasView(ttk.Frame):
             try:
                 self._day = json.loads(row["data"])
                 self._saved = True
+                self._ensure_ids(self._day)
                 return
             except Exception:
                 pass
         self._day = spine.build_default_day(self._date, self._context())
         self._saved = False
+        self._ensure_ids(self._day)
+
+    def _ensure_ids(self, day):
+        """Give every item a stable id so per-section checkbox state can key to
+        it.  Assigned in memory; persisted whenever the (shared) day is saved."""
+        import uuid
+        for sec in (day or {}).get("sections", []):
+            for it in sec.get("items", []):
+                if not it.get("id"):
+                    it["id"] = uuid.uuid4().hex[:12]
 
     def _save_day(self, rebuild_present=True):
         self.db.save_agenda_day(self._group, self._date.isoformat(),
@@ -442,6 +455,7 @@ class AgendasView(ttk.Frame):
         self._saved_lbl.config(
             text="Saved ✓" if self._saved else "Auto-generated (unsaved)")
         self._ctx_lbl.config(text=self._curriculum_line())
+        self._render_section_toggle()
         self._render_week_bar()
         self._img_refs = []
         for w in self._inner.winfo_children():
@@ -545,22 +559,10 @@ class AgendasView(ttk.Frame):
                       font=("Segoe UI", fs(8)), foreground=muted_fg(),
                       justify=LEFT).pack(anchor=W)
             return
-        sel = self._linked_perc_group()
-        names = {g["name"]: g["id"] for g in groups}
-        top = ttk.Frame(body)
-        top.pack(fill=X)
-        var = tk.StringVar(value=(sel or groups[0])["name"])
-        combo = ttk.Combobox(top, textvariable=var, state="readonly",
-                             values=list(names), width=20,
-                             font=("Segoe UI", fs(8)))
-        combo.pack(side=LEFT)
-
-        def pick(_e=None):
-            self.db.set_program_setting("agenda_entry_perc", str(names[var.get()]))
-            self._render()
-        combo.bind("<<ComboboxSelected>>", pick)
-
-        group = sel or groups[0]
+        group = self._section_group() or groups[0]
+        # Section name (the toolbar P1/P2 toggle switches this when there are 2+).
+        ttk.Label(body, text=group["name"],
+                  font=("Segoe UI", fs(9), "bold")).pack(anchor=W)
         asg, day, cycle = self._perc_assignments(group)
         ttk.Label(body, text=(f"Day {day} of {cycle}" if cycle else "No players"),
                   font=("Segoe UI", fs(8), "bold"),
@@ -607,10 +609,15 @@ class AgendasView(ttk.Frame):
 
         body = ttk.Frame(cont, padding=(6, 2))
         body.pack(fill=X)
+        last_ref = None                         # assessment above a Missing line
         for item in section.get("items", []):
             if kind == "rhythms" and not item.get("image"):
                 continue                       # Rhythms is images only
-            self._render_item(body, section, item)
+            if item.get("kind") == "assessment":
+                last_ref = self._assess_ref(item.get("text", ""))
+            self._render_item(body, section, item,
+                              missing_ref=last_ref
+                              if item.get("kind") == "missing" else None)
 
         if kind == "bandbook":
             self._bandbook_picker(body, section)
@@ -623,7 +630,7 @@ class AgendasView(ttk.Frame):
         ttk.Button(tools, text="📷 Paste Image", bootstyle=(INFO, OUTLINE, LINK),
                    command=lambda: self._paste_image(section)).pack(side=LEFT, padx=8)
 
-    def _render_item(self, parent, section, item):
+    def _render_item(self, parent, section, item, missing_ref=None):
         if item.get("image"):
             self._render_image_item(parent, section, item)
             return
@@ -632,16 +639,24 @@ class AgendasView(ttk.Frame):
         fg, bg = _plan_colors(color, kind)
         row = ttk.Frame(parent)
         row.pack(fill=X, pady=1)
-        text_var = tk.StringVar(value=item.get("text", ""))
+        iso = self._date.isoformat()
+        # Pin this row to the section it is drawn under. A late FocusOut (fired
+        # while the toggle is already flipping to the other period) then saves
+        # to the section it was typed in, never the newly-selected one.
+        msid = self._section_id() if kind == "missing" else None
+        if kind == "missing":                   # per-section text (not shared)
+            text_var = tk.StringVar(value=self._missing_text(iso, missing_ref, sid=msid))
+        else:
+            text_var = tk.StringVar(value=item.get("text", ""))
 
         if kind == "missing":
             ttk.Label(row, text="", width=3).pack(side=LEFT)
         else:
-            done = tk.BooleanVar(value=bool(item.get("done")))
+            done = tk.BooleanVar(value=self._is_done(iso, item))
 
             def toggle():
-                item["done"] = done.get()
-                self._save_day()
+                self._set_done(iso, item.get("id", ""), done.get())
+                self._save_day()          # persist item ids in the shared plan
             ttk.Checkbutton(row, variable=done, command=toggle).pack(side=LEFT)
 
         bold = "bold" if kind == "assessment" else "normal"
@@ -651,7 +666,10 @@ class AgendasView(ttk.Frame):
         te.pack(side=LEFT, fill=X, expand=True, padx=(4, 4))
 
         def commit(_e=None):
-            if text_var.get() != item.get("text", ""):
+            if kind == "missing":               # save to the section overlay
+                if text_var.get() != self._missing_text(iso, missing_ref, sid=msid):
+                    self._set_missing_text(iso, missing_ref, text_var.get(), sid=msid)
+            elif text_var.get() != item.get("text", ""):
                 item["text"] = text_var.get()
                 self._save_day()
         te.bind("<FocusOut>", commit)
@@ -663,10 +681,11 @@ class AgendasView(ttk.Frame):
     def _render_image_item(self, parent, section, item):
         row = ttk.Frame(parent)
         row.pack(fill=X, pady=2, anchor=W)
-        done = tk.BooleanVar(value=bool(item.get("done")))
+        iso = self._date.isoformat()
+        done = tk.BooleanVar(value=self._is_done(iso, item))
 
         def toggle():
-            item["done"] = done.get()
+            self._set_done(iso, item.get("id", ""), done.get())
             self._save_day()
         ttk.Checkbutton(row, variable=done,
                         command=toggle).pack(side=LEFT, anchor=N, pady=4)
@@ -854,15 +873,142 @@ class AgendasView(ttk.Frame):
         return [g for g in self.db.get_percussion_groups(self._year())
                 if g["class_type"] == pr.ENTRY]
 
-    def _linked_perc_group(self):
+    # ── P1/P2 section: an Entry section IS its percussion group.  The toolbar
+    #    toggle picks which section's rotation + Missing lists to show; the
+    #    lesson plan itself is SHARED across sections (planned once). ──
+
+    def _section_group(self):
+        """The active Entry section (a percussion group) from the toolbar
+        toggle; falls back to the first section (and the legacy setting)."""
         groups = self._entry_perc_groups()
         if not groups:
             return None
-        want = self.db.get_program_setting("agenda_entry_perc")
+        want = (self.db.get_program_setting("agenda_entry_section")
+                or self.db.get_program_setting("agenda_entry_perc"))
         for g in groups:
             if str(g["id"]) == str(want):
                 return g
         return groups[0]
+
+    def _apply_section(self, group_id):
+        self.db.set_program_setting("agenda_entry_section", str(group_id))
+        self.db.set_program_setting("agenda_entry_perc", str(group_id))  # legacy sync
+
+    def _set_section(self, group_id):
+        self._flush_focus()      # commit any in-progress edit to the OLD section
+        self._apply_section(group_id)
+        self.refresh()
+
+    def _flush_focus(self):
+        # Force the focused entry to fire its <FocusOut> commit before we switch
+        # sections, so a half-typed Missing line is saved under the right period.
+        try:
+            w = self.focus_get()
+            if isinstance(w, tk.Entry):
+                w.event_generate("<FocusOut>")
+        except Exception:
+            pass
+
+    def _section_id(self):
+        g = self._section_group()
+        return g["id"] if g else None
+
+    # Banner + present call this; a section == its percussion group.
+    def _linked_perc_group(self):
+        return self._section_group()
+
+    def _render_section_toggle(self):
+        """Populate the toolbar P1/P2 toggle (only when 2+ Entry sections)."""
+        for w in self._section_bar.winfo_children():
+            w.destroy()
+        groups = self._entry_perc_groups()
+        if len(groups) < 2:
+            return                       # one section (or none) — nothing to toggle
+        ttk.Label(self._section_bar, text="Section:",
+                  font=("Segoe UI", fs(9))).pack(side=LEFT, padx=(14, 4))
+        active = self._section_group()
+        self._section_var = tk.StringVar(
+            value=str(active["id"]) if active else "")
+        for g in groups:
+            ttk.Radiobutton(self._section_bar, text=g["name"],
+                            value=str(g["id"]), variable=self._section_var,
+                            bootstyle=(INFO, "toolbutton"),
+                            command=lambda gid=g["id"]: self._set_section(gid)
+                            ).pack(side=LEFT, padx=1)
+
+    # ── per-section "Missing" name lists ─────────────────────────────────────
+    # Typed by hand (no per-student pass tracking yet) but stored SEPARATELY per
+    # section, keyed by (section, date, assessment) — so P1 and P2 keep their own
+    # missing lists and swap with the toggle.  NOT stored in the shared agenda.
+
+    @staticmethod
+    def _assess_ref(text):
+        """Stable per-day key for a missing line: the assessment label above it
+        without its '(due …)' suffix (e.g. '#88 Concert Bb Major Scale')."""
+        import re
+        return re.split(r"\s*\(due\b", (text or ""), 1)[0].strip()
+
+    def _missing_setting_key(self, sid=None):
+        if sid is None:
+            sid = self._section_id()
+        return f"agenda_missing_{sid}" if sid is not None else "agenda_missing_none"
+
+    def _load_missing_map(self, sid=None):
+        raw = self.db.get_program_setting(self._missing_setting_key(sid))
+        if not raw:
+            return {}
+        try:
+            m = json.loads(raw)
+            return m if isinstance(m, dict) else {}
+        except Exception:
+            return {}
+
+    # ``sid`` pins the read/write to a specific section so a late FocusOut save
+    # (after the toggle already flipped) still lands in the section it was typed
+    # under — never bleeding P1's names into P2.
+    def _missing_text(self, iso, ref, default="Missing: ", sid=None):
+        return (self._load_missing_map(sid).get(iso) or {}).get(ref or "", default)
+
+    def _set_missing_text(self, iso, ref, text, sid=None):
+        m = self._load_missing_map(sid)
+        m.setdefault(iso, {})[ref or ""] = text
+        self.db.set_program_setting(self._missing_setting_key(sid), json.dumps(m))
+
+    # ── per-section checkbox ("done") state ──────────────────────────────────
+    # Which lines each section actually got through — saved SEPARATELY per
+    # section (keyed by item id + date) so P1 and P2 don't share checkmarks.
+    # Lets her review at end of day what each class covered.
+
+    def _done_setting_key(self):
+        sid = self._section_id()
+        return f"agenda_done_{sid}" if sid is not None else "agenda_done_none"
+
+    def _load_done_map(self):
+        raw = self.db.get_program_setting(self._done_setting_key())
+        if not raw:
+            return {}
+        try:
+            m = json.loads(raw)
+            return m if isinstance(m, dict) else {}
+        except Exception:
+            return {}
+
+    def _is_done(self, iso, item):
+        iid = item.get("id")
+        return bool(iid and (self._load_done_map().get(iso) or {}).get(iid))
+
+    def _set_done(self, iso, item_id, val):
+        if not item_id:
+            return
+        m = self._load_done_map()
+        day = m.setdefault(iso, {})
+        if val:
+            day[item_id] = True
+        else:
+            day.pop(item_id, None)
+            if not day:
+                m.pop(iso, None)
+        self.db.set_program_setting(self._done_setting_key(), json.dumps(m))
 
     def _perc_payload(self, group):
         out = []
@@ -998,6 +1144,7 @@ class _PresentWindow(ttk.Toplevel):
         self._title = ttk.Label(hdr, text="", font=("Segoe UI", fs(14), "bold"),
                                  bootstyle=(INVERSE, DARK))
         self._title.pack(side=LEFT, padx=6)
+        self._present_section_toggle(hdr)     # P1/P2 switch, right in present
         # Countdown sits right next to the clock/date, not off in the corner.
         self._timer_lbl = ttk.Label(hdr, text="", font=("Segoe UI", fs(26), "bold"),
                                      bootstyle=(INVERSE, DARK))
@@ -1019,6 +1166,27 @@ class _PresentWindow(ttk.Toplevel):
             side=RIGHT, padx=2, pady=6)
         ttk.Label(hdr, text="Timer:", font=("Segoe UI", fs(10)),
                   bootstyle=(INVERSE, DARK)).pack(side=RIGHT, padx=(0, 2))
+
+    def _present_section_toggle(self, hdr):
+        """P1/P2 toggle in the present header — switch section without leaving
+        the projection (the two periods run back-to-back)."""
+        groups = self.view._entry_perc_groups()
+        if len(groups) < 2:
+            return
+        active = self.view._section_group()
+        self._sect_var = tk.StringVar(value=str(active["id"]) if active else "")
+        box = ttk.Frame(hdr)
+        box.pack(side=LEFT, padx=(24, 6))
+        for g in groups:
+            ttk.Radiobutton(box, text=g["name"], value=str(g["id"]),
+                            variable=self._sect_var, bootstyle=(INFO, "toolbutton"),
+                            command=lambda gid=g["id"]: self._switch_section(gid)
+                            ).pack(side=LEFT, padx=1)
+
+    def _switch_section(self, gid):
+        self.view._apply_section(gid)
+        self.view._render()                 # keep the plan view in sync underneath
+        self.rebuild()                      # re-project with this section's data
 
     # ── clock / timer (both shown at once) ──
 
@@ -1170,32 +1338,47 @@ class _PresentWindow(ttk.Toplevel):
     # ── sections ──
 
     def _big_check(self, parent, item, bg):
-        """A large, tap-anywhere check box (☐ / ☑) — legible from the room."""
-        lbl = _tk(tk.Label, parent, text="☑" if item.get("done") else "☐",
+        """A large, tap-anywhere check box (☐ / ☑) — legible from the room.
+        Per-section (saved to the active section's own 'done' store)."""
+        iso = self.view._date.isoformat()
+        lbl = _tk(tk.Label, parent,
+                  text="☑" if self.view._is_done(iso, item) else "☐",
                   bg=bg, fg=_auto_fg(bg), cursor="hand2",
                   font=("Segoe UI", fs(24)))
 
         def click(_e=None):
-            item["done"] = not bool(item.get("done"))
-            lbl.config(text="☑" if item["done"] else "☐")
-            self.view._save_day(rebuild_present=False)
+            val = not self.view._is_done(iso, item)
+            self.view._set_done(iso, item.get("id", ""), val)
+            lbl.config(text="☑" if val else "☐")
+            self.view._save_day(rebuild_present=False)   # persist item ids
         lbl.bind("<Button-1>", click)
         return lbl
 
     def _present_section(self, section, bg):
-        items = section.get("items", [])
-        visible = [it for it in items
-                   if it.get("image") or (it.get("text") or "").strip()]
-        if not visible:
+        iso = self.view._date.isoformat()
+        last_ref = None
+        rows = []                               # (item, per-section missing text)
+        for it in section.get("items", []):
+            if it.get("kind") == "assessment":
+                last_ref = self.view._assess_ref(it.get("text", ""))
+            mtext = None
+            if it.get("kind") == "missing":
+                mtext = self.view._missing_text(iso, last_ref, default="")
+                if mtext.strip().rstrip(":") in ("", "Missing"):
+                    continue                    # nobody missing -> hide the line
+            elif not (it.get("image") or (it.get("text") or "").strip()):
+                continue
+            rows.append((it, mtext))
+        if not rows:
             return                              # hide empty sections in present
         col = _tk(tk.Frame, self._body, bg=bg)
         col.pack(fill=X, padx=20, pady=(3, 1))
         self._hdr(col, section.get("title", "")).pack(fill=X, anchor=W)
-        for item in visible:
+        for item, mtext in rows:
             if item.get("image"):
                 self._present_image(col, item, bg)
                 continue
-            self._present_line(col, item, bg)
+            self._present_line(col, item, bg, missing_text=mtext)
 
     def _present_image(self, parent, item, bg):
         row = _tk(tk.Frame, parent, bg=bg)
@@ -1207,7 +1390,7 @@ class _PresentWindow(ttk.Toplevel):
             self._img_refs.append(img)
             _tk(tk.Label, row, image=img, bg=bg).pack(side=LEFT, padx=6)
 
-    def _present_line(self, parent, item, bg):
+    def _present_line(self, parent, item, bg, missing_text=None):
         kind = item.get("kind", "")
         color = item.get("color", "")
         fg, lbg = _present_colors(color, kind, bg)
@@ -1215,8 +1398,8 @@ class _PresentWindow(ttk.Toplevel):
         row.pack(fill=X, pady=1, anchor=W)
         if kind == "missing":
             _tk(tk.Label, row, text="", bg=bg, width=3).pack(side=LEFT)
-            _tk(tk.Label, row, text=item["text"], bg=bg, fg=_auto_fg(bg),
-                font=("Segoe UI", fs(14)), wraplength=1100,
+            _tk(tk.Label, row, text=missing_text or item.get("text", ""), bg=bg,
+                fg=_auto_fg(bg), font=("Segoe UI", fs(14)), wraplength=1100,
                 justify=LEFT).pack(side=LEFT)
             return
         self._big_check(row, item, bg).pack(side=LEFT, padx=(0, 2))
