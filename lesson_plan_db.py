@@ -211,6 +211,15 @@ class LessonPlanDatabase:
                     FOREIGN KEY (group_id) REFERENCES percussion_groups(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS agenda_days (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_key TEXT NOT NULL,
+                    day_date TEXT NOT NULL,
+                    data TEXT,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(group_key, day_date)
+                );
+
                 CREATE TABLE IF NOT EXISTS seating_charts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     school_year TEXT,
@@ -373,6 +382,14 @@ class LessonPlanDatabase:
             # Migration: add the buffer column to older seating_pins tables.
             try:
                 conn.execute("ALTER TABLE seating_pins ADD COLUMN buffer INTEGER DEFAULT 0")
+                conn.commit()
+            except Exception:
+                pass
+            # Migration: per-student rotation limit (JSON list of the ONLY
+            # stations that student may take; NULL = normal earn-based rotation).
+            # For students who can only play certain equipment (accessibility).
+            try:
+                conn.execute("ALTER TABLE percussion_students ADD COLUMN allowed_stations TEXT")
                 conn.commit()
             except Exception:
                 pass
@@ -1047,7 +1064,7 @@ class LessonPlanDatabase:
 
     def update_percussion_student(self, student_id, data):
         cols = [c for c in ["name", "full_rotation", "assessments_passed",
-                            "is_active", "sort_order"] if c in data]
+                            "is_active", "sort_order", "allowed_stations"] if c in data]
         if not cols:
             return
         set_clause = ", ".join(f"{c}=?" for c in cols)
@@ -1090,6 +1107,39 @@ class LessonPlanDatabase:
                 "note=excluded.note",
                 (group_id, day_number, mode, note),
             )
+
+    # ── Daily agendas ──
+    # A day is persisted only once the teacher touches it; until then the
+    # agenda view generates it on the fly from the curriculum spine.  ``data``
+    # is the whole day as JSON (reminders, announcements, sections, checks,
+    # notes).  Keyed by an agenda group ("entry", "intermediate", ...) + date.
+
+    def get_agenda_day(self, group_key, day_date):
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM agenda_days WHERE group_key=? AND day_date=?",
+                (group_key, day_date)).fetchone()
+
+    def save_agenda_day(self, group_key, day_date, data):
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO agenda_days (group_key, day_date, data, updated_at) "
+                "VALUES (?,?,?,datetime('now')) "
+                "ON CONFLICT(group_key, day_date) DO UPDATE SET "
+                "data=excluded.data, updated_at=datetime('now')",
+                (group_key, day_date, data))
+
+    def delete_agenda_day(self, group_key, day_date):
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM agenda_days WHERE group_key=? AND day_date=?",
+                (group_key, day_date))
+
+    def get_saved_agenda_dates(self, group_key):
+        with self._connect() as conn:
+            return [r["day_date"] for r in conn.execute(
+                "SELECT day_date FROM agenda_days WHERE group_key=? "
+                "ORDER BY day_date", (group_key,)).fetchall()]
 
     def clear_percussion_override(self, group_id, day_number):
         with self._connect() as conn:

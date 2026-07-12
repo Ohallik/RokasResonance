@@ -98,11 +98,9 @@ class LessonPlansHub(ttk.Frame):
                                            self.main_db, self._base_dir)
         self._notebook.add(self._field_trips, text="  🚌 Field Trips  ")
 
-        self._agendas = self._placeholder(
-            "📋", "Daily Agendas",
-            "Build a simple daily agenda you can project on the screen:\n"
-            "what to grab, warm-up, rehearsal order, percussion assignments,\n"
-            "and announcements.\n\nComing soon.")
+        from ui.agendas_view import AgendasView
+        self._agendas = AgendasView(self._notebook, self.db, self.main_db,
+                                    self._base_dir)
         self._notebook.add(self._agendas, text="  📋 Agendas  ")
 
         self._notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
@@ -120,7 +118,7 @@ class LessonPlansHub(ttk.Frame):
 
     def _tabs(self):
         return [self._seating, self._percussion, self._concerts,
-                self._field_trips]
+                self._field_trips, self._agendas]
 
     def _on_tab_changed(self, event):
         """Refresh the active tab's data when switching to it."""

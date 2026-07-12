@@ -279,6 +279,8 @@ class PercussionRotationView(ttk.Frame):
                    command=lambda: self._move_player(-1)).pack(side=LEFT, padx=(8, 1))
         ttk.Button(rbar, text="▼", width=3, bootstyle=(SECONDARY, OUTLINE),
                    command=lambda: self._move_player(1)).pack(side=LEFT, padx=1)
+        ttk.Button(rbar, text="🎚 Limit Rotation…", bootstyle=(WARNING, OUTLINE),
+                   command=self._limit_player).pack(side=LEFT, padx=(8, 1))
         self._earn_hint = ttk.Label(
             rbar, text="Tick “Full Rotation” once a player passes 5 assessments.",
             font=("Segoe UI", fs(8)), foreground=muted_fg())
@@ -410,8 +412,30 @@ class PercussionRotationView(ttk.Frame):
         payload = []
         for r in rows:
             mallets_only = is_entry and not r["full_rotation"]
-            payload.append({"name": r["name"], "mallets_only": mallets_only})
+            payload.append({"name": r["name"], "mallets_only": mallets_only,
+                            "allowed_stations": self._parse_allowed(r)})
         return payload, rows
+
+    @staticmethod
+    def _parse_allowed(row):
+        """A student's rotation-limit list, or None for the normal rotation."""
+        import json
+        try:
+            raw = row["allowed_stations"]
+        except (KeyError, IndexError):
+            return None
+        if not raw:
+            return None
+        try:
+            val = json.loads(raw)
+        except Exception:
+            return None
+        return val if isinstance(val, list) and val else None
+
+    def _mallet_instrument_names(self):
+        """Specific mallet instruments a player could be locked to (the room's
+        inventory: Bells, Marimba, Xylophone, Vibraphone, plus any custom)."""
+        return [name for name, _cap in pr._norm_inventory(self._inventory())]
 
     def _render(self):
         g = self._current_group()
@@ -420,8 +444,10 @@ class PercussionRotationView(ttk.Frame):
         self._section_lbl.config(
             text=f"{g['name']}  ·  {CLASS_TYPE_LABELS.get(g['class_type'], '')}")
         payload, rows = self._students_payload(g)
-        n_full = sum(1 for p in payload if not p["mallets_only"])
-        n_mallet_only = len(payload) - n_full
+        limited = [p for p in payload if p.get("allowed_stations")]
+        non_lim = [p for p in payload if not p.get("allowed_stations")]
+        n_full = sum(1 for p in non_lim if not p["mallets_only"])
+        n_mallet_only = len(non_lim) - n_full
 
         # Constrain the day to one cycle (wraps back to Day 1 each round).
         cycle = self._cycle_length()
@@ -439,12 +465,17 @@ class PercussionRotationView(ttk.Frame):
                 summary += f"   ({n_mallet_only} on mallets-only, earning their rotation.)"
             mallet_load = (dict(pr.station_summary(n_full, g["class_type"]))
                            .get(pr.MALLETS, 0) + n_mallet_only)
-        elif payload:
-            summary = f"All {len(payload)} players on mallets-only (earning their rotation)."
-            mallet_load = len(payload)
+        elif non_lim:
+            summary = f"All {len(non_lim)} players on mallets-only (earning their rotation)."
+            mallet_load = len(non_lim)
+        elif limited:
+            summary = "Every player is on an individual (limited) rotation."
+            mallet_load = 0
         else:
             summary = "No players yet — click “Add Players”."
             mallet_load = 0
+        if limited and (n_full or non_lim):
+            summary += f"   ({len(limited)} on an individual/limited rotation.)"
         # The room only fits so many mallet players at once — see the
         # “Mallet Equipment…” button for what's available and its capacity.
         cap = sum(c for _, c in pr._norm_inventory(self._inventory()))
@@ -482,7 +513,10 @@ class PercussionRotationView(ttk.Frame):
         self._roster.delete(*self._roster.get_children())
         is_entry = g["class_type"] == pr.ENTRY
         for r in rows:
-            if is_entry:
+            allowed = self._parse_allowed(r)
+            if allowed:
+                rot = "🔒 Only: " + ", ".join(allowed)
+            elif is_entry:
                 rot = "✔  Full rotation" if r["full_rotation"] else "○  Mallets only (earning)"
             else:
                 rot = "✔  Full rotation"
@@ -609,20 +643,54 @@ class PercussionRotationView(ttk.Frame):
         self._roster.selection_set(str(pid))
 
     def _on_roster_click(self, event):
-        # Toggle full-rotation when clicking the Rotation column (Entry only).
+        # Click the Rotation column: a limited player opens their limit editor;
+        # otherwise (Entry) toggle full-rotation.
         g = self._current_group()
-        if not g or g["class_type"] != pr.ENTRY:
+        if not g:
             return
         region = self._roster.identify("region", event.x, event.y)
         col = self._roster.identify_column(event.x)
         row = self._roster.identify_row(event.y)
-        if region == "cell" and col == "#2" and row:
-            r = self._student_row(int(row))
-            if r:
-                self.db.update_percussion_student(
-                    int(row), {"full_rotation": 0 if r["full_rotation"] else 1})
-                self._render()
-                self._roster.selection_set(row)
+        if region != "cell" or col != "#2" or not row:
+            return
+        r = self._student_row(int(row))
+        if not r:
+            return
+        if self._parse_allowed(r):
+            self._limit_selected(int(row))
+            return
+        if g["class_type"] == pr.ENTRY:
+            self.db.update_percussion_student(
+                int(row), {"full_rotation": 0 if r["full_rotation"] else 1})
+            self._render()
+            self._roster.selection_set(row)
+
+    # ───────────────────────────────────────────────── per-student limits ──────
+
+    def _limit_player(self):
+        pid = self._selected_player_id()
+        if pid is None:
+            Messagebox.show_warning("Select a player first.",
+                                    title="No Selection", parent=self)
+            return
+        self._limit_selected(pid)
+
+    def _limit_selected(self, pid):
+        import json
+        g = self._current_group()
+        r = self._student_row(pid)
+        if not g or not r:
+            return
+        dlg = _LimitStationsDialog(self.winfo_toplevel(), r["name"],
+                                   g["class_type"], self._mallet_instrument_names(),
+                                   self._parse_allowed(r))
+        self.wait_window(dlg)
+        if not dlg.saved:
+            return
+        val = json.dumps(dlg.allowed) if dlg.allowed else None
+        self.db.update_percussion_student(pid, {"allowed_stations": val})
+        self._render()
+        self._roster.selection_set(str(pid))
 
     def _on_roster_double(self, event):
         row = self._roster.identify_row(event.y)
@@ -1029,6 +1097,112 @@ class _SpecialDayDialog(ttk.Toplevel):
 
     def _save(self):
         self.result = (self._mode.get(), self._note.get().strip())
+        self.destroy()
+
+
+class _LimitStationsDialog(ttk.Toplevel):
+    """Restrict ONE student to only certain stations.
+
+    For a student who can't run the whole rotation — one who only ever plays
+    Bells, or one you're expanding gradually (mallets → +snare → +drum set)
+    but who never handles timpani/aux.  Check the stations they may take; the
+    rotation then only ever places them on those, cycling among them day by
+    day.  Check nothing to remove the limit (back to the normal rotation).
+    """
+
+    # Rotation stations offered per class type, as (engine value, friendly label).
+    _ROTATION = {
+        pr.ENTRY: [(pr.MALLETS, "Mallets (free choice)"),
+                   (pr.SD, "Snare (SD)"),
+                   (pr.BD_SD, "Bass drum / Snare (BD/SD)"),
+                   (pr.TIMP_AUX, "Timpani / Auxiliary")],
+        pr.INT_ADV: [(pr.MALLETS, "Mallets (free choice)"),
+                     (pr.SD, "Snare (SD)"),
+                     (pr.DRUM_SET, "Drum set"),
+                     (pr.BD_SD, "Bass drum / Snare (BD/SD)"),
+                     (pr.TIMP_AUX, "Timpani / Auxiliary")],
+    }
+
+    def __init__(self, parent, name, class_type, mallet_instruments, current):
+        super().__init__(parent)
+        self.saved = False
+        self.allowed = None
+        self._name = name
+        self.title(f"Limit Rotation — {name}")
+        self.resizable(False, False)
+        self.grab_set()
+        self.lift()
+
+        current = set(current or [])
+
+        hdr = ttk.Frame(self, bootstyle=WARNING)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text=f"🎚  {name} — allowed stations",
+                  font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, WARNING)).pack(pady=10, padx=16, anchor=W)
+
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
+        ttk.Label(body,
+                  text="Check only the stations this student may play. The "
+                       "rotation restricts them to just these and cycles "
+                       "through them day by day — for a student who can't run "
+                       "the whole rotation. You can add more later as they grow.",
+                  font=("Segoe UI", 9), wraplength=430, justify=LEFT).pack(anchor=W)
+        ttk.Label(body,
+                  text="Leave everything unchecked (or use “Remove Limit”) to "
+                       "put them back on the normal earn-based rotation.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=430, justify=LEFT).pack(anchor=W, pady=(4, 8))
+
+        self._vars = []   # (engine_value, BooleanVar)
+
+        rot_box = ttk.Labelframe(body, text=" Rotation stations ", padding=8)
+        rot_box.pack(fill=X, pady=(0, 8))
+        for value, label in self._ROTATION.get(class_type, self._ROTATION[pr.ENTRY]):
+            var = tk.BooleanVar(value=value in current)
+            ttk.Checkbutton(rot_box, text=label, variable=var,
+                            bootstyle=WARNING).pack(anchor=W, pady=1)
+            self._vars.append((value, var))
+
+        if mallet_instruments:
+            mal_box = ttk.Labelframe(
+                body, text=" Specific mallet instruments ", padding=8)
+            mal_box.pack(fill=X)
+            ttk.Label(mal_box,
+                      text="Check ONE to lock the student to that instrument "
+                           "(e.g. Bells only). It reserves a spot so no one "
+                           "else is double-booked on it.",
+                      font=("Segoe UI", 8), foreground=muted_fg(),
+                      wraplength=400, justify=LEFT).pack(anchor=W, pady=(0, 4))
+            for name_i in mallet_instruments:
+                var = tk.BooleanVar(value=name_i in current)
+                ttk.Checkbutton(mal_box, text=name_i, variable=var,
+                                bootstyle=INFO).pack(anchor=W, pady=1)
+                self._vars.append((name_i, var))
+
+        btn = ttk.Frame(self)
+        btn.pack(fill=X, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Save", bootstyle=SUCCESS,
+                   command=self._save).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Remove Limit", bootstyle=(DANGER, OUTLINE),
+                   command=self._remove).pack(side=LEFT, padx=4)
+
+        from ui.theme import fit_window
+        fit_window(self, 470, 560)
+
+    def _save(self):
+        # Preserve the on-screen order (rotation stations first, then mallets).
+        picked = [value for value, var in self._vars if var.get()]
+        self.allowed = picked or None
+        self.saved = True
+        self.destroy()
+
+    def _remove(self):
+        self.allowed = None
+        self.saved = True
         self.destroy()
 
 

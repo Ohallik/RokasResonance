@@ -199,6 +199,58 @@ def _mallet_slot_walk(count, inventory=None):
     return slots
 
 
+# ── Per-student rotation limits (accessibility / individualized rotations) ────
+# Some students can't run the whole rotation: one may only ever play Bells
+# (with a 1:1 para) yet play every line beautifully; another may grow from
+# mallets-only to +snare to +drum set but never handle timpani/aux.  Give such
+# a student an ``allowed_stations`` list — the exact stations they may take —
+# and the engine restricts them to ONLY those, cycling among them day by day,
+# independent of the earn-based mallets-only/full-rotation split.  An empty or
+# missing list means "no limit" (the normal earn-based behavior).
+
+def _is_limited(student):
+    return bool(student.get("allowed_stations"))
+
+
+def _reserved_instruments(limited):
+    """Named mallet spots permanently consumed by limited students who are
+    LOCKED to a single specific instrument (e.g. Bells only).  These are
+    subtracted from the room inventory so the learner walk never double-books
+    that student's instrument.  A student allowed several stations isn't
+    reserved (their mallet days fall on generic self-choice)."""
+    reserved = {}
+    for s in limited:
+        allowed = s.get("allowed_stations") or []
+        if len(allowed) == 1:
+            reserved[allowed[0]] = reserved.get(allowed[0], 0) + 1
+    return reserved
+
+
+def _reduce_inventory(inventory, reserved):
+    """The room inventory with locked-instrument spots removed, so the
+    remaining learners walk only the spots actually free.  Never returns
+    empty (that would fall back to the default room)."""
+    inv = _norm_inventory(inventory)
+    if not reserved:
+        return inv
+    out = []
+    for name, cap in inv:
+        cap2 = cap - reserved.get(name, 0)
+        if cap2 > 0:
+            out.append((name, cap2))
+    return out or inv
+
+
+def _limited_station(student, day, index):
+    """The station a limited student takes on ``day`` (1-based): cycle their
+    own allowed list, staggered by ``index`` so two limited students sharing
+    a list don't move in lockstep."""
+    allowed = student.get("allowed_stations") or []
+    if not allowed:
+        return MALLETS
+    return allowed[(day - 1 + index) % len(allowed)]
+
+
 def build_ring(n, class_type):
     """Return the evenly-spread ring of seats for ``n`` full-rotation players.
 
@@ -225,15 +277,24 @@ def cycle_length(students, mallet_subrotation=True, inventory=None):
     This is why one earned player must NOT shrink an 11-player Entry section
     down to a 5-day ring: the ten still-learning players would then never
     reach some instruments.  The mallets-only walk keeps it long enough for
-    everyone to see marimba, vibraphone, xylophone, and bells."""
-    full_count = sum(1 for s in students if not s.get("mallets_only"))
-    mo_count = sum(1 for s in students if s.get("mallets_only"))
+    everyone to see marimba, vibraphone, xylophone, and bells.
+
+    Station-limited students (``allowed_stations``) sit outside both groups;
+    their own list also has to complete within a cycle, so its length counts
+    too."""
+    limited = [s for s in students if _is_limited(s)]
+    rest = [s for s in students if not _is_limited(s)]
+    full_count = sum(1 for s in rest if not s.get("mallets_only"))
+    mo_count = sum(1 for s in rest if s.get("mallets_only"))
+    inv = _reduce_inventory(inventory, _reserved_instruments(limited))
     lengths = []
     if full_count:
         lengths.append(max(full_count, MIN_RING))
     if mo_count:
-        lengths.append(len(_mallet_slot_walk(mo_count, inventory))
+        lengths.append(len(_mallet_slot_walk(mo_count, inv))
                        if mallet_subrotation else 1)
+    for s in limited:
+        lengths.append(len(s.get("allowed_stations") or []) or 1)
     return max(lengths) if lengths else 1
 
 
@@ -304,39 +365,53 @@ def day_assignments(students, day, class_type,
         MODE_ALL_MALLETS  - everyone on Mallets (earned generic; learners
                             still get their specific instrument)
         MODE_ALL_SNARE    - everyone on snare / practice pad
+
+    Station-limited students (``allowed_stations``) always take one of their
+    own allowed stations — they ignore the ring, the mallets-only walk, AND
+    the special-day modes, since the limit is exactly what they can do.
     """
     if day < 1:
         day = 1
 
-    mo = [s for s in students if s.get("mallets_only")]
+    # Limited students are handled first and pulled out of the normal pools.
+    limited = [s for s in students if _is_limited(s)]
+    limited_index = {id(s): k for k, s in enumerate(limited)}
+    rest = [s for s in students if not _is_limited(s)]
+
+    # Locked-to-one-instrument students reserve that mallet spot for the walk.
+    inv = _reduce_inventory(inventory, _reserved_instruments(limited))
+
+    mo = [s for s in rest if s.get("mallets_only")]
     mo_index = {id(s): j for j, s in enumerate(mo)}
 
     def learner_station(s):
         return _mallets_only_station(mo_index[id(s)], len(mo), day,
-                                     inventory, mallet_subrotation)
+                                     inv, mallet_subrotation)
+
+    station_by_id = {}
+    for s in limited:
+        station_by_id[id(s)] = _limited_station(s, day, limited_index[id(s)])
 
     if mode == MODE_ALL_MALLETS:
-        return [(s["name"],
-                 learner_station(s) if s.get("mallets_only") else MALLETS)
-                for s in students]
-    if mode == MODE_ALL_SNARE:
-        return [(s["name"], ALL_SNARE_LABEL) for s in students]
+        for s in rest:
+            station_by_id[id(s)] = (learner_station(s)
+                                    if s.get("mallets_only") else MALLETS)
+    elif mode == MODE_ALL_SNARE:
+        for s in rest:
+            station_by_id[id(s)] = ALL_SNARE_LABEL
+    else:
+        full = [s for s in rest if not s.get("mallets_only")]
+        ring = build_ring(len(full), class_type)
+        rlen = len(ring)
+        # Full-rotation players take ring seats by position; a Mallets seat
+        # stays generic "Mallets" (free choice of any open mallet instrument).
+        for i, s in enumerate(full):
+            station_by_id[id(s)] = ring[(day - 1 + i) % rlen] if rlen else MALLETS
+        # Still-learning players get a specific instrument, cycling all types.
+        for s in mo:
+            station_by_id[id(s)] = learner_station(s)
 
-    full = [s for s in students if not s.get("mallets_only")]
-    ring = build_ring(len(full), class_type)
-    rlen = len(ring)
-
-    # Full-rotation players take ring seats by position; a Mallets seat stays
-    # the generic "Mallets" label (free choice of any open mallet instrument).
-    station_by_name = {}
-    for i, s in enumerate(full):
-        station_by_name[id(s)] = ring[(day - 1 + i) % rlen] if rlen else MALLETS
-
-    # Still-learning players get a specific instrument, cycling all four types.
-    for s in mo:
-        station_by_name[id(s)] = learner_station(s)
-
-    return [(s["name"], station_by_name[id(s)]) for s in students]
+    return [(s["name"], station_by_id[id(s)]) for s in students]
 
 
 def full_grid(students, class_type, days=None,
