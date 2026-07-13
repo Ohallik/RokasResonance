@@ -53,8 +53,8 @@ SetupIconFile=..\assets\banner_logo.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ; Allow uninstaller to clean up even if the exe was renamed
 UninstallDisplayName={#MyAppName}
-ArchitecturesInstallIn64BitMode=x64
-ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed=x64compatible
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
