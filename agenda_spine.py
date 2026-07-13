@@ -22,9 +22,22 @@ directors configure their own.
 
 import json as _json
 import os as _os
+import sys as _sys
 from datetime import date, timedelta
 
 import school_calendar as _scal   # pure date logic (no I/O), safe to import
+
+
+def _data_path(filename):
+    """Locate a bundled data file next to this module — or, in a PyInstaller
+    build, under the extracted bundle (sys._MEIPASS).  Keeps the SoE / Technique
+    line JSON loading in both a source run and the installed .exe."""
+    base = getattr(_sys, "_MEIPASS", None)
+    if base:
+        p = _os.path.join(base, filename)
+        if _os.path.exists(p):
+            return p
+    return _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), filename)
 
 ENTRY = "entry"
 INTERMEDIATE = "intermediate"
@@ -313,8 +326,7 @@ def _load_soe(book=1):
     cached = _SOE_CACHE.get(book)
     if cached is not None:
         return cached
-    path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
-                         _SOE_FILES.get(book, _SOE_FILES[1]))
+    path = _data_path(_SOE_FILES.get(book, _SOE_FILES[1]))
     try:
         with open(path, encoding="utf-8") as fh:
             d = _json.load(fh)
@@ -378,8 +390,7 @@ def _load_tm():
     global _TM_CACHE
     if _TM_CACHE is not None:
         return _TM_CACHE
-    path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
-                         "technique_musicianship_lines.json")
+    path = _data_path("technique_musicianship_lines.json")
     try:
         with open(path, encoding="utf-8") as fh:
             d = _json.load(fh)

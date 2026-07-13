@@ -29,6 +29,14 @@ datas = [
     (os.path.join(PROJECT_ROOT, "User_Guide.txt"), "."),
 ]
 
+# Runtime data files loaded by module code (band-book / Technique line data).
+# They must ride in the bundle root or the agenda pickers come up empty.
+for _json_data in ("soe_book1_lines.json", "soe_book2_lines.json",
+                   "technique_musicianship_lines.json"):
+    _p = os.path.join(PROJECT_ROOT, _json_data)
+    if os.path.exists(_p):
+        datas.append((_p, "."))
+
 # ttkbootstrap ships themes as package data files — pull them in.
 datas += collect_data_files("ttkbootstrap")
 
@@ -44,8 +52,12 @@ hiddenimports = [
     "openai",
     "httpx",
     "sqlite3",
+    # CutTime inventory import reads .xlsx via openpyxl.
+    "openpyxl",
+    "et_xmlfile",
 ]
 hiddenimports += collect_submodules("ttkbootstrap")
+hiddenimports += collect_submodules("openpyxl")
 
 a = Analysis(
     [os.path.join(PROJECT_ROOT, "main.py")],

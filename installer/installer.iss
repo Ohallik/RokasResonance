@@ -34,13 +34,16 @@ AppId={{B4D2C3A1-9E6F-4C12-9F3A-ROKASRESONANCE}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-AppSupportURL=https://github.com/natepm/RokasResonance
+AppSupportURL=https://github.com/Ohallik/RokasResonance
 DefaultDirName={autopf}\RokasResonance
 DefaultGroupName=Roka's Resonance
 DisableProgramGroupPage=yes
 DisableDirPage=yes
 DisableReadyPage=yes
-PrivilegesRequired=admin
+; Per-user install — NO admin rights needed.  With PrivilegesRequired=lowest,
+; {autopf} resolves to %LOCALAPPDATA%\Programs\RokasResonance and the shortcuts
+; go to the per-user Start Menu / Desktop, so any teacher can install without IT.
+PrivilegesRequired=lowest
 OutputDir=output
 OutputBaseFilename=Install-RokasResonance
 Compression=lzma2/max

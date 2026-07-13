@@ -8,10 +8,14 @@ an additional distribution path you can test in parallel.
 
 `Install-RokasResonance.exe` — a single-file installer for Windows that:
 
-- Installs to `%LOCALAPPDATA%\Programs\RokasResonance` (per-user, no admin needed)
-- Creates a Start Menu shortcut (Desktop shortcut is opt-in)
+- Installs to `%LOCALAPPDATA%\Programs\RokasResonance` (per-user, **no admin needed** — any teacher can install without IT)
+- Creates Start Menu **and** Desktop shortcuts
 - Bundles Python + all dependencies inside the `.exe` — end user does not need Python installed
 - User data (profiles, database, settings) stays in `%LOCALAPPDATA%\RokasResonance`, so the copy-files build and the installed build share the same data on the same machine
+
+On a brand-new machine the app runs a one-time **first-run wizard** (name / school /
+focus → classes → optional CutTime/Charms/Synergy import), so a teacher is set up
+without touching any files by hand.
 
 ## One-time prerequisites
 
