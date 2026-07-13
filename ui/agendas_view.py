@@ -483,7 +483,10 @@ class AgendasView(ttk.Frame):
             except Exception:
                 continue
             for sec in day.get("sections", []):
-                if sec.get("kind") != "bandbook":
+                k = sec.get("kind")
+                if k is None:
+                    k = _infer_section_kind(sec.get("title", ""))
+                if k != "bandbook":
                     continue
                 for it in sec.get("items", []):
                     m = re.match(r"\s*p\.\s*([0-9]+(?:-[0-9]+)?)", it.get("text", ""))
@@ -515,6 +518,7 @@ class AgendasView(ttk.Frame):
             try:
                 self._day = json.loads(row["data"])
                 self._saved = True
+                self._heal_kinds(self._day)
                 self._ensure_ids(self._day)
                 return
             except Exception:
@@ -522,6 +526,18 @@ class AgendasView(ttk.Frame):
         self._day = spine.build_default_day(self._date, self._context())
         self._saved = False
         self._ensure_ids(self._day)
+
+    def _heal_kinds(self, day):
+        """Older saved days stored every section with a null ``kind``, which hid
+        the special sections (band-book page/line picker, Rhythms image pane,
+        Advanced warm-up picker, etc.).  Infer a missing kind from the section
+        title so those days behave like freshly-generated ones.  Only fills a
+        genuinely absent kind — a section the teacher made plain on purpose (via
+        "Add Section") has kind "" and is left alone."""
+        for sec in (day or {}).get("sections", []):
+            if sec.get("kind") is not None:
+                continue
+            sec["kind"] = _infer_section_kind(sec.get("title", ""))
 
     def _ensure_ids(self, day):
         """Give every item a stable id so per-section checkbox state can key to
@@ -1968,3 +1984,21 @@ def _safe_json(raw, default):
         return json.loads(raw)
     except Exception:
         return default
+
+
+def _infer_section_kind(title):
+    """Best-guess section kind from its title, for healing legacy days that
+    saved a null kind (see AgendasView._heal_kinds)."""
+    t = (title or "").lower()
+    if "band book" in t or "bandbook" in t:
+        return "bandbook"
+    if "rhythm" in t:
+        return "rhythms"
+    if "sheet music" in t or "sheet" in t:
+        return "sheet"
+    if "practice journal" in t:
+        return "pj"
+    if any(k in t for k in ("warm up", "warm-up", "warmup",
+                            "fundamentals", "broccoli")):
+        return "warmup"
+    return ""
