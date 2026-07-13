@@ -784,11 +784,17 @@ class _PartLimitsDialog(ttk.Toplevel):
 
         body = ttk.Frame(self)
         body.pack(fill=BOTH, expand=True, padx=16, pady=10)
-        ttk.Label(body, text="A limit caps the TOTAL players across the checked "
+        ttk.Label(body, text="A limit caps the TOTAL players across SEVERAL "
                              "seats. Example: “Amps”, max 3, over Bass + Guitar — "
                              "so two basses + a guitar, or two guitars + a bass, "
                              "but never four.",
                   font=("Segoe UI", 9), wraplength=440, justify=LEFT).pack(anchor=W)
+        ttk.Label(body, text="To change how many fit on ONE seat (e.g. several "
+                             "players on the mallet/vibraphone seat), set that "
+                             "seat's capacity in “Add / edit seats…” instead — "
+                             "not here.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=440, justify=LEFT).pack(anchor=W, pady=(4, 0))
 
         self._rows_frame = ttk.Frame(body)
         self._rows_frame.pack(fill=X, pady=(6, 0))

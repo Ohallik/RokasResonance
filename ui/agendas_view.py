@@ -785,16 +785,15 @@ class AgendasView(ttk.Frame):
         for seat, names in asg:
             r = ttk.Frame(body)
             r.pack(fill=X, pady=1)
-            ic = jazz_icons.icon(body, seat, px=fs(18))
-            if ic is not None:
+            ic = jazz_icons.icon(body, seat, px=fs(20))
+            if ic is not None:                    # icon only — no instrument label
                 self._img_refs.append(ic)
                 _tk(tk.Label, r, image=ic).pack(side=LEFT)
-            else:
-                ttk.Label(r, text=" ", width=2).pack(side=LEFT)
-            ttk.Label(r, text=seat, font=("Segoe UI", fs(9)),
-                      width=12, anchor=W).pack(side=LEFT, padx=(4, 2))
+            else:                                 # no icon for this seat: name it
+                ttk.Label(r, text=seat, font=("Segoe UI", fs(9)),
+                          width=12, anchor=W).pack(side=LEFT)
             ttk.Label(r, text=", ".join(names) if names else "—",
-                      font=("Segoe UI", fs(9), "bold")).pack(side=LEFT)
+                      font=("Segoe UI", fs(9), "bold")).pack(side=LEFT, padx=(8, 0))
         if bench:
             ttk.Label(body, text="Out: " + ", ".join(bench),
                       font=("Segoe UI", fs(8)), foreground=muted_fg(),
@@ -823,12 +822,14 @@ class AgendasView(ttk.Frame):
             if not song:
                 return
             locked = _safe_json(song["locked"], {})
+            # The piece name is a normal (checkable) line; the assigned players
+            # come in as FIXED text lines beneath it (no checkbox / no edit box).
             section.setdefault("items", []).append(spine._item(title))
             for seat, who in locked.items():
                 names = who if isinstance(who, list) else ([who] if who else [])
                 if names:
                     section["items"].append(
-                        spine._item(f"{seat}: {', '.join(names)}"))
+                        spine._item(f"{seat}: {', '.join(names)}", kind="static"))
             self._save_day()
             self._render()
         ttk.Button(bar, text="➕ Add", bootstyle=(SUCCESS, OUTLINE),
@@ -895,6 +896,19 @@ class AgendasView(ttk.Frame):
             self._render_image_item(parent, section, item)
             return
         kind = item.get("kind", "")
+        if kind == "static":
+            # Fixed, non-editable text (e.g. a song's locked rhythm-section
+            # personnel dropped under the piece) — no checkbox, no entry, just an
+            # indented label with a small ✕ to remove it.
+            row = ttk.Frame(parent)
+            row.pack(fill=X, pady=1)
+            ttk.Label(row, text="", width=3).pack(side=LEFT)
+            ttk.Label(row, text=item.get("text", ""), font=("Segoe UI", fs(10)),
+                      anchor=W, justify=LEFT).pack(side=LEFT, fill=X, expand=True)
+            ttk.Button(row, text="✕", width=2, bootstyle=(DANGER, OUTLINE, LINK),
+                       command=lambda: self._remove_item(section, item)
+                       ).pack(side=RIGHT)
+            return
         color = item.get("color", "")
         fg, bg = _plan_colors(color, kind)
         row = ttk.Frame(parent)
@@ -1702,16 +1716,15 @@ class _PresentWindow(ttk.Toplevel):
         for seat, names in asg:
             r = _tk(tk.Frame, table, bg=bg)
             r.pack(fill=X, pady=1)
-            ic = jazz_icons.icon(table, seat, px=fs(22))
-            if ic is not None:
+            ic = jazz_icons.icon(table, seat, px=fs(24))
+            if ic is not None:                    # icon only — no instrument label
                 self._img_refs.append(ic)
                 _tk(tk.Label, r, image=ic, bg=bg).pack(side=LEFT)
             else:
-                _tk(tk.Label, r, text="  ", bg=bg).pack(side=LEFT)
-            _tk(tk.Label, r, text=seat, bg=bg, fg=_auto_fg(bg), width=12,
-                anchor="w", font=("Segoe UI", fs(12), "bold")).pack(side=LEFT, padx=6)
+                _tk(tk.Label, r, text=seat, bg=bg, fg=_auto_fg(bg), width=12,
+                    anchor="w", font=("Segoe UI", fs(12), "bold")).pack(side=LEFT)
             _tk(tk.Label, r, text=", ".join(names) if names else "—", bg=bg,
-                fg=_auto_fg(bg), font=("Segoe UI", fs(12))).pack(side=LEFT)
+                fg=_auto_fg(bg), font=("Segoe UI", fs(12))).pack(side=LEFT, padx=(8, 0))
         panel.place(relx=1.0, y=8, anchor="ne", x=-10)
         self._perc_widget = panel
 
@@ -1776,7 +1789,9 @@ class _PresentWindow(ttk.Toplevel):
         fg, lbg = _present_colors(color, kind, bg)
         row = _tk(tk.Frame, parent, bg=bg)
         row.pack(fill=X, pady=1, anchor=W)
-        if kind == "missing":
+        if kind in ("missing", "static"):
+            # Fixed text, no check box (missing names, or a song's locked
+            # personnel dropped under the piece), indented under the checkboxes.
             _tk(tk.Label, row, text="", bg=bg, width=3).pack(side=LEFT)
             _tk(tk.Label, row, text=missing_text or item.get("text", ""), bg=bg,
                 fg=_auto_fg(bg), font=("Segoe UI", fs(14)), wraplength=1100,
