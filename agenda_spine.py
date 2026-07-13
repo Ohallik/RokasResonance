@@ -593,9 +593,9 @@ def build_default_day(d, ctx):
                          "items": [_item(f"Practice Journal {pj}")]})
 
     # Banner: reminders (standing) + announcements (auto bits).
+    # Announcements start blank for everyone (the old "Don't forget Jazz 2" was
+    # one teacher's personal note); only the generic concert countdown auto-fills.
     announcements = []
-    if wd == 0 and is_entry:
-        announcements.append("Don't forget Jazz 2")
     upcoming = [c["date"] for c in concerts
                 if c.get("date") and 0 <= (c["date"] - d).days <= 14]
     if upcoming:
