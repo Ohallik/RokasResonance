@@ -269,6 +269,12 @@ class BudgetManager(ttk.Frame):
                 "Edit the repair there to change its actual cost.",
                 title="Auto-linked", parent=self)
             return
+        if r.get("source") == "fee":
+            Messagebox.show_info(
+                "Collected student fees are pulled automatically from Student "
+                "Fees. Open “🎽 Student Fees” to change or un-mark a payment.",
+                title="Auto-linked", parent=self)
+            return
         _TxnDialog(self.winfo_toplevel(), self.db, self._year_var.get(),
                    txn=r, on_done=self.refresh)
 
@@ -278,6 +284,10 @@ class BudgetManager(ttk.Frame):
             return
         if r.get("source") == "repair":
             Messagebox.show_info("Delete the repair record in the Repair Center instead.",
+                                 title="Auto-linked", parent=self)
+            return
+        if r.get("source") == "fee":
+            Messagebox.show_info("Remove or un-mark this fee in “🎽 Student Fees”.",
                                  title="Auto-linked", parent=self)
             return
         if Messagebox.yesno("Delete this transaction?", title="Confirm", parent=self) == "Yes":
@@ -870,6 +880,8 @@ class _FeesDialog(ttk.Toplevel):
                    command=self._add_students).pack(side=LEFT, padx=2)
         ttk.Button(tb, text="🎓 Add all Entry students", bootstyle=(SUCCESS, OUTLINE),
                    command=self._add_entry).pack(side=LEFT, padx=2)
+        ttk.Button(tb, text="⧉ Duplicate", bootstyle=(SUCCESS, OUTLINE),
+                   command=self._duplicate).pack(side=LEFT, padx=2)
         ttk.Separator(tb, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=2)
         ttk.Button(tb, text="Select All", bootstyle=(SECONDARY, OUTLINE),
                    command=self._check_all).pack(side=LEFT, padx=2)
@@ -1020,6 +1032,32 @@ class _FeesDialog(ttk.Toplevel):
             self.db.delete_student_fee(fid)
         self._checked.clear()
         self._reload_list()
+
+    def _duplicate(self):
+        """Add a second (unpaid) copy of the selected fee(s) — for students who
+        owe this fee more than once, e.g. renting several instruments (Grace's
+        3 summer rentals = 3 × $20).  Each click adds one more copy per row."""
+        ids = self._sel_ids()
+        if not ids:
+            Messagebox.show_warning("Tick or select the student fee(s) to duplicate.",
+                                    title="No Selection", parent=self)
+            return
+        rows = {r["id"]: r for r in self.db.get_student_fees(self._fee_var.get(),
+                                                             self.school_year)}
+        made = 0
+        for fid in ids:
+            r = rows.get(fid)
+            if not r:
+                continue
+            self.db.add_student_fee(r["student_id"], r["fee_type"],
+                                    self.school_year, float(r["amount"] or 0))
+            made += 1
+        self._checked.clear()
+        self._reload_list()
+        if made:
+            Messagebox.show_info(
+                f"Added {made} more unpaid {self._fee_var.get()} fee(s). Mark each "
+                "Paid as the student pays.", title="Duplicated", parent=self)
 
     def _add_students(self):
         fee = self._fee_var.get()

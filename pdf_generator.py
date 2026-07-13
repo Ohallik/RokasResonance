@@ -101,6 +101,21 @@ def _get_accessories(description: str) -> list:
     return ["Case", "Mouthpiece"]
 
 
+# Consumable supplies + kit contents get a Yes/No box (present or not) on the
+# form instead of an Excellent/Good/Fair/Poor condition rating — you don't grade
+# the condition of valve oil, a swab, or a set of sticks; you just record whether
+# the student has it (accountability).  Durable CASES stay condition-rated.
+_SUPPLY_KEYWORDS = ("oil", "grease", "swab", "cork", "reed", "mallet", "stick",
+                    "cable", "adapter", "cloth", "rod")
+
+
+def _is_supply(name: str) -> bool:
+    n = (name or "").lower()
+    if "case" in n:                 # "Reed Case", "Case/Bag" stay condition-rated
+        return False
+    return any(k in n for k in _SUPPLY_KEYWORDS)
+
+
 # ── Style helpers ─────────────────────────────────────────────────────────────
 
 def _ps(name, size=10, bold=False, align=TA_LEFT, leading=None):
@@ -211,8 +226,9 @@ def _row_describe(s):
 
 def _accessories_table(accessories, s):
     """
-    Two-column table: each item name is bold+underlined, followed by
-    Excellent / Good / Fair / Poor (plain text for the student to circle).
+    Two-column table: each item name is bold+underlined, followed by the words
+    the student circles — Excellent / Good / Fair / Poor for durable items, or
+    just Yes / No for consumable supplies and kit contents (see _is_supply).
     """
     mid   = math.ceil(len(accessories) / 2)
     left  = accessories[:mid]
@@ -220,7 +236,7 @@ def _accessories_table(accessories, s):
     while len(right) < len(left):
         right.append(None)
 
-    # 11 columns: item | Exc | Good | Fair | Poor | gap | item | Exc | Good | Fair | Poor
+    # 11 columns: item | w1 | w2 | w3 | w4 | gap | item | w1 | w2 | w3 | w4
     cw = [
         1.45*inch, 0.65*inch, 0.5*inch, 0.4*inch, 0.4*inch,   # left side (5)
         0.15*inch,                                              # gap
@@ -230,20 +246,24 @@ def _accessories_table(accessories, s):
     def item_p(name):
         return _p(f"<u><b>{name}</b></u>", s["b9"]) if name else _p("", s["n9"])
 
-    def cond_p(word, show):
-        return _p(word, s["n9"]) if show else _p("", s["n9"])
+    def _words(name):
+        # The four rating cells for an item (blank-padded to 4).
+        if name is None:
+            return ["", "", "", ""]
+        if _is_supply(name):
+            return ["Yes", "No", "", ""]
+        return ["Excellent", "Good", "Fair", "Poor"]
 
     rows = []
     for l_item, r_item in zip(left, right):
-        show_r = r_item is not None
+        lw = _words(l_item)
+        rw = _words(r_item)
         rows.append([
             item_p(l_item),
-            _p("Excellent", s["n9"]), _p("Good", s["n9"]),
-            _p("Fair", s["n9"]),      _p("Poor", s["n9"]),
+            _p(lw[0], s["n9"]), _p(lw[1], s["n9"]), _p(lw[2], s["n9"]), _p(lw[3], s["n9"]),
             _p("", s["n9"]),
             item_p(r_item),
-            cond_p("Excellent", show_r), cond_p("Good", show_r),
-            cond_p("Fair", show_r),      cond_p("Poor", show_r),
+            _p(rw[0], s["n9"]), _p(rw[1], s["n9"]), _p(rw[2], s["n9"]), _p(rw[3], s["n9"]),
         ])
 
     tbl = Table(rows, colWidths=cw)
@@ -403,7 +423,19 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     except (ValueError, TypeError):
         est_value = str(est_val_raw or "")
 
-    accessories = _get_accessories(description)
+    # An instrument may carry its OWN accessory / kit-contents list (e.g. a
+    # stick-&-mallet bag records exactly which sets it holds via the inventory
+    # editor's "Bag Contents" checkboxes, saved to the accessories field).  When
+    # present, that overrides the generic per-type list — so a bag's form shows
+    # only what's actually in it, and each is a Yes/No accountability line.
+    custom = str(instrument_data.get("accessories") or "").strip()
+    if custom:
+        accessories = [a.strip() for a in custom.split(",") if a.strip()]
+        if ("stick" in description.lower() or "bag" in description.lower()) \
+                and not any("bag" in a.lower() for a in accessories):
+            accessories = ["Stick Bag"] + accessories
+    else:
+        accessories = _get_accessories(description)
 
     # ── Title ─────────────────────────────────────────────────────────────
     story.append(_p(f"{district_name} Equipment Loan Form", s["title"]))

@@ -96,6 +96,7 @@ class Database:
                     serial_no TEXT,
                     date_purchased TEXT,
                     year_purchased TEXT,
+                    year_manufactured TEXT,
                     po_number TEXT,
                     last_service TEXT,
                     amount_paid REAL DEFAULT 0,
@@ -370,6 +371,13 @@ class Database:
             # Migrate: add due_date column if it doesn't exist yet
             try:
                 conn.execute("ALTER TABLE checkouts ADD COLUMN due_date TEXT")
+                conn.commit()
+            except Exception:
+                pass  # Column already exists
+            # Migrate: add year_manufactured (serial-dated PRODUCTION year, kept
+            # separate from year_purchased) to instruments
+            try:
+                conn.execute("ALTER TABLE instruments ADD COLUMN year_manufactured TEXT")
                 conn.commit()
             except Exception:
                 pass  # Column already exists
@@ -758,7 +766,7 @@ class Database:
         cols = [
             "category", "description", "brand", "model", "barcode", "quantity",
             "district_no", "case_no", "condition", "serial_no", "date_purchased",
-            "year_purchased", "po_number", "last_service", "amount_paid", "est_value",
+            "year_purchased", "year_manufactured", "po_number", "last_service", "amount_paid", "est_value",
             "locker", "lock_no", "combo", "comments", "accessories"
         ]
         values = [data.get(c) for c in cols]
@@ -774,7 +782,7 @@ class Database:
         cols = [
             "category", "description", "brand", "model", "barcode", "quantity",
             "district_no", "case_no", "condition", "serial_no", "date_purchased",
-            "year_purchased", "po_number", "last_service", "amount_paid", "est_value",
+            "year_purchased", "year_manufactured", "po_number", "last_service", "amount_paid", "est_value",
             "locker", "lock_no", "combo", "comments", "accessories", "is_active"
         ]
         set_clause = ", ".join([f"{c}=?" for c in cols])
@@ -1306,6 +1314,30 @@ class Database:
                 (instrument_id,)
             ).fetchall()
 
+    def find_duplicate_repair(self, instrument_id, invoice_number,
+                              description=None):
+        """A repair id that looks like a duplicate of one being entered — same
+        instrument and same (non-blank) invoice number — so re-scanning an
+        invoice doesn't create duplicate records.  When several share that
+        invoice number, an optional matching description picks the closest.
+        Returns the repair id, or None."""
+        inv = (invoice_number or "").strip()
+        if not instrument_id or not inv:
+            return None
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, description FROM repairs WHERE instrument_id=? "
+                "AND TRIM(IFNULL(invoice_number,''))=?", (instrument_id, inv)
+            ).fetchall()
+        if not rows:
+            return None
+        if description:
+            d = description.strip().lower()
+            for r in rows:
+                if (r["description"] or "").strip().lower() == d:
+                    return r["id"]
+        return rows[0]["id"]
+
     def add_repair(self, data: dict) -> int:
         cols = [
             "instrument_id", "priority", "date_added", "assigned_to",
@@ -1595,6 +1627,17 @@ class Database:
                      AND COALESCE(NULLIF(r.date_repaired,''), r.date_added) >= ?
                      AND COALESCE(NULLIF(r.date_repaired,''), r.date_added) <= ?""",
                 (lo, hi)).fetchall()
+            # Collected student fees (status 'paid') for this year → income, as
+            # read-only synthetic rows (managed in Budget ▸ Student Fees, same
+            # pattern as auto-linked repair expenses).  Matched on the fee's
+            # academic-year label so the July fiscal-boundary can't drop them.
+            fees = conn.execute(
+                """SELECT sf.id, sf.fee_type, sf.amount, sf.date_paid, sf.student_id,
+                          (s.first_name || ' ' || s.last_name) AS student_name
+                   FROM student_fees sf
+                   LEFT JOIN students s ON s.id = sf.student_id
+                   WHERE sf.status='paid' AND sf.school_year=?""",
+                (school_year,)).fetchall()
         for rp in reps:
             rows.append({
                 "id": None, "source": "repair", "repair_id": rp["id"],
@@ -1603,6 +1646,19 @@ class Database:
                 "category": "Instrument Repair", "kind": "expense",
                 "amount": float(rp["act_cost"] or 0), "funding_source": "Building",
                 "student_id": None, "student_name": "", "notes": "",
+            })
+        for f in fees:
+            ftype = f["fee_type"] or "Student Fee"
+            cat = ("Instrument Rental Fees"
+                   if ftype.lower().startswith("instrument rental") else "Student Fees")
+            who = f["student_name"] or ""
+            rows.append({
+                "id": None, "source": "fee", "fee_id": f["id"],
+                "txn_date": f["date_paid"] or lo,
+                "description": f"Fee: {ftype}" + (f" — {who}" if who else ""),
+                "category": cat, "kind": "income",
+                "amount": float(f["amount"] or 0), "funding_source": "Other",
+                "student_id": f["student_id"], "student_name": who, "notes": "",
             })
         rows.sort(key=lambda r: r.get("txn_date") or "", reverse=True)
         return rows
@@ -1714,6 +1770,16 @@ class Database:
                 (student_id, fee_type, school_year, amount, status))
             return cur.lastrowid
 
+    def add_student_fee(self, student_id, fee_type, school_year, amount, status="unpaid"):
+        """Always INSERT a fee row (no dedup) — for students who owe a fee more
+        than once, e.g. renting several instruments (3 summer rentals = 3 × $20)."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """INSERT INTO student_fees (student_id, fee_type, school_year, amount, status)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (student_id, fee_type, school_year, amount, status))
+            return cur.lastrowid
+
     def set_student_fee_status(self, fee_id, status, date_paid=None):
         with self._connect() as conn:
             conn.execute("UPDATE student_fees SET status=?, date_paid=? WHERE id=?",
@@ -1772,9 +1838,18 @@ class Database:
                    JOIN instruments i ON i.id=c.instrument_id
                    WHERE c.date_returned IS NULL AND i.is_active=1"""
             ).fetchone()[0]
+            # Instruments currently in the repair pipeline — MUST match the
+            # Repair Center's Needs/Out-for-Repair views: an open repair is one
+            # with no repaired-date (NULL *or* empty string — "Mark Out for
+            # Repair" saves date_repaired=""), on an active, not-unrepairable
+            # instrument.  (Previously counted only IS NULL, so the 12 "out for
+            # repair" instruments — saved with ""— showed as 1.)
             in_repair = conn.execute(
                 """SELECT COUNT(DISTINCT r.instrument_id) FROM repairs r
-                   WHERE r.date_repaired IS NULL"""
+                   JOIN instruments i ON i.id = r.instrument_id
+                   WHERE (r.date_repaired IS NULL OR TRIM(r.date_repaired) = '')
+                     AND i.is_active = 1
+                     AND LOWER(TRIM(IFNULL(i.condition, ''))) != 'unrepairable'"""
             ).fetchone()[0]
             sheet_music = conn.execute(
                 "SELECT COUNT(*) FROM sheet_music WHERE is_active=1"

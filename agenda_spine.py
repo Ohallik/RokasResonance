@@ -27,6 +27,8 @@ from datetime import date, timedelta
 import school_calendar as _scal   # pure date logic (no I/O), safe to import
 
 ENTRY = "entry"
+INTERMEDIATE = "intermediate"
+ADVANCED = "advanced"
 
 # ── Fundamentals for Entry Band, by concert-cycle level ───────────────────────
 # Exercise names as the teacher writes them.  Level 1 runs to the December
@@ -242,6 +244,30 @@ def default_assessments(cal, year_start, year_end):
             for ref, due, _intro in assessment_schedule(cal, year_start, year_end)]
 
 
+# ── Intermediate Band's yearly assessments ────────────────────────────────────
+# Her Intermediate assessment sheet (both snare AND mallets, always; infinite
+# retakes, no late deductions, no speed requirement).  A mix of Book-2 lines and
+# "Broccoli" (her own warm-up) scales, bucketed by semester rather than pinned to
+# dates — so these seed the editor DATELESS; she assigns due dates per year only
+# if she wants a line to auto-surface on the agenda.  DATA (one director's set).
+INT_ASSESSMENTS = [
+    # Semester 1
+    "Broccoli scale 3", "Line 21", "Broccoli scale 4", "Line 29", "Line 37",
+    "Broccoli scale 2", "Broccoli scale 5", "Broccoli scale 1", "Broccoli scale 12",
+    # Semester 2
+    "Line 72", "Line 78", "Broccoli scale 6", "Line 96", "Broccoli scale 11",
+    "Broccoli scale 10", "Broccoli scale 9", "Broccoli scale 8", "Broccoli scale 7",
+    "Line 118",
+]
+
+
+def default_int_assessments():
+    """The seed Intermediate assessment list — [{'ref', 'due'(None)}] — dateless.
+    Preserves her real assessment set as editable data; she assigns due dates per
+    year if she wants a line to auto-surface (~2 weeks ahead) on the agenda."""
+    return [{"ref": ref, "due": None} for ref in INT_ASSESSMENTS]
+
+
 def assessments_visible(d, items, lead_days=14):
     """From a teacher-defined list ``[{'ref', 'due'(date)}, ...]``, the ones to
     show on ``d``: introduced ``lead_days`` before their due date and not yet
@@ -274,25 +300,26 @@ def _item(text, done=False, note="", kind=""):
     return {"text": text, "done": done, "note": note, "kind": kind}
 
 
-# ── Standard of Excellence Book 1 line data (for the band-book dropdowns) ──────
-# Loaded once from soe_book1_lines.json next to this module.  Each numbered line
-# is tagged with its STUDENT page so the teacher can pick a page, then pick the
-# lines on that page, instead of typing titles.
-_SOE = None
+# ── Standard of Excellence line data (for the band-book dropdowns) ────────────
+# Book 1 (Entry) and Book 2 (Intermediate) loaded from JSON next to this module.
+# Each numbered line is tagged with its STUDENT page so the teacher can pick a
+# page, then pick the lines on that page, instead of typing titles.
+_SOE_FILES = {1: "soe_book1_lines.json", 2: "soe_book2_lines.json"}
+_SOE_CACHE = {}
 
 
-def _load_soe():
-    global _SOE
-    if _SOE is not None:
-        return _SOE
+def _load_soe(book=1):
+    cached = _SOE_CACHE.get(book)
+    if cached is not None:
+        return cached
     path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
-                         "soe_book1_lines.json")
+                         _SOE_FILES.get(book, _SOE_FILES[1]))
     try:
         with open(path, encoding="utf-8") as fh:
             d = _json.load(fh)
     except Exception:
-        _SOE = {"pages": [], "by_page": {}, "by_n": {}}
-        return _SOE
+        _SOE_CACHE[book] = {"pages": [], "by_page": {}, "by_n": {}}
+        return _SOE_CACHE[book]
     anchors = sorted((int(k), v) for k, v in
                      d.get("student_page_anchors", {}).items() if str(k).isdigit())
 
@@ -314,27 +341,91 @@ def _load_soe():
                "assessment": bool(line.get("assessment"))}
         by_n[n] = rec
         by_page.setdefault(rec["page"], []).append(rec)
-    _SOE = {"pages": sorted(by_page), "by_page": by_page, "by_n": by_n}
-    return _SOE
+    _SOE_CACHE[book] = {"pages": sorted(by_page), "by_page": by_page, "by_n": by_n}
+    return _SOE_CACHE[book]
 
 
-def soe_pages():
+def soe_pages(book=1):
     """Student-book page numbers that have numbered lines."""
-    return _load_soe()["pages"]
+    return _load_soe(book)["pages"]
 
 
-def soe_lines_on_page(page):
+def soe_lines_on_page(page, book=1):
     """The numbered lines on a given student page: [{n, title, assessment}]."""
-    return _load_soe()["by_page"].get(page, [])
+    return _load_soe(book)["by_page"].get(page, [])
 
 
-def soe_line(n):
-    return _load_soe()["by_n"].get(n)
+def soe_line(n, book=1):
+    return _load_soe(book)["by_n"].get(n)
 
 
-def soe_label(n):
-    rec = soe_line(n)
+def soe_label(n, book=1):
+    rec = soe_line(n, book)
     return f"#{n} {rec['title']}" if rec and rec.get("title") else f"#{n}"
+
+
+# ── Technique & Musicianship line data (Advanced Band's key-signature picker) ──
+# A different book shape from SoE: every MAJOR key is a 2-page spread with the
+# SAME 10 lines — #1-8 and #10 identical for every key, only #9 (a repertoire
+# etude) and the page pair vary.  Stored as a template + per-key table and
+# expanded here, so adding a key later is one row.  Partial for now (B♭/E♭/F);
+# fill in the rest when the TOC is scanned.
+_TM_CACHE = None
+
+
+def _load_tm():
+    global _TM_CACHE
+    if _TM_CACHE is not None:
+        return _TM_CACHE
+    path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                         "technique_musicianship_lines.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            d = _json.load(fh)
+    except Exception:
+        _TM_CACHE = {"keys": [], "by_key": {}}
+        return _TM_CACHE
+    common = d.get("common_lines", {})
+    order, by_key = [], {}
+    for k in d.get("keys", []):
+        key = k.get("key")
+        if not key:
+            continue
+        pages = k.get("pages") or []
+        even = pages[0] if pages else None
+        odd = pages[1] if len(pages) > 1 else even
+        disp = f"Concert {key}"
+        lines = []
+        for n in range(1, 11):
+            if n == 9:
+                title = k.get("line9", "")
+            else:
+                title = common.get(str(n), "")
+                if n == 1:
+                    title = title.replace("{key}", key)
+            lines.append({"n": n, "title": title,
+                          "page": even if n <= 6 else odd})
+        by_key[disp] = lines
+        order.append(disp)
+    _TM_CACHE = {"keys": order, "by_key": by_key}
+    return _TM_CACHE
+
+
+def tm_keys():
+    """Concert-key labels that have a spread entered (e.g. 'Concert B♭')."""
+    return _load_tm()["keys"]
+
+
+def tm_lines_for_key(key):
+    """The 10 lines for a key: [{n, title, page}]."""
+    return _load_tm()["by_key"].get(key, [])
+
+
+def tm_label(key, n):
+    for r in tm_lines_for_key(key):
+        if r["n"] == n:
+            return f"#{n} {r['title']}" if r.get("title") else f"#{n}"
+    return f"#{n}"
 
 
 def _concert_for_level(level, concerts):
@@ -351,12 +442,30 @@ def build_default_day(d, ctx):
     """Build the DEFAULT agenda dict for date ``d``.
 
     ``ctx`` carries:
+        group                : "entry" (default) or "intermediate"
         year_start, year_end : date bounds of the school year
         concerts             : [{"date": date, "pieces": [title, ...]}, ...]
 
     Returns a dict: {date, reminders, announcements, sections, practice_journal}
     where each section is {title, items:[{text, done, note}]}.
+
+    The three ensembles share the SAME day skeleton (reminders/announcements
+    banner, warm-up, an assessment/band-book area, sheet music); they differ in:
+      * Entry        — Rhythms pane + Fundamentals warm-up + SoE Bk 1 band book +
+                       the Friday Practice Journal.
+      * Intermediate — blank "Broccoli" warm-up + SoE Bk 2 band book, no PJ.
+      * Advanced     — blank "Warm Up" + blank "Sheet Music", NO band book (their
+                       "Technique & Musicianship" book is warm-up material, not a
+                       line-by-line homework spine); the day is intentionally
+                       mostly-blank because their day-to-day is the most variable.
+                       Assessments are set up per year and only surface (as a small
+                       "Assessments" section) once she dates them.  No PJ.
     """
+    group = ctx.get("group") or ENTRY
+    is_entry = group == ENTRY
+    is_int = group == INTERMEDIATE
+    is_adv = group == ADVANCED
+    book = 2 if is_int else 1
     concerts = ctx.get("concerts") or []
     concert_dates = [c.get("date") for c in concerts if c.get("date")]
     year_start = ctx.get("year_start") or date(d.year if d.month >= 8
@@ -365,68 +474,93 @@ def build_default_day(d, ctx):
     cal = ctx.get("calendar")
     wd = d.weekday()
 
-    level = fundamentals_level(d, concert_dates)
-    fund_items, mode = fundamentals_for_day(level, wd)
+    level = fundamentals_level(d, concert_dates)   # concert-cycle index
 
     sections = []
 
-    # Rhythms — heavier in the fall (reading foundation), tapers later.  It's
-    # a pasted-in rhythm image, not text: starts empty (use "Paste Image").
-    sections.append({"title": "Rhythms", "kind": "rhythms", "items": []})
+    # ── Warm-up (source differs per ensemble) ──
+    if is_entry:
+        # Rhythms — heavier in the fall (reading foundation), tapers later.  It's
+        # a pasted-in rhythm image, not text: starts empty (use "Paste Image").
+        sections.append({"title": "Rhythms", "kind": "rhythms", "items": []})
+        # Warm Up — the Fundamentals exercises at this cycle's level.
+        fund_items, mode = fundamentals_for_day(level, wd)
+        wtitle = "Warm Up"
+        if mode == "choose3":
+            wtitle += ": Choice x3"
+        sections.append({"title": wtitle, "kind": "warmup",
+                         "items": [_item(x) for x in fund_items]})
+    elif is_int:
+        # "Broccoli" (her own warm-up set) — blank boxes she fills in.
+        sections.append({"title": "Broccoli", "kind": "warmup",
+                         "items": [_item("") for _ in range(6)]})
+    else:
+        # Advanced — a blank Warm Up she fills in (Technique & Musicianship work,
+        # tuning, tone, balance — whatever the day needs).
+        sections.append({"title": "Warm Up", "kind": "warmup",
+                         "items": [_item("") for _ in range(4)]})
 
-    # Warm Up — the Fundamentals exercises at this cycle's level.  Titled
-    # generically ("Warm Up") so it reads the same for every ensemble.
-    wtitle = "Warm Up"
-    if mode == "choose3":
-        wtitle += ": Choice x3"
-    sections.append({"title": wtitle, "kind": "warmup",
-                     "items": [_item(x) for x in fund_items]})
-
-    # Band book — the page the class is on this week (tied to the date, resets
-    # to p.6 each fall), plus any assessment introduced within ~2 weeks of its
-    # due date (highlighted) with its Missing list.  Missing is ONLY attached to
-    # an assessment and has no checkbox.
-    bb = []
-    intro_days = ctx.get("intro_days")
-    if intro_days is None:
-        intro_days = INTRO_SCHOOL_DAYS
-    # Page: an explicit carry-forward page from the view wins (sticky), else the
-    # ~1-page/week default (resets to p.6 each fall, after the intro period).
-    page = ctx.get("band_page") or band_book_page_label(d, cal, year_start,
-                                                        intro_days)
-    if page:
-        bb.append(_item(f"p. {page}"))
-    elif in_intro_period(d, cal, year_start, intro_days):
-        # First ~2 weeks: trying each instrument before committing (no page yet).
-        bb.append(_item("Instrument exploration (trying each instrument)"))
-    # Assessments are TEACHER-DEFINED: the view passes its saved list; only when
-    # that's absent (None) do we seed the built-in suggested cadence.
+    # ── Assessments (teacher-defined; the view passes its saved list, else we
+    #    seed the group's suggested set — Advanced seeds EMPTY, set up per year).
     assessments = ctx.get("assessments")
     if assessments is None:
-        assessments = default_assessments(cal, year_start, year_end)
+        if is_entry:
+            assessments = default_assessments(cal, year_start, year_end)
+        elif is_int:
+            assessments = default_int_assessments()
+        else:
+            assessments = []
+    assess_items = []
     for ref, due in assessments_visible(d, assessments):
         label = ref
         if ref.startswith("#"):
             try:
-                label = soe_label(int(ref[1:]))
+                label = soe_label(int(ref[1:]), book)
             except (ValueError, TypeError):
                 pass
-        bb.append(_item(f"{label} (due {due.strftime('%b %d')})",
-                        kind="assessment"))
-        bb.append(_item("Missing: ", kind="missing"))
-    if not bb:
-        bb.append(_item(""))
-    sections.append({"title": "Band book", "kind": "bandbook", "items": bb})
+        assess_items.append(_item(f"{label} (due {due.strftime('%b %d')})",
+                                  kind="assessment"))
+        assess_items.append(_item("Missing: ", kind="missing"))
 
-    # Sheet Music — this cycle's concert repertoire.
-    concert = _concert_for_level(level, concerts)
-    pieces = (concert or {}).get("pieces") or []
-    sections.append({"title": "Sheet Music", "kind": "sheet",
-                     "items": [_item(p) for p in pieces] or [_item("")]})
+    if is_adv:
+        # No band book for Advanced — assessments (when dated) get their own small
+        # section, otherwise nothing (keep the day minimal).
+        if assess_items:
+            sections.append({"title": "Assessments", "kind": "",
+                             "items": assess_items})
+    else:
+        # Band book — a sticky carry-forward page the teacher typed (we never
+        # auto-assume a page), plus any dated assessment + its Missing list.
+        bb = []
+        intro_days = ctx.get("intro_days")
+        if intro_days is None:
+            intro_days = INTRO_SCHOOL_DAYS
+        page = ctx.get("band_page")
+        if page:
+            bb.append(_item(f"p. {page}"))
+        elif is_entry and in_intro_period(d, cal, year_start, intro_days):
+            # First ~2 weeks: trying each instrument before committing.
+            bb.append(_item("Instrument exploration (trying each instrument)"))
+        bb.extend(assess_items)
+        if not bb:
+            bb.append(_item(""))
+        sections.append({"title": "Band book", "kind": "bandbook", "items": bb})
 
-    # Practice Journal — Entry only, turned in Fridays.
+    # ── Sheet Music ──
+    if is_adv:
+        # Blank — she fills in the current unit's repertoire (short concert cycle,
+        # many events, so it changes constantly).
+        sections.append({"title": "Sheet Music", "kind": "sheet",
+                         "items": [_item("")]})
+    else:
+        concert = _concert_for_level(level, concerts)
+        pieces = (concert or {}).get("pieces") or []
+        sections.append({"title": "Sheet Music", "kind": "sheet",
+                         "items": [_item(p) for p in pieces] or [_item("")]})
+
+    # ── Practice Journal — ENTRY ONLY, turned in Fridays ──
     pj = None
-    if wd == 4:
+    if is_entry and wd == 4:
         pj = practice_journal_number(d, year_start)
         sections.append({"title": "Practice Journal", "kind": "pj",
                          "items": [_item(f"Practice Journal {pj}")]})

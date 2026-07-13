@@ -29,14 +29,14 @@ COL_HEADERS = {
     "est_value":     "Est. Value",
 }
 COL_WIDTHS = {
-    "status":        42,
-    "category":      100,
-    "description":   180,
-    "brand":         90,
-    "model":         90,
+    "status":        40,
+    "category":      95,
+    "description":   190,
+    "brand":         115,
+    "model":         115,
     "barcode":       90,
-    "serial_no":     110,
-    "condition":     70,
+    "serial_no":     100,
+    "condition":     95,     # fits "Needs Repair" without truncating
     "checked_out_to": 150,
     "est_value":     80,
 }
@@ -186,7 +186,13 @@ class InventoryManager(ttk.Frame):
         scrollbar_x.pack(side=BOTTOM, fill=X)
         self.tree.pack(fill=BOTH, expand=True)
 
-        _STRETCH = {"description", "checked_out_to"}
+        # Let every TEXT column share the leftover width evenly (ttk spreads
+        # extra space equally across stretchable columns), so widening the window
+        # no longer dumps all the slack into two columns and leaves odd gaps.
+        # Fixed-width, right/center-aligned columns (status dot, barcode number,
+        # est. value) stay put.
+        _STRETCH = {"category", "description", "brand", "model", "serial_no",
+                    "condition", "checked_out_to"}
         for col in TREEVIEW_COLS:
             self.tree.heading(
                 col,
@@ -206,9 +212,14 @@ class InventoryManager(ttk.Frame):
         self.tree.tag_configure("checkedout", foreground="#8B4000")
         self.tree.tag_configure("onloan", foreground="#1f5fbf")
         self.tree.tag_configure("inactive", foreground="#AAAAAA")
+        # Bright red for instruments that are NOT ok — unrepairable, missing,
+        # lost, stolen — so they don't read as fine/available (green) or get
+        # confused with the brick-red "checked out".
+        self.tree.tag_configure("notok", foreground="#E60000")
 
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.tree.bind("<Double-1>", lambda e: self._edit_instrument())
+        self.tree.bind("<Button-3>", self._on_right_click)
 
         # Right: Detail Panel
         detail_frame = ttk.Frame(paned, width=320)
@@ -504,14 +515,19 @@ class InventoryManager(ttk.Frame):
         for row in rows:
             status = row["status"]
             is_active = row["is_active"] if "is_active" in row.keys() else 1
-            if status == "Available":
+            cond = (row["condition"] or "").strip().lower()
+            not_ok = any(w in cond for w in
+                         ("unrepairable", "missing", "lost", "stolen"))
+            if not is_active:
+                tag = "inactive"
+            elif not_ok:
+                tag = "notok"          # bright red — not usable / not present
+            elif status == "Available":
                 tag = "available"
             elif status == "On Loan":
                 tag = "onloan"
             else:
                 tag = "checkedout"
-            if not is_active:
-                tag = "inactive"
 
             est = row["est_value"]
             try:
@@ -693,6 +709,30 @@ class InventoryManager(ttk.Frame):
             return None
         return int(sel[0])
 
+    def _on_right_click(self, event):
+        """Right-click a row → act on that instrument directly.  Keeps the less
+        common actions (Loan to another school, Check In) one-click now that the
+        Check Out button skips straight to checkout on a selection."""
+        rowid = self.tree.identify_row(event.y)
+        if not rowid:
+            return
+        self.tree.selection_set(rowid)
+        self.tree.focus(rowid)
+        iid = int(rowid)
+        menu = tk.Menu(self.tree, tearoff=0)
+        menu.add_command(label="📤  Check Out",
+                         command=lambda: self._do_single_checkout(iid))
+        menu.add_command(label="🏫  Loan to Another School…",
+                         command=lambda: self._loan_instrument(iid))
+        menu.add_command(label="📥  Check In",
+                         command=lambda: self._do_single_checkin(iid))
+        menu.add_separator()
+        menu.add_command(label="✏️  Edit", command=self._edit_instrument)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
     def _add_instrument(self):
         from ui.instrument_dialog import InstrumentDialog
         dlg = InstrumentDialog(self.winfo_toplevel(), self.db, instrument_id=None)
@@ -826,10 +866,21 @@ class InventoryManager(ttk.Frame):
         return inst["id"] if inst else None
 
     def _open_checkout_chooser(self):
-        self._open_scan_chooser("checkout")
+        # Already selected an instrument in the grid? Go straight to checking THAT
+        # one out — no need to re-find what you just clicked. With nothing
+        # selected, open the scan / bulk / item / loan chooser.
+        sel = self.tree.selection()
+        if sel:
+            self._do_single_checkout(int(sel[0]))
+        else:
+            self._open_scan_chooser("checkout")
 
     def _open_checkin_chooser(self):
-        self._open_scan_chooser("checkin")
+        sel = self.tree.selection()
+        if sel:
+            self._do_single_checkin(int(sel[0]))
+        else:
+            self._open_scan_chooser("checkin")
 
     def _open_scan_chooser(self, mode):
         is_out = mode == "checkout"
@@ -953,6 +1004,9 @@ class InventoryManager(ttk.Frame):
                          command=self._export_repairs_needed)
         menu.add_command(label="📤  Currently Checked Out…",
                          command=self._export_checked_out)
+        menu.add_separator()
+        menu.add_command(label="🏷️  Barcode Sheet — Brass & Woodwind (PDF)…",
+                         command=self._export_barcodes)
         menu.add_separator()
         menu.add_command(label="💰  Repair Cost Report (by $ spent)…",
                          command=self._export_cost_report)
@@ -1110,6 +1164,28 @@ class InventoryManager(ttk.Frame):
         )
         if answer != "Yes":
             return
+
+        # Duplicate guard: skip repairs already entered from this same invoice
+        # (same instrument + invoice number) so re-scanning doesn't double them.
+        dups = [m for m in matches
+                if self.db.find_duplicate_repair(
+                    m["instrument_id"],
+                    m["prefill"].get("invoice_number"),
+                    m["prefill"].get("description"))]
+        if dups:
+            skip = Messagebox.yesno(
+                f"{len(dups)} of these repair(s) look already entered from this "
+                "invoice (same instrument + invoice number).\n\n"
+                "Skip the duplicates?  Choose No to enter them again anyway.",
+                title="Possible Duplicates", parent=self.winfo_toplevel()) == "Yes"
+            if skip:
+                dup_ids = {id(m) for m in dups}
+                matches = [m for m in matches if id(m) not in dup_ids]
+            if not matches:
+                Messagebox.show_info("Nothing new to enter — all matched repairs "
+                                     "were already recorded.", title="All Duplicates",
+                                     parent=self.winfo_toplevel())
+                return
 
         saved_count = 0
         from ui.repair_dialog import RepairDialog
@@ -1382,6 +1458,46 @@ class InventoryManager(ttk.Frame):
             "money_fmt": '"$"#,##0.00',
         }
 
+    def _export_barcodes(self):
+        """A printable Code128 sheet for the handheld scanner — brass & woodwind
+        instruments (percussion excluded), sorted by type, 3 columns."""
+        try:
+            import barcode_labels as bl
+        except Exception as e:
+            Messagebox.show_error(f"Could not load the barcode tool:\n{e}",
+                                  title="Error", parent=self.winfo_toplevel())
+            return
+        instruments = self.db.get_all_instruments()
+        printable = [r for r in instruments
+                     if bl.instrument_family(r["category"]) is not None
+                     and ((r["barcode"] or "").strip()
+                          or (r["district_no"] or "").strip())]
+        if not printable:
+            Messagebox.show_info(
+                "No brass or woodwind instruments with a barcode were found.",
+                title="Nothing to Print", parent=self.winfo_toplevel())
+            return
+        from tkinter import filedialog
+        import datetime as _d
+        path = filedialog.asksaveasfilename(
+            title="Save Barcode Sheet", parent=self.winfo_toplevel(),
+            defaultextension=".pdf",
+            initialfile=f"Instrument_Barcodes_{_d.date.today().isoformat()}.pdf",
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            n = bl.export_instrument_barcodes(instruments, path)
+        except Exception as e:
+            Messagebox.show_error(f"Could not create the PDF:\n{e}",
+                                  title="Export Error", parent=self.winfo_toplevel())
+            return
+        if Messagebox.yesno(f"Created a barcode sheet with {n} instrument(s).\n\n"
+                            "Open it now?", title="Barcode Sheet",
+                            parent=self.winfo_toplevel()) == "Yes":
+            import subprocess
+            subprocess.Popen(["start", "", path], shell=True)
+
     def _save_and_open(self, wb, default_name):
         from tkinter import filedialog
         path = filedialog.asksaveasfilename(
@@ -1425,7 +1541,10 @@ class InventoryManager(ttk.Frame):
         this_year = datetime.date.today().year
 
         def _age(inst):
-            yr = str(inst.get("year_purchased") or "").strip()[:4]
+            # Age is based on the PRODUCTION year (serial-dated) when known,
+            # falling back to purchase year.
+            yr = str(inst.get("year_manufactured") or inst.get("year_purchased")
+                     or "").strip()[:4]
             if yr.isdigit():
                 a = this_year - int(yr)
                 return a if a >= 0 else ""
@@ -1439,7 +1558,7 @@ class InventoryManager(ttk.Frame):
 
         headers = ["Category", "Instrument", "Brand", "Model", "Serial #",
                    "Barcode", "Condition", "Status",
-                   "Assigned To", "Year Purchased", "Age (yrs)",
+                   "Assigned To", "Year Purchased", "Year Made", "Age (yrs)",
                    "Amount Paid", "Est. Value", "Repair $ Spent", "Location", "Comments"]
 
         def _row(r, values, font=None, fill=None, money_cols=()):
@@ -1457,10 +1576,28 @@ class InventoryManager(ttk.Frame):
         _row(1, headers, font=st["hdr_font"], fill=st["hdr_fill"])
         ws.row_dimensions[1].height = 18
 
-        money_cols = (12, 13, 14)
+        money_cols = (13, 14, 15)
         grand_paid = grand_value = grand_repair = 0.0
-        r = 2
-        for inst in sorted(instruments, key=lambda x: (x.get("category") or "", x.get("description") or "")):
+
+        # An instrument is "unavailable" (still district property, but not usable
+        # by students) if it's been deactivated, marked Unrepairable, or its
+        # condition/comments note it as lost/missing/etc.  These are moved to a
+        # section at the very bottom so the usable list isn't cluttered.
+        _UNAVAIL_WORDS = ("lost", "missing", "stolen", "retired", "disposed",
+                          "out of service", "unavailable", "scrap", "written off",
+                          "write-off", "beyond repair")
+
+        def _unavailable(inst):
+            if "is_active" in inst and not inst.get("is_active", 1):
+                return True
+            cond = (inst.get("condition") or "").strip().lower()
+            if cond in ("unrepairable", "unrepairable / lost"):
+                return True
+            blob = cond + " " + (inst.get("comments") or "").lower()
+            return any(w in blob for w in _UNAVAIL_WORDS)
+
+        def _emit(inst, r):
+            nonlocal grand_paid, grand_value, grand_repair
             repairs = [dict(x) for x in self.db.get_repairs(inst["id"])]
             # Only actual recorded costs count as money spent — estimates are not
             # reliable enough to report to the district.
@@ -1491,6 +1628,7 @@ class InventoryManager(ttk.Frame):
                 status,
                 assigned,
                 inst.get("year_purchased") or inst.get("date_purchased") or "",
+                inst.get("year_manufactured") or "",
                 _age(inst),
                 paid,
                 value,
@@ -1498,13 +1636,32 @@ class InventoryManager(ttk.Frame):
                 inst.get("locker") or "",
                 inst.get("comments") or "",
             ], fill=fill, money_cols=money_cols)
-            r += 1
+            return r + 1
 
-        _row(r, ["", "", "", "", "", "", "", "", "", "", "TOTALS",
+        skey = lambda x: (x.get("category") or "", x.get("description") or "")
+        available = [i for i in instruments if not _unavailable(i)]
+        unavailable = [i for i in instruments if _unavailable(i)]
+
+        r = 2
+        for inst in sorted(available, key=skey):
+            r = _emit(inst, r)
+
+        if unavailable:
+            banner = ("Unavailable — still district property, not usable by "
+                      "students (unrepairable / lost / out of service)")
+            _row(r, [banner] + [""] * (len(headers) - 1),
+                 font=st["total_font"], fill=st["total_fill"])
+            ws.merge_cells(start_row=r, start_column=1,
+                           end_row=r, end_column=len(headers))
+            r += 1
+            for inst in sorted(unavailable, key=skey):
+                r = _emit(inst, r)
+
+        _row(r, ["", "", "", "", "", "", "", "", "", "", "", "TOTALS",
                  grand_paid, grand_value, grand_repair, "", ""],
              font=st["total_font"], fill=st["total_fill"], money_cols=money_cols)
 
-        widths = [14, 24, 14, 14, 14, 14, 12, 12, 18, 12, 9, 12, 12, 13, 12, 30]
+        widths = [14, 24, 14, 14, 14, 14, 12, 12, 18, 12, 12, 9, 12, 12, 13, 12, 30]
         for col, w in zip(range(1, len(widths) + 1), widths):
             ws.column_dimensions[get_column_letter(col)].width = w
 

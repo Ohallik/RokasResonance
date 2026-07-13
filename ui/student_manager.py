@@ -539,10 +539,50 @@ class StudentManager(ttk.Frame):
         menu.add_command(label="📊  Student list (Excel)…", command=self._export_students)
         menu.add_command(label="🎓  Outgoing students for HS directors (CSV)…",
                          command=self._export_for_hs)
+        menu.add_separator()
+        menu.add_command(label="🏷️  Barcode Sheet — scan Student IDs (PDF)…",
+                         command=self._export_barcodes)
         try:
             menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
         finally:
             menu.grab_release()
+
+    def _export_barcodes(self):
+        """A printable Code128 sheet for the handheld scanner — one label per
+        student (their Student ID), sorted by last then first name, 3 columns."""
+        try:
+            import barcode_labels as bl
+        except Exception as e:
+            Messagebox.show_error(f"Could not load the barcode tool:\n{e}",
+                                  title="Error", parent=self.winfo_toplevel())
+            return
+        year = self._year_var.get().strip() or None
+        students = self.db.get_all_students(school_year=year)
+        if not students:
+            Messagebox.show_info(f"No students found for {year or 'this year'}.",
+                                 title="Nothing to Print", parent=self.winfo_toplevel())
+            return
+        path = filedialog.asksaveasfilename(
+            title="Save Barcode Sheet", parent=self.winfo_toplevel(),
+            defaultextension=".pdf",
+            initialfile=f"Student_Barcodes_{(year or 'all')}.pdf",
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            printed, skipped = bl.export_student_barcodes(students, path)
+        except Exception as e:
+            Messagebox.show_error(f"Could not create the PDF:\n{e}",
+                                  title="Export Error", parent=self.winfo_toplevel())
+            return
+        msg = f"Created a barcode sheet with {printed} student(s)."
+        if skipped:
+            msg += (f"\n\n{skipped} student(s) were left off because they have no "
+                    "Student ID to scan. Add their Student ID to include them.")
+        if Messagebox.yesno(msg + "\n\nOpen it now?", title="Barcode Sheet",
+                            parent=self.winfo_toplevel()) == "Yes":
+            import subprocess
+            subprocess.Popen(["start", "", path], shell=True)
 
     def _import_csv(self):
         paths = filedialog.askopenfilenames(

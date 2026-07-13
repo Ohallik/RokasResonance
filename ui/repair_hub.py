@@ -390,8 +390,11 @@ class RepairHub(ttk.Toplevel):
             repair_ids = [r["id"] for r in self.db.get_open_repairs_for_instrument(tid)]
         if not repair_ids:
             # Flagged on the instrument only (condition = 'Needs Repair', nothing
-            # logged) — just clear the flag rather than dead-ending.
-            if instrument_id is not None and self.db.clear_needs_repair_if_done(instrument_id):
+            # logged) — confirm resetting the condition rather than dead-ending.
+            from ui.repair_dialog import confirm_and_clear_needs_repair
+            inst = self.db.get_instrument(instrument_id) if instrument_id else None
+            if inst and (inst["condition"] or "").strip().lower() == "needs repair":
+                confirm_and_clear_needs_repair(self, self.db, instrument_id)
                 self._after_change()
                 return
             Messagebox.show_info("This instrument has no open repairs.",
@@ -572,10 +575,12 @@ class RepairHub(ttk.Toplevel):
                 if act_cost is not None:
                     data["act_cost"] = act_cost
                 self.db.update_repair(rid, data)
-            # If that cleared the instrument's last open repair, drop a lingering
-            # 'Needs Repair' condition flag so it leaves the list for good.
+            # If that closed the instrument's last open repair, ASK whether to
+            # reset its 'Needs Repair' condition to 'Good' (never automatic — the
+            # repair may have been deferred or judged too costly).
             if date_val and instrument_id is not None:
-                self.db.clear_needs_repair_if_done(instrument_id)
+                from ui.repair_dialog import confirm_and_clear_needs_repair
+                confirm_and_clear_needs_repair(win, self.db, instrument_id)
             win.destroy()
             self._after_change()
 

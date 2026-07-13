@@ -16,6 +16,33 @@ PRIORITY_OPTIONS = ["0 - Low", "1 - Normal", "2 - High", "3 - Urgent"]
 REPAIR_SHOPS = ["BandWright", "Kennelly Keys", "Precision Woodwind", "Music & Arts"]
 
 
+def confirm_and_clear_needs_repair(parent, db, instrument_id):
+    """When an instrument's LAST open repair is completed and it's still flagged
+    'Needs Repair', ASK whether to reset its inventory condition to 'Good'
+    (never automatic).  Answering No keeps it 'Needs Repair' — e.g. the repair
+    turned out too costly or was deferred.  Returns True if the condition was
+    updated.  A no-op if the instrument isn't flagged 'Needs Repair' or still has
+    open repairs."""
+    if instrument_id is None:
+        return False
+    inst = db.get_instrument(instrument_id)
+    if not inst or (inst["condition"] or "").strip().lower() != "needs repair":
+        return False
+    if db.get_open_repairs_for_instrument(instrument_id):
+        return False                      # other repairs still open — not done yet
+    name = (inst["description"] or "This instrument").strip()
+    brand = (inst["brand"] or "").strip()
+    label = f"{brand} {name}".strip() if brand else name
+    if Messagebox.yesno(
+        f"{label} has no open repairs left but is still marked “Needs Repair.”\n\n"
+        "Update its condition to “Good” in the inventory?\n\n"
+        "Choose No to keep it as “Needs Repair” — for example if the repair "
+        "was deferred or is going to cost too much.",
+        title="Update Condition?", parent=parent) == "Yes":
+        return db.clear_needs_repair_if_done(instrument_id)
+    return False
+
+
 class RepairDialog(ttk.Toplevel):
     def __init__(self, parent, db, instrument_id: int, repair_id=None,
                  prefill_data: dict = None, title_suffix: str = ""):
@@ -237,4 +264,8 @@ class RepairDialog(ttk.Toplevel):
         else:
             self.db.add_repair(data)
         self.saved = True
+        # If this record marks the repair complete (a repaired date) and it was
+        # the instrument's last open repair, offer to update its condition.
+        if (data.get("date_repaired") or "").strip():
+            confirm_and_clear_needs_repair(self, self.db, self.instrument_id)
         self.destroy()

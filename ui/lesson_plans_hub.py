@@ -98,10 +98,19 @@ class LessonPlansHub(ttk.Frame):
                                            self.main_db, self._base_dir)
         self._notebook.add(self._field_trips, text="  🚌 Field Trips  ")
 
-        from ui.agendas_view import AgendasView
+        from ui.agendas_view import (AgendasView, ENTRY_GROUP,
+                                      INTERMEDIATE_GROUP, ADVANCED_GROUP)
         self._agendas = AgendasView(self._notebook, self.db, self.main_db,
-                                    self._base_dir)
-        self._notebook.add(self._agendas, text="  📋 Agendas  ")
+                                    self._base_dir, group=ENTRY_GROUP)
+        self._notebook.add(self._agendas, text="  📋 Entry Agendas  ")
+
+        self._agendas_int = AgendasView(self._notebook, self.db, self.main_db,
+                                        self._base_dir, group=INTERMEDIATE_GROUP)
+        self._notebook.add(self._agendas_int, text="  📋 Intermediate Agendas  ")
+
+        self._agendas_adv = AgendasView(self._notebook, self.db, self.main_db,
+                                        self._base_dir, group=ADVANCED_GROUP)
+        self._notebook.add(self._agendas_adv, text="  📋 Advanced Agendas  ")
 
         self._notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
@@ -118,7 +127,8 @@ class LessonPlansHub(ttk.Frame):
 
     def _tabs(self):
         return [self._seating, self._percussion, self._concerts,
-                self._field_trips, self._agendas]
+                self._field_trips, self._agendas, self._agendas_int,
+                self._agendas_adv]
 
     def _on_tab_changed(self, event):
         """Refresh the active tab's data when switching to it."""

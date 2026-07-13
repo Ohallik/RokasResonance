@@ -11,13 +11,14 @@ from datetime import datetime
 
 CONDITION_OPTIONS = ["New", "Excellent", "Good", "Fair", "Poor", "Needs Repair",
                      "Unrepairable", "Unknown"]
+# Family-level categories (matching how the inventory is organized).  The
+# Category box is an editable combobox, so these are convenient defaults — you
+# can type any custom category, and the specific item (e.g. "Audio Recorder",
+# "Mixer Board", "Electric Drum Set", "Microphone", "Tuner", "Metronome") goes
+# in the Instrument / Description field.  "Electronics" covers music-tech gear.
 CATEGORY_OPTIONS = [
-    "Flute", "Oboe", "Clarinet", "Bass Clarinet", "Bassoon",
-    "Alto Saxophone", "Tenor Saxophone", "Baritone Saxophone",
-    "Trumpet", "French Horn", "Trombone", "Baritone", "Euphonium", "Tuba",
-    "Percussion", "Mallets", "Snare Drum", "Bass Drum", "Other Percussion",
-    "String Bass", "Cello", "Viola", "Violin",
-    "Piano", "Guitar", "Other",
+    "Woodwind", "Brass", "Percussion", "Mallets", "Other Percussion",
+    "Strings", "Guitar/Bass", "Keyboard", "Electronics", "Other",
 ]
 
 
@@ -158,6 +159,8 @@ class InstrumentDialog(ttk.Toplevel):
         self._field(row6, "Date Purchased", "date_purchased", side=LEFT, width=18,
                     placeholder="YYYY-MM-DD")
         self._field(row6, "Year Purchased", "year_purchased", side=LEFT, width=12)
+        self._field(row6, "Year Made", "year_manufactured", side=LEFT, width=12,
+                    placeholder="serial-dated")
         self._field(row6, "Last Service", "last_service", side=LEFT, width=18,
                     placeholder="YYYY-MM-DD")
 
@@ -181,6 +184,26 @@ class InstrumentDialog(ttk.Toplevel):
         acc_var = tk.StringVar()
         self._vars["accessories"] = acc_var
         ttk.Entry(notes, textvariable=acc_var, width=70).pack(fill=X, pady=2)
+
+        # Stick & mallet bags: instead of typing brands/serials for each piece,
+        # tick what's in the bag.  These populate the Accessories field above, and
+        # each ticked item becomes a Yes/No accountability line on the loan form.
+        # (For a bag, set Category=Percussion, Instrument="Stick bag + sticks/
+        # mallets", and Brand = the bag's own brand.)  Leave blank for everything
+        # else.
+        ttk.Label(notes, text="Bag contents (stick & mallet bags) — tick what's "
+                  "in the bag:", font=("Segoe UI", 8),
+                  bootstyle=SECONDARY).pack(anchor=W, pady=(6, 0))
+        self._kit_vars = {}
+        kit = ttk.Frame(notes)
+        kit.pack(fill=X, pady=(0, 2))
+        for label in ("Snare Sticks", "Yarn Mallets", "Rubber/Plastic Mallets",
+                      "Timpani Mallets"):
+            v = tk.BooleanVar()
+            self._kit_vars[label] = v
+            ttk.Checkbutton(kit, text=label, variable=v,
+                            command=lambda l=label, var=v: self._toggle_kit(l, var)
+                            ).pack(side=LEFT, padx=(0, 12))
 
         ttk.Label(notes, text="Comments / Notes:", font=("Segoe UI", 9)).pack(anchor=W, pady=(6, 0))
         self._comments_text = tk.Text(notes, height=4, font=("Segoe UI", 9),
@@ -319,6 +342,21 @@ class InstrumentDialog(ttk.Toplevel):
 
     # ───────────────────────────────────────────────────── Data Methods ───────
 
+    def _toggle_kit(self, label, var):
+        """Add/remove a bag-contents token in the Accessories field, preserving
+        anything else typed there."""
+        toks = [t.strip() for t in self._vars["accessories"].get().split(",")
+                if t.strip()]
+        toks = [t for t in toks if t.lower() != label.lower()]
+        if var.get():
+            toks.append(label)
+        self._vars["accessories"].set(", ".join(toks))
+
+    def _sync_kit_from_accessories(self):
+        acc = (self._vars["accessories"].get() or "").lower()
+        for label, var in getattr(self, "_kit_vars", {}).items():
+            var.set(label.lower() in acc)
+
     def _load_instrument(self, instrument_id: int):
         row = self.db.get_instrument(instrument_id)
         if not row:
@@ -326,6 +364,7 @@ class InstrumentDialog(ttk.Toplevel):
         for key, var in self._vars.items():
             val = row[key] if key in row.keys() else None
             var.set("" if val is None else str(val))
+        self._sync_kit_from_accessories()
 
         # Barcode and District # are one identifier now — show whichever is set.
         if "barcode" in self._vars and not self._vars["barcode"].get():

@@ -338,13 +338,18 @@ def _amount_on_line(line: str) -> float:
 
 def _parse_instrument_cost(text: str, match_pos: int, match_val_len: int,
                            tax_rate: float):
-    """Full cost of one instrument's repair: labor + its parts lines + tax.
+    """Full cost of one instrument's repair: its labor line plus every cost line
+    that follows, up to the NEXT instrument or the invoice footer.
 
-    BandWright lists each instrument as a labor line (e.g. 'Minimum Shop
-    Charge  Tuba, Yamaha YBB-103, SN: 009690 … 30.00T'), then description
-    lines, then any 'Repair Parts/Supplies' lines for that same instrument.
-    The next labor item (or an SN: line, or the invoice footer) ends the
-    block.  Returns (labor, parts_total, cost_with_tax)."""
+    Each instrument's block is keyed off the SERIAL NUMBER in the second
+    (Description) column — e.g. 'Repair (WW)  Alto saxophone, Bundy II, SN:
+    945610 … 75.00T' — NOT the Item-column label.  Everything after that line
+    with no serial of its own (description lines, and cost lines such as
+    'Repair Parts/Supplies', extra 'Soldering', etc.) belongs to this
+    instrument; the block ends at the next line that carries a serial number
+    (the next instrument) or a footer boundary (Subtotal / Total …).  Keying on
+    the serial makes attribution robust to whatever wording the shop puts in the
+    Item column.  Returns (labor, extra_total, cost_with_tax)."""
     lines = text.split('\n')
     li = _line_index_of(lines, match_pos)
 
@@ -352,25 +357,24 @@ def _parse_instrument_cost(text: str, match_pos: int, match_val_len: int,
     if labor <= 0:
         labor = _parse_line_amount(text, match_pos, match_val_len)
 
-    parts = 0.0
-    for i in range(li + 1, min(li + 14, len(lines))):
+    extra = 0.0
+    for i in range(li + 1, len(lines)):
         line = lines[i]
         stripped = line.strip()
         if not stripped:
             continue
         if _BOUNDARY_RE.search(stripped):
             break
-        if _PARTS_LINE_RE.search(line):
-            parts += _amount_on_line(line)
-            continue
-        # A new labor item (or another instrument's serial) ends this block
-        if _ITEM_RE.match(line) and _amount_on_line(line) > 0:
+        # A serial number in the description column = the next instrument's
+        # block begins here, so everything up to now belonged to THIS one.
+        if re.search(r'\bS[/ ]?N\s*[:#]', line, re.IGNORECASE):
             break
-        if re.search(r'\bSN\s*[:#]', line, re.IGNORECASE):
-            break
+        # Any dollar amount on an in-between line (parts/supplies, extra labor,
+        # etc.) counts toward this instrument, whatever its Item-column reads.
+        extra += _amount_on_line(line)
 
-    total = round((labor + parts) * (1 + tax_rate), 2) if labor > 0 else 0.0
-    return labor, parts, total
+    total = round((labor + extra) * (1 + tax_rate), 2) if labor > 0 else 0.0
+    return labor, extra, total
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────

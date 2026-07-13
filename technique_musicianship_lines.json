@@ -1,0 +1,30 @@
+{
+  "book": "Technique & Musicianship (Kjos)",
+  "note": "Advanced Band method book — really a warm-up / technique source (all major + most common minor keys, musical common practice, tuning) rather than a line-by-line homework spine.",
+  "layout": "Every MAJOR key is a 2-page spread with the SAME layout: the EVEN page holds lines 1-6 (scale/technique — articulation & fingering transitions), the ODD page holds lines 7-10. Titles #1-8 and #10 are identical for every key; only #9 (a repertoire etude) and the page pair change per key.",
+  "percussion": "Snare drum book: lines 1-6 are snare exercises, 7-9 are tacet, and 10 is actually a timpani part. Mallet book: lines 1-10 are all available, same as a wind player.",
+  "common_lines": {
+    "1": "Concert {key} Scale",
+    "2": "Thirds",
+    "3": "Arpeggios",
+    "4": "Articulation and Technique Etude #1",
+    "5": "Articulation and Technique Etude #2",
+    "6": "Articulation and Technique Etude #3",
+    "7": "Interval and Tuning Etude",
+    "8": "Melodious Etude",
+    "10": "Chorale"
+  },
+  "line_notes": {
+    "4": "eighth-note scale pattern in 4/4",
+    "5": "eighth-note scale pattern in 6/8",
+    "6": "sixteenth-note scale pattern, slurring + tonguing, in 4/4",
+    "9": "variable repertoire etude — a different title in every key",
+    "10": "fully orchestrated 4-part chorale"
+  },
+  "keys": [
+    {"key": "B♭", "pages": [8, 9], "line9": "Londonderry Air"},
+    {"key": "E♭", "pages": [12, 13], "line9": "Intermezzo Sinfonico (from Cavalleria Rusticana)"},
+    {"key": "F", "pages": [16, 17], "line9": "Nocturne (from A Midsummer Night's Dream)"}
+  ],
+  "todo": "Fill in the remaining keys (pages + the #9 title for each) once the actual Table of Contents can be scanned. Adding a key = appending one row to \"keys\"; the rest of each key's 10 lines is generated from common_lines."
+}

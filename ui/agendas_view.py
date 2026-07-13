@@ -1,5 +1,11 @@
 """
-ui/agendas_view.py - Daily Agendas tab (Entry Band proof of concept).
+ui/agendas_view.py - Daily Agendas tab (parameterized per ensemble).
+
+One ``AgendasView`` serves both Entry and Intermediate Band (``group=`` picks
+which); the two share the whole editor/present machinery and differ only by the
+per-group ``GROUP_CONFIG`` (label, percussion class type, concert-ensemble, and
+which Standard of Excellence book the band-book picker uses) plus the group-aware
+curriculum spine.
 
 Two views of one day:
   * PLAN  - edit a day as named, colored checklists (reminders, announcements,
@@ -38,7 +44,23 @@ import school_calendar as scal
 from ui.theme import muted_fg, fs
 
 ENTRY_GROUP = "entry"
+INTERMEDIATE_GROUP = "intermediate"
+ADVANCED_GROUP = "advanced"
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+
+# One parameterized view serves every ensemble.  Per-group config: display label,
+# the percussion class_type to show, the concert-ensemble keyword (to pull that
+# ensemble's repertoire), and which Standard of Excellence book the band-book
+# picker uses (Entry = Bk 1, Intermediate = Bk 2, Advanced = none — their day is
+# mostly blank + teacher-driven).
+GROUP_CONFIG = {
+    ENTRY_GROUP: {"label": "Entry Band", "class_type": pr.ENTRY,
+                  "ensemble": "entry", "book": 1},
+    INTERMEDIATE_GROUP: {"label": "Intermediate Band", "class_type": pr.INT_ADV,
+                         "ensemble": "interm", "book": 2},
+    ADVANCED_GROUP: {"label": "Advanced Band", "class_type": pr.INT_ADV,
+                     "ensemble": "adv", "book": None},
+}
 
 # Section-header chip.
 HDR_BG = "#3b7dc4"
@@ -129,12 +151,15 @@ def _station_color(station):
 
 
 class AgendasView(ttk.Frame):
-    def __init__(self, parent, db, main_db=None, base_dir=None):
+    def __init__(self, parent, db, main_db=None, base_dir=None,
+                 group=ENTRY_GROUP):
         super().__init__(parent)
         self.db = db
         self.main_db = main_db
         self.base_dir = base_dir
-        self._group = ENTRY_GROUP
+        self._group = group if group in GROUP_CONFIG else ENTRY_GROUP
+        self._cfg = GROUP_CONFIG[self._group]
+        self._book = self._cfg["book"]
         self._date = _snap_weekday(date.today())
         self._day = None
         self._saved = False
@@ -148,7 +173,7 @@ class AgendasView(ttk.Frame):
     def _build(self):
         bar = ttk.Frame(self, bootstyle=LIGHT)
         bar.pack(fill=X)
-        ttk.Label(bar, text="📋  Entry Band — Daily Agenda",
+        ttk.Label(bar, text=f"📋  {self._cfg['label']} — Daily Agenda",
                   font=("Segoe UI", fs(12), "bold")).pack(side=LEFT, padx=10, pady=8)
         self._section_bar = ttk.Frame(bar)      # P1/P2 toggle (populated on render)
         self._section_bar.pack(side=LEFT)
@@ -255,7 +280,8 @@ class AgendasView(ttk.Frame):
 
     def _context(self):
         start, end = self._year_bounds()
-        return {"year_start": start, "year_end": end,
+        return {"group": self._group,
+                "year_start": start, "year_end": end,
                 "calendar": self._calendar(),
                 "assessments": self._load_assessments(),   # None => seed default
                 "intro_days": self._intro_days(),
@@ -287,25 +313,39 @@ class AgendasView(ttk.Frame):
             return None
         out = []
         for r in data:
-            due = _parse_date(r.get("due"))
-            if due:
-                out.append({"ref": (r.get("ref") or "").strip(), "due": due})
+            ref = (r.get("ref") or "").strip()
+            if not ref:
+                continue
+            # due may be blank (dateless assessments — kept in the list but not
+            # auto-surfaced on the agenda until the teacher assigns a date).
+            out.append({"ref": ref, "due": _parse_date(r.get("due"))})
         return out
 
     def _save_assessments(self, items):
-        payload = [{"ref": i["ref"], "due": i["due"].isoformat()}
-                   for i in items if i.get("ref") and i.get("due")]
+        payload = [{"ref": i["ref"],
+                    "due": i["due"].isoformat() if i.get("due") else ""}
+                   for i in items if i.get("ref")]
         self.db.set_program_setting(self._assess_key(), json.dumps(payload))
         self.refresh()
 
+    def _default_assessments(self):
+        """The suggested seed list for this group.  Intermediate = her dateless
+        set; Advanced = empty (she sets hers up fresh each year); Entry = the
+        built-in dated cadence."""
+        if self._group == INTERMEDIATE_GROUP:
+            return spine.default_int_assessments()
+        if self._group == ADVANCED_GROUP:
+            return []
+        return spine.default_assessments(self._calendar(), *self._year_bounds())
+
     def _open_assessments(self):
         items = self._load_assessments()
-        if items is None:                    # seed from the suggested cadence
-            items = spine.default_assessments(self._calendar(), *self._year_bounds())
+        if items is None:                    # seed from the suggested list
+            items = self._default_assessments()
         _AssessmentsDialog(self, items)
 
     # ── sticky band-book page: carry the last page you set forward until you
-    #    change it again; before any is set, use the ~1-page/week default ──
+    #    change it again; before any is set, assume NO page (start empty) ──
 
     def _page_label_for(self, d):
         import re
@@ -325,9 +365,9 @@ class AgendasView(ttk.Frame):
                     m = re.match(r"\s*p\.\s*([0-9]+(?:-[0-9]+)?)", it.get("text", ""))
                     if m:
                         return m.group(1)
-        start = self._year_bounds()[0]
-        return spine.band_book_page_label(d, self._calendar(), start,
-                                          self._intro_days())
+        # No page was ever set on an earlier day — don't assume one.  The Band
+        # book section starts empty (just the page/line pickers).
+        return None
 
     def _concerts(self):
         out = []
@@ -335,13 +375,14 @@ class AgendasView(ttk.Frame):
             d = _parse_date(c["concert_date"])
             if d:
                 out.append({"date": d, "title": c["title"],
-                            "pieces": self._entry_pieces(c)})
+                            "pieces": self._pieces(c)})
         return out
 
-    def _entry_pieces(self, concert):
+    def _pieces(self, concert):
         rows = self.db.get_concert_pieces(concert["id"])
-        entry = [r for r in rows if "entry" in (r["ensemble"] or "").lower()]
-        use = entry if entry else rows
+        kw = self._cfg["ensemble"]
+        matched = [r for r in rows if kw in (r["ensemble"] or "").lower()]
+        use = matched if matched else rows
         return [r["title"] for r in use if r["title"]]
 
     def _load_day(self):
@@ -480,14 +521,20 @@ class AgendasView(ttk.Frame):
         concerts = self._concerts()
         cds = [c["date"] for c in concerts]
         level = spine.fundamentals_level(self._date, cds)
-        parts = [f"Warm Up: Level {level}"]
-        concert = spine._concert_for_level(level, concerts)
-        if concert and concert.get("title"):
-            cd = concert["date"]
-            rel = "after" if self._date > cd else "rehearsing for"
-            parts.append(f"{rel} {concert['title']} ({cd.strftime('%b %d')})")
-        elif not cds:
-            parts.append("level set by month — add concerts to anchor the cycle")
+        # Entry's warm-up level is pinned to the concert cycle; Intermediate's
+        # "Broccoli" isn't leveled, so only Entry shows the level chip.
+        parts = [f"Warm Up: Level {level}"] if self._group == ENTRY_GROUP else []
+        # Concert-cycle chip for Entry/Intermediate only.  Advanced has a short
+        # cycle with many events (Chinook Night, Veterans Day, winter, festival,
+        # June concert), so the cycle index isn't meaningful — just the school day.
+        if self._group in (ENTRY_GROUP, INTERMEDIATE_GROUP):
+            concert = spine._concert_for_level(level, concerts)
+            if concert and concert.get("title"):
+                cd = concert["date"]
+                rel = "after" if self._date > cd else "rehearsing for"
+                parts.append(f"{rel} {concert['title']} ({cd.strftime('%b %d')})")
+            elif not cds and self._group == ENTRY_GROUP:
+                parts.append("level set by month — add concerts to anchor the cycle")
         cal = self._calendar()
         if cal:
             parts.append(f"school day {scal.school_day_index(cal, self._date)}")
@@ -552,10 +599,11 @@ class AgendasView(ttk.Frame):
         body = ttk.Frame(wrap, relief="solid", borderwidth=1, padding=4)
         body.pack(fill=BOTH, expand=True)
 
-        groups = self._entry_perc_groups()
+        groups = self._perc_groups()
         if not groups:
-            ttk.Label(body, text="Add an Entry section on the 🥁 Percussion "
-                               "tab; it will show here.", wraplength=fs(24) * 11,
+            ttk.Label(body, text=f"Add {self._cfg['label']} percussion on the 🥁 "
+                               "Percussion tab; it will show here.",
+                      wraplength=fs(24) * 11,
                       font=("Segoe UI", fs(8)), foreground=muted_fg(),
                       justify=LEFT).pack(anchor=W)
             return
@@ -621,6 +669,8 @@ class AgendasView(ttk.Frame):
 
         if kind == "bandbook":
             self._bandbook_picker(body, section)
+        if kind == "warmup" and self._group == ADVANCED_GROUP and spine.tm_keys():
+            self._tm_picker(body, section)
 
         tools = ttk.Frame(body)
         tools.pack(fill=X, pady=(3, 0))
@@ -741,7 +791,7 @@ class AgendasView(ttk.Frame):
         bar.pack(fill=X, pady=(4, 0))
         ttk.Label(bar, text="Add line — Page:",
                   font=("Segoe UI", fs(8))).pack(side=LEFT)
-        pages = [str(p) for p in spine.soe_pages()]
+        pages = [str(p) for p in spine.soe_pages(self._book)]
         page_var = tk.StringVar()
         line_var = tk.StringVar()
         page_combo = ttk.Combobox(bar, textvariable=page_var, width=5,
@@ -753,7 +803,7 @@ class AgendasView(ttk.Frame):
 
         def on_page(_e=None):
             try:
-                lines = spine.soe_lines_on_page(int(page_var.get()))
+                lines = spine.soe_lines_on_page(int(page_var.get()), self._book)
             except (ValueError, TypeError):
                 lines = []
             labels = [f"#{r['n']} {r['title']}" for r in lines]
@@ -769,14 +819,63 @@ class AgendasView(ttk.Frame):
                 n = int(label.split()[0].lstrip("#"))
             except (ValueError, IndexError):
                 return
-            rec = spine.soe_line(n)
+            rec = spine.soe_line(n, self._book)
             kind = "assessment" if rec and rec.get("assessment") else ""
             section.setdefault("items", []).append(
-                spine._item(spine.soe_label(n), kind=kind))
+                spine._item(spine.soe_label(n, self._book), kind=kind))
             self._save_day()
             self._render()
         ttk.Button(bar, text="➕ Add", bootstyle=(SUCCESS, OUTLINE),
                    command=add).pack(side=LEFT, padx=6)
+
+    def _tm_picker(self, parent, section):
+        """Advanced Warm Up: pick a concert key from Technique & Musicianship and
+        add one of its 10 lines (or the whole key).  The Warm Up section still
+        DEFAULTS blank — this is purely an optional add-tool.  (Partial data for
+        now; grows as more keys are entered in technique_musicianship_lines.json.)"""
+        bar = ttk.Frame(parent)
+        bar.pack(fill=X, pady=(4, 0))
+        ttk.Label(bar, text="Technique & Musicianship — Key:",
+                  font=("Segoe UI", fs(8))).pack(side=LEFT)
+        keys = spine.tm_keys()
+        key_var = tk.StringVar()
+        line_var = tk.StringVar()
+        key_combo = ttk.Combobox(bar, textvariable=key_var, width=12,
+                                 state="readonly", values=keys)
+        key_combo.pack(side=LEFT, padx=(2, 6))
+        line_combo = ttk.Combobox(bar, textvariable=line_var, width=34,
+                                  state="readonly", values=[])
+        line_combo.pack(side=LEFT)
+
+        def on_key(_e=None):
+            lines = spine.tm_lines_for_key(key_var.get())
+            labels = [f"#{r['n']} {r['title']}" for r in lines]
+            line_combo.config(values=labels)
+            line_var.set(labels[0] if labels else "")
+        key_combo.bind("<<ComboboxSelected>>", on_key)
+
+        def add_one():
+            label = line_var.get().strip()
+            if not label:
+                return
+            section.setdefault("items", []).append(spine._item(label))
+            self._save_day()
+            self._render()
+        ttk.Button(bar, text="➕ Add", bootstyle=(SUCCESS, OUTLINE),
+                   command=add_one).pack(side=LEFT, padx=6)
+
+        def add_key():
+            key = key_var.get()
+            lines = spine.tm_lines_for_key(key)
+            if not lines:
+                return
+            for r in lines:
+                section.setdefault("items", []).append(
+                    spine._item(f"#{r['n']} {r['title']}"))
+            self._save_day()
+            self._render()
+        ttk.Button(bar, text="➕ Add whole key", bootstyle=(INFO, OUTLINE, LINK),
+                   command=add_key).pack(side=LEFT, padx=2)
 
     # ── images (stored in the day as base64 so they ride DB backups) ──
 
@@ -869,30 +968,51 @@ class AgendasView(ttk.Frame):
 
     # ─────────────────────────────────────────────────────── percussion data ──
 
-    def _entry_perc_groups(self):
-        return [g for g in self.db.get_percussion_groups(self._year())
-                if g["class_type"] == pr.ENTRY]
+    def _perc_groups(self):
+        """This ensemble's percussion sections.  Entry filters on the ENTRY
+        class type; Intermediate & Advanced share the INT_ADV type, so those are
+        split by the group keyword in the section NAME ("int" vs "adv").  For
+        Intermediate we also tolerate un-"int"-named sections (any INT_ADV group
+        that isn't an Advanced one); Advanced requires an explicit "adv" name so
+        it never grabs the Intermediate sections."""
+        ct = self._cfg["class_type"]
+        groups = [g for g in self.db.get_percussion_groups(self._year())
+                  if g["class_type"] == ct]
+        if self._group == ENTRY_GROUP:
+            return groups
+        kw = self._cfg["ensemble"]
+        named = [g for g in groups if kw in (g["name"] or "").lower()]
+        if named:
+            return named
+        if self._group == INTERMEDIATE_GROUP:
+            return [g for g in groups if "adv" not in (g["name"] or "").lower()]
+        return named            # Advanced: only explicitly "adv"-named sections
 
-    # ── P1/P2 section: an Entry section IS its percussion group.  The toolbar
+    # ── P1/P2 (or P6/P7) section: a section IS its percussion group.  The toolbar
     #    toggle picks which section's rotation + Missing lists to show; the
     #    lesson plan itself is SHARED across sections (planned once). ──
 
+    def _section_setting_key(self):
+        return f"agenda_{self._group}_section"
+
     def _section_group(self):
-        """The active Entry section (a percussion group) from the toolbar
-        toggle; falls back to the first section (and the legacy setting)."""
-        groups = self._entry_perc_groups()
+        """The active section (a percussion group) from the toolbar toggle;
+        falls back to the first section (and, for Entry, the legacy setting)."""
+        groups = self._perc_groups()
         if not groups:
             return None
-        want = (self.db.get_program_setting("agenda_entry_section")
-                or self.db.get_program_setting("agenda_entry_perc"))
+        want = self.db.get_program_setting(self._section_setting_key())
+        if not want and self._group == ENTRY_GROUP:
+            want = self.db.get_program_setting("agenda_entry_perc")  # legacy
         for g in groups:
             if str(g["id"]) == str(want):
                 return g
         return groups[0]
 
     def _apply_section(self, group_id):
-        self.db.set_program_setting("agenda_entry_section", str(group_id))
-        self.db.set_program_setting("agenda_entry_perc", str(group_id))  # legacy sync
+        self.db.set_program_setting(self._section_setting_key(), str(group_id))
+        if self._group == ENTRY_GROUP:
+            self.db.set_program_setting("agenda_entry_perc", str(group_id))  # legacy
 
     def _set_section(self, group_id):
         self._flush_focus()      # commit any in-progress edit to the OLD section
@@ -918,10 +1038,10 @@ class AgendasView(ttk.Frame):
         return self._section_group()
 
     def _render_section_toggle(self):
-        """Populate the toolbar P1/P2 toggle (only when 2+ Entry sections)."""
+        """Populate the toolbar section toggle (only when 2+ sections)."""
         for w in self._section_bar.winfo_children():
             w.destroy()
-        groups = self._entry_perc_groups()
+        groups = self._perc_groups()
         if len(groups) < 2:
             return                       # one section (or none) — nothing to toggle
         ttk.Label(self._section_bar, text="Section:",
@@ -1170,7 +1290,7 @@ class _PresentWindow(ttk.Toplevel):
     def _present_section_toggle(self, hdr):
         """P1/P2 toggle in the present header — switch section without leaving
         the projection (the two periods run back-to-back)."""
-        groups = self.view._entry_perc_groups()
+        groups = self.view._perc_groups()
         if len(groups) < 2:
             return
         active = self.view._section_group()
@@ -1245,7 +1365,7 @@ class _PresentWindow(ttk.Toplevel):
         self._stage.configure(bg=bg)
         self._body.configure(bg=bg)
         self._banner_host.configure(bg=bg)
-        self._title.config(text="Entry Band  ·  " +
+        self._title.config(text=self.view._cfg["label"] + "  ·  " +
                            self.view._date.strftime("%A, %b %d"))
         for w in self._banner_host.winfo_children():
             w.destroy()
@@ -1419,13 +1539,15 @@ class _AssessmentsDialog(ttk.Toplevel):
     def __init__(self, view, items):
         super().__init__(view.winfo_toplevel())
         self.view = view
-        self.title("Assessments — Entry Band")
+        self.title(f"Assessments — {view._cfg['label']}")
         self.geometry("600x640")
         self._rows = []                       # [(frame, ref_var, due_var), ...]
 
         ttk.Label(self, text="Your assessments and their due dates. Each line "
                   "appears on the agenda about 2 weeks before it's due. Dates "
-                  "are for THIS school year — set them fresh each year.",
+                  "are for THIS school year — set them fresh each year. Leave the "
+                  "date blank to keep an assessment on your list without putting "
+                  "it on the agenda.",
                   wraplength=560, bootstyle=SECONDARY, justify=LEFT
                   ).pack(fill=X, padx=14, pady=(14, 8))
 
@@ -1457,18 +1579,22 @@ class _AssessmentsDialog(ttk.Toplevel):
         addbar.pack(fill=X, padx=14, pady=(0, 4))
         ttk.Button(addbar, text="＋ Add row", bootstyle=(SUCCESS, OUTLINE),
                    command=lambda: self._add_row("", "")).pack(side=LEFT)
-        ttk.Label(addbar, text="  or from book page:").pack(side=LEFT)
+        # "Add from book page" only for ensembles with a Standard of Excellence
+        # book (Entry/Intermediate).  Advanced has no line book — free-text refs.
         self._pg = tk.StringVar()
         self._ln = tk.StringVar()
-        pgc = ttk.Combobox(addbar, textvariable=self._pg, width=5, state="readonly",
-                           values=[str(p) for p in spine.soe_pages()])
-        pgc.pack(side=LEFT, padx=2)
-        self._lnc = ttk.Combobox(addbar, textvariable=self._ln, width=24,
-                                 state="readonly", values=[])
-        self._lnc.pack(side=LEFT, padx=2)
-        pgc.bind("<<ComboboxSelected>>", self._fill_lines)
-        ttk.Button(addbar, text="Add line", bootstyle=(SUCCESS, OUTLINE, LINK),
-                   command=self._add_from_line).pack(side=LEFT, padx=2)
+        if view._book:
+            ttk.Label(addbar, text="  or from book page:").pack(side=LEFT)
+            pgc = ttk.Combobox(addbar, textvariable=self._pg, width=5,
+                               state="readonly",
+                               values=[str(p) for p in spine.soe_pages(view._book)])
+            pgc.pack(side=LEFT, padx=2)
+            self._lnc = ttk.Combobox(addbar, textvariable=self._ln, width=24,
+                                     state="readonly", values=[])
+            self._lnc.pack(side=LEFT, padx=2)
+            pgc.bind("<<ComboboxSelected>>", self._fill_lines)
+            ttk.Button(addbar, text="Add line", bootstyle=(SUCCESS, OUTLINE, LINK),
+                       command=self._add_from_line).pack(side=LEFT, padx=2)
 
         btns = ttk.Frame(self)
         btns.pack(fill=X, padx=14, pady=(6, 12))
@@ -1501,7 +1627,7 @@ class _AssessmentsDialog(ttk.Toplevel):
 
     def _fill_lines(self, _e=None):
         try:
-            lines = spine.soe_lines_on_page(int(self._pg.get()))
+            lines = spine.soe_lines_on_page(int(self._pg.get()), self.view._book)
         except (ValueError, TypeError):
             lines = []
         labels = [f"#{r['n']} {r['title']}" for r in lines]
@@ -1516,24 +1642,27 @@ class _AssessmentsDialog(ttk.Toplevel):
     def _reset_suggested(self):
         for rec in list(self._rows):
             self._del_row(rec)
-        for it in spine.default_assessments(self.view._calendar(),
-                                            *self.view._year_bounds()):
-            self._add_row(it["ref"], it["due"].isoformat())
+        for it in self.view._default_assessments():
+            due = it.get("due")
+            self._add_row(it["ref"], due.isoformat() if due else "")
 
     def _save(self):
         items, bad = [], []
         for _row, rv, dv in self._rows:
             ref, ds = rv.get().strip(), dv.get().strip()
-            if not ref and not ds:
-                continue
-            due = _parse_date(ds)
-            if not due:
-                bad.append(ref or ds)
-                continue
+            if not ref:
+                continue                       # a date with no line — skip
+            due = None
+            if ds:                             # blank date is allowed (dateless)
+                due = _parse_date(ds)
+                if not due:
+                    bad.append(ref)
+                    continue
             items.append({"ref": ref, "due": due})
         if bad:
             Messagebox.show_warning(
-                "These rows need a valid date (YYYY-MM-DD): " + ", ".join(bad),
+                "These rows need a valid date (YYYY-MM-DD) or a blank date: "
+                + ", ".join(bad),
                 title="Check due dates", parent=self)
             return
         self.view._save_assessments(items)
