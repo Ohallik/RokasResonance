@@ -193,6 +193,15 @@ class MainMenu(ttk.Frame):
         settings_lbl.pack(side=LEFT)
         settings_lbl.bind("<Button-1>", lambda e: self._open_settings())
 
+        ttk.Label(footer_inner, text="  •  ", font=("Segoe UI", fs(8)),
+                  foreground=subtle_fg()).pack(side=LEFT)
+        import_lbl = ttk.Label(
+            footer_inner, text="Import Data",
+            font=("Segoe UI", fs(8), "underline"),
+            foreground=link_fg(), cursor="hand2")
+        import_lbl.pack(side=LEFT)
+        import_lbl.bind("<Button-1>", lambda e: self._open_import_wizard())
+
         # ── Main Navigation Grid ─────────────────────────────────────────────
         # Two-column layout for compact, accessible navigation.
         import tkinter.ttk as _ttkbase
@@ -668,6 +677,16 @@ class MainMenu(ttk.Frame):
 
         from ui.theme import fit_window
         fit_window(win, 900, 600)
+
+    def _open_import_wizard(self):
+        from ui.import_wizard import ImportWizard
+        try:
+            from lesson_plan_db import current_school_year
+            year = current_school_year()
+        except Exception:
+            year = None
+        ImportWizard(self.winfo_toplevel(), self.db, self.base_dir, year)
+        self._refresh_stats()
 
     def _open_settings(self):
         from ui.settings_dialog import SettingsDialog

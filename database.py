@@ -1256,6 +1256,25 @@ class Database:
             )
             return cur.lastrowid
 
+    def import_open_checkout(self, instrument_id: int, student_id, student_name: str,
+                             date_assigned: str) -> int:
+        """Recreate a current (open) loan during a one-time data import, WITHOUT
+        the auto rental fee (importing existing state shouldn't invent new
+        charges).  Skips instruments that already have an open checkout so
+        re-running is safe."""
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM checkouts WHERE instrument_id=? AND "
+                "(date_returned IS NULL OR TRIM(date_returned)='')",
+                (instrument_id,)).fetchone()
+            if existing:
+                return existing["id"]
+            cur = conn.execute(
+                "INSERT INTO checkouts (instrument_id, student_id, student_name, "
+                "date_assigned) VALUES (?, ?, ?, ?)",
+                (instrument_id, student_id, student_name, date_assigned))
+            return cur.lastrowid
+
     def checkin_instrument(self, checkout_id: int, date_returned: str, notes: str = ""):
         with self._connect() as conn:
             conn.execute(
