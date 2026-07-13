@@ -15,7 +15,7 @@ Pure-ish: only touches PIL/Tk when an icon is actually requested.
 
 import os
 
-KINDS = ["drums", "guitar", "bass", "vibraphone", "piano"]
+KINDS = ["drums", "guitar", "bass", "vibraphone", "piano", "congas"]
 
 
 def icon_kind(seat):
@@ -27,10 +27,14 @@ def icon_kind(seat):
         return "guitar"
     if "bass" in s:
         return "bass"
+    if "conga" in s or "aux" in s:
+        return "congas"
     if any(k in s for k in ("vib", "marimba", "mallet", "bell", "xylo", "glock")):
         return "vibraphone"
     if "piano" in s or "key" in s:
         return "piano"
+    if "perc" in s:
+        return "congas"
     return None
 
 
@@ -96,6 +100,12 @@ def _draw(kind, px):
         for i in range(6):                                       # black keys
             x = 0.14 + 0.06 + i * (0.72 / 6)
             rect(x, 0.42, x + 0.05, 0.58, fill=ink)
+    elif kind == "congas":
+        for cx in (0.36, 0.64):                                  # two cone drums
+            d.polygon([(cx - 0.14) * W, 0.30 * H, (cx + 0.14) * W, 0.30 * H,
+                       (cx + 0.10) * W, 0.86 * H, (cx - 0.10) * W, 0.86 * H],
+                      outline=ink, width=lw)
+            ellipse(cx, 0.30, 0.14, 0.05, outline=ink, width=lw)
     else:
         return None
     return img.resize((px, px), Image.LANCZOS)
