@@ -597,6 +597,7 @@ def main():
     apply_global_font_scaling()
 
     # Pick initial profile (no dialog on first launch)
+    first_run = not profiles
     if not profiles:
         # Show the main window before the Querybox so the dialog has a visible parent
         # to anchor to — otherwise the prompt renders off-screen on some systems
@@ -650,6 +651,17 @@ def main():
     app._switch_profile_callback = switch_profile
 
     current_menu[0] = _load_profile(app, profile_name)
+
+    # Brand-new profile → run the one-time onboarding (name / school / focus →
+    # classes → optional import).  Non-fatal if anything goes wrong.
+    if first_run and current_menu[0] is not None:
+        try:
+            from ui.onboarding import OnboardingWizard
+            menu = current_menu[0]
+            OnboardingWizard(app, menu.base_dir, menu.db, profile_name,
+                             on_finish=getattr(menu, "_refresh_stats", None))
+        except Exception:
+            pass
 
     # Auto-fit window to actual content, capped at screen size
     app.update_idletasks()
