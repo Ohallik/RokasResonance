@@ -203,42 +203,64 @@ class AgendasView(ttk.Frame):
 
     def _sync_jazz_selection(self):
         """Re-validate the active band against what exists now (bands are created
-        on the Jazz tab) and refill the toolbar dropdown."""
+        on the Jazz tab) and rebuild the toolbar toggle."""
         ens = self._jazz_ensembles()
         self._jazz_ids = [e["id"] for e in ens]
         if self._jazz_eid not in self._jazz_ids:
             self._jazz_eid = self._jazz_ids[0] if self._jazz_ids else None
         self._group = self._jazz_store_key()
-        if getattr(self, "_jazz_combo", None) is not None:
-            self._jazz_combo.config(values=[e["name"] for e in ens])
-            cur = self._jazz_ensemble()
-            self._jazz_var.set(cur["name"] if cur else "")
+        self._render_jazz_selector(ens)
 
-    def _on_jazz_change(self, _e=None):
-        idx = self._jazz_combo.current()
-        if 0 <= idx < len(getattr(self, "_jazz_ids", [])):
-            self._jazz_eid = self._jazz_ids[idx]
-            self._group = self._jazz_store_key()
-            self.refresh()
+    def _render_jazz_selector(self, ens=None):
+        """Side-by-side band toggle — the same look as the P1/P2 Section toggle."""
+        if getattr(self, "_jazz_bar", None) is None:
+            return
+        for w in self._jazz_bar.winfo_children():
+            w.destroy()
+        if ens is None:
+            ens = self._jazz_ensembles()
+        if not ens:
+            ttk.Label(self._jazz_bar, text="  (create a band on the 🎷 Jazz tab)",
+                      font=("Segoe UI", fs(9)),
+                      foreground=muted_fg()).pack(side=LEFT, padx=(6, 0))
+            return
+        ttk.Label(self._jazz_bar, text="Band:",
+                  font=("Segoe UI", fs(9))).pack(side=LEFT, padx=(14, 4))
+        self._jazz_var = tk.StringVar(
+            value=str(self._jazz_eid) if self._jazz_eid else "")
+        for e in ens:
+            ttk.Radiobutton(self._jazz_bar, text=e["name"], value=str(e["id"]),
+                            variable=self._jazz_var, bootstyle=(INFO, "toolbutton"),
+                            command=lambda gid=e["id"]: self._set_jazz(gid)
+                            ).pack(side=LEFT, padx=1)
+
+    def _set_jazz(self, eid):
+        self._jazz_eid = eid
+        self._group = self._jazz_store_key()
+        self.refresh()
 
     def _jazz_seats_players(self):
         e = self._jazz_ensemble()
         if not e:
-            return [], []
+            return [], [], []
         import jazz_rotation as jr
-        seats = jr._clean_seats(_safe_json(e["seats"], []))
+        seats = _safe_json(e["seats"], [])           # [{name, capacity}, ...]
+        try:
+            pools = _safe_json(e["pools"], []) or []
+        except (KeyError, IndexError):
+            pools = []
         players = []
         for r in self.db.get_jazz_players(e["id"]):
             players.append({"name": r["name"],
                             "parts": jr._clean_seats(_safe_json(r["parts"], []))})
-        return seats, players
+        return seats, players, pools
 
     def _jazz_day(self):
         """Warm-up rotation day for this school day — auto-advances day to day and
         wraps by the rotation cycle, like the percussion rotation."""
         import jazz_rotation as jr
-        seats, players = self._jazz_seats_players()
-        cyc = jr.cycle_length(seats, players)
+        seats, players, pools = self._jazz_seats_players()
+        cyc = jr.cycle_length(seats, players, pools=pools)
         if cyc <= 0:
             return 1
         cal = self._calendar()
@@ -251,10 +273,10 @@ class AgendasView(ttk.Frame):
 
     def _jazz_rotation(self):
         import jazz_rotation as jr
-        seats, players = self._jazz_seats_players()
+        seats, players, pools = self._jazz_seats_players()
         if not seats:
             return [], []
-        return jr.day_assignments(seats, players, self._jazz_day())
+        return jr.day_assignments(seats, players, self._jazz_day(), pools=pools)
 
     def _display_label(self):
         if self._is_jazz:
@@ -269,14 +291,11 @@ class AgendasView(ttk.Frame):
         bar.pack(fill=X)
         ttk.Label(bar, text=f"📋  {self._cfg['label']} — Daily Agenda",
                   font=("Segoe UI", fs(12), "bold")).pack(side=LEFT, padx=10, pady=8)
+        # Jazz bands switch with side-by-side toggle buttons, exactly like the
+        # P1/P2 percussion Section toggle (populated in _render_jazz_selector).
+        self._jazz_bar = ttk.Frame(bar)
         if self._is_jazz:
-            ttk.Label(bar, text="Band:", font=("Segoe UI", fs(10))).pack(
-                side=LEFT, padx=(4, 2))
-            self._jazz_var = tk.StringVar()
-            self._jazz_combo = ttk.Combobox(bar, textvariable=self._jazz_var,
-                                            state="readonly", width=16, values=[])
-            self._jazz_combo.pack(side=LEFT, pady=6)
-            self._jazz_combo.bind("<<ComboboxSelected>>", self._on_jazz_change)
+            self._jazz_bar.pack(side=LEFT)
         self._section_bar = ttk.Frame(bar)      # P1/P2 toggle (populated on render)
         self._section_bar.pack(side=LEFT)
         ttk.Button(bar, text="🖥 Present", bootstyle=SUCCESS,
@@ -741,7 +760,7 @@ class AgendasView(ttk.Frame):
     def _banner_rhythm(self, parent, col):
         """Jazz counterpart to the percussion banner: the rhythm-section warm-up
         rotation for this school day (drum set / piano / bass / … → player)."""
-        from ui.jazz_view import seat_color
+        import jazz_icons
         wrap = ttk.Frame(parent)
         wrap.grid(row=0, column=col, sticky="nsew")
         self._hdr_label(wrap, "Rhythm Section", 11).pack(fill=X)
@@ -763,44 +782,23 @@ class AgendasView(ttk.Frame):
         ttk.Label(body, text=f"Warm-up rotation · day {self._jazz_day()}",
                   font=("Segoe UI", fs(8), "bold"),
                   foreground=muted_fg()).pack(anchor=W, pady=(0, 2))
-        for seat, who in asg:
+        for seat, names in asg:
             r = ttk.Frame(body)
-            r.pack(fill=X)
-            _tk(tk.Label, r, text=" ", background=seat_color(seat),
-                relief="solid", bd=1, width=2).pack(side=LEFT)
+            r.pack(fill=X, pady=1)
+            ic = jazz_icons.icon(body, seat, px=fs(18))
+            if ic is not None:
+                self._img_refs.append(ic)
+                _tk(tk.Label, r, image=ic).pack(side=LEFT)
+            else:
+                ttk.Label(r, text=" ", width=2).pack(side=LEFT)
             ttk.Label(r, text=seat, font=("Segoe UI", fs(9)),
                       width=12, anchor=W).pack(side=LEFT, padx=(4, 2))
-            ttk.Label(r, text=who or "—",
+            ttk.Label(r, text=", ".join(names) if names else "—",
                       font=("Segoe UI", fs(9), "bold")).pack(side=LEFT)
         if bench:
             ttk.Label(body, text="Out: " + ", ".join(bench),
                       font=("Segoe UI", fs(8)), foreground=muted_fg(),
                       wraplength=fs(24) * 11, justify=LEFT).pack(anchor=W, pady=(2, 0))
-
-    def _jazz_rotation_button(self, parent, section):
-        """Under the jazz Warm Up: drop today's rotating rhythm lineup into the
-        agenda as lines (so it projects and she can tweak)."""
-        bar = ttk.Frame(parent)
-        bar.pack(fill=X, pady=(4, 0))
-        ttk.Button(bar, text="➕ Insert warm-up rotation", bootstyle=(INFO, OUTLINE),
-                   command=lambda: self._insert_rotation(section)).pack(side=LEFT)
-        if self._jazz_ensemble():
-            ttk.Label(bar, text=f"rotation day {self._jazz_day()}",
-                      font=("Segoe UI", fs(8)),
-                      foreground=muted_fg()).pack(side=LEFT, padx=6)
-
-    def _insert_rotation(self, section):
-        asg, _bench = self._jazz_rotation()
-        if not asg:
-            Messagebox.show_info("Add seats and players on the 🎷 Jazz tab first.",
-                                 title="No rotation", parent=self)
-            return
-        for seat, who in asg:
-            if who:
-                section.setdefault("items", []).append(
-                    spine._item(f"{seat}: {who}"))
-        self._save_day()
-        self._render()
 
     def _jazz_song_picker(self, parent, section):
         """Under the jazz Sheet Music: pick a song set up on the Jazz tab and drop
@@ -827,8 +825,10 @@ class AgendasView(ttk.Frame):
             locked = _safe_json(song["locked"], {})
             section.setdefault("items", []).append(spine._item(title))
             for seat, who in locked.items():
-                if who:
-                    section["items"].append(spine._item(f"{seat}: {who}"))
+                names = who if isinstance(who, list) else ([who] if who else [])
+                if names:
+                    section["items"].append(
+                        spine._item(f"{seat}: {', '.join(names)}"))
             self._save_day()
             self._render()
         ttk.Button(bar, text="➕ Add", bootstyle=(SUCCESS, OUTLINE),
@@ -879,8 +879,6 @@ class AgendasView(ttk.Frame):
             self._bandbook_picker(body, section)
         if kind == "warmup" and self._mode == ADVANCED_GROUP and spine.tm_keys():
             self._tm_picker(body, section)
-        if self._is_jazz and kind == "warmup":
-            self._jazz_rotation_button(body, section)
         if self._is_jazz and kind == "sheet":
             self._jazz_song_picker(body, section)
 
@@ -1674,7 +1672,7 @@ class _PresentWindow(ttk.Toplevel):
 
     def _build_rhythm_panel(self, bg):
         """Present-mode floating panel for the jazz rhythm-section rotation."""
-        from ui.jazz_view import seat_color
+        import jazz_icons
         asg, bench = self.view._jazz_rotation()
         if not asg:
             return
@@ -1701,15 +1699,19 @@ class _PresentWindow(ttk.Toplevel):
             command=self._toggle_perc).pack(side=RIGHT, padx=2)
         table = _tk(tk.Frame, panel, bg=bg)
         table.pack(fill=BOTH, padx=8, pady=(4, 6))
-        for seat, who in asg:
+        for seat, names in asg:
             r = _tk(tk.Frame, table, bg=bg)
             r.pack(fill=X, pady=1)
-            _tk(tk.Label, r, text="  ", background=seat_color(seat),
-                relief="solid", bd=1).pack(side=LEFT)
+            ic = jazz_icons.icon(table, seat, px=fs(22))
+            if ic is not None:
+                self._img_refs.append(ic)
+                _tk(tk.Label, r, image=ic, bg=bg).pack(side=LEFT)
+            else:
+                _tk(tk.Label, r, text="  ", bg=bg).pack(side=LEFT)
             _tk(tk.Label, r, text=seat, bg=bg, fg=_auto_fg(bg), width=12,
                 anchor="w", font=("Segoe UI", fs(12), "bold")).pack(side=LEFT, padx=6)
-            _tk(tk.Label, r, text=who or "—", bg=bg, fg=_auto_fg(bg),
-                font=("Segoe UI", fs(12))).pack(side=LEFT)
+            _tk(tk.Label, r, text=", ".join(names) if names else "—", bg=bg,
+                fg=_auto_fg(bg), font=("Segoe UI", fs(12))).pack(side=LEFT)
         panel.place(relx=1.0, y=8, anchor="ne", x=-10)
         self._perc_widget = panel
 

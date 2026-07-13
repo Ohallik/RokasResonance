@@ -25,21 +25,8 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 
 import jazz_rotation as jr
+import jazz_icons
 from ui.theme import muted_fg, fs
-
-# Per-seat board colour, keyed loosely by instrument family so the projected
-# board reads at a glance (drums warm, keys blue, low end green, mallets amber).
-SEAT_COLORS = {
-    "drum set": "#f6d9d9", "drums": "#f6d9d9", "aux percussion": "#f3e0cf",
-    "piano": "#d6e4f5", "electric piano": "#d9e8f0", "keys": "#d6e4f5",
-    "bass": "#d9ecd2", "guitar": "#e6dbf1",
-    "vibraphone": "#ffe9c7", "vibes": "#ffe9c7",
-}
-_DEFAULT_SEAT_COLOR = "#eef1f4"
-
-
-def seat_color(seat):
-    return SEAT_COLORS.get((seat or "").strip().lower(), _DEFAULT_SEAT_COLOR)
 
 
 def _dumps(val):
@@ -54,6 +41,13 @@ def _loads(raw, default):
         return v
     except Exception:
         return default
+
+
+def _who(val):
+    """A locked-seat value (a name, or a list of names) as display text."""
+    if isinstance(val, list):
+        return ", ".join(val)
+    return str(val)
 
 
 class JazzView(ttk.Frame):
@@ -110,11 +104,28 @@ class JazzView(ttk.Frame):
                   font=("Segoe UI", fs(11)), foreground=muted_fg()).pack()
         self._placeholder.pack(fill=BOTH, expand=True)
 
-        self._content = ttk.Frame(parent)
+        # The right panel stacks several sections (seats, lineup, roster, songs),
+        # more than fit a short window — so it scrolls, and each section keeps a
+        # fixed height instead of fighting over the space (which previously pushed
+        # the Songs controls off the bottom).
+        self._content_outer = ttk.Frame(parent)
+        _cv = tk.Canvas(self._content_outer, highlightthickness=0)
+        _sb = ttk.Scrollbar(self._content_outer, orient=VERTICAL, command=_cv.yview)
+        _cv.configure(yscrollcommand=_sb.set)
+        _sb.pack(side=RIGHT, fill=Y)
+        _cv.pack(side=LEFT, fill=BOTH, expand=True)
+        self._content = ttk.Frame(_cv)
+        _win = _cv.create_window((0, 0), window=self._content, anchor="nw")
+        self._content.bind(
+            "<Configure>", lambda e: _cv.configure(scrollregion=_cv.bbox("all")))
+        _cv.bind("<Configure>", lambda e: _cv.itemconfig(_win, width=e.width))
+        _cv.bind("<Enter>", lambda e: _cv.bind_all(
+            "<MouseWheel>", lambda ev: _cv.yview_scroll(int(-ev.delta / 120), "units")))
+        _cv.bind("<Leave>", lambda e: _cv.unbind_all("<MouseWheel>"))
 
         self._name_lbl = ttk.Label(self._content, text="",
                                     font=("Segoe UI", fs(13), "bold"), bootstyle=PRIMARY)
-        self._name_lbl.pack(anchor=W)
+        self._name_lbl.pack(anchor=W, fill=X)
 
         # ── Seats in play ──
         seats_box = ttk.Labelframe(self._content, text=" Seats in play ", padding=6)
@@ -125,12 +136,15 @@ class JazzView(ttk.Frame):
         addbar.pack(fill=X, pady=(4, 0))
         ttk.Button(addbar, text="➕ Add / edit seats…", bootstyle=(INFO, OUTLINE),
                    command=self._edit_seats).pack(side=LEFT)
-        ttk.Label(addbar, text="The rhythm-section parts you're rotating today.",
+        ttk.Button(addbar, text="🎛 Part limits…", bootstyle=(INFO, OUTLINE),
+                   command=self._edit_pools).pack(side=LEFT, padx=(6, 0))
+        ttk.Label(addbar, text="Set each seat's capacity (how many at once) and "
+                              "any shared limits (e.g. amps).",
                   font=("Segoe UI", fs(8)), foreground=muted_fg()).pack(side=LEFT, padx=8)
 
         # ── Rotation / lineup board ──
         board_box = ttk.Labelframe(self._content, text=" Lineup ", padding=6)
-        board_box.pack(fill=BOTH, expand=True, pady=4)
+        board_box.pack(fill=X, pady=4)
 
         pick = ttk.Frame(board_box)
         pick.pack(fill=X, pady=(0, 4))
@@ -161,20 +175,23 @@ class JazzView(ttk.Frame):
                    command=self._copy_board).pack(side=RIGHT, padx=2)
 
         bcols = ("Seat", "Player")
-        self._board = ttk.Treeview(board_box, columns=bcols, show="headings",
+        # "tree headings": the #0 column carries the instrument icon per row.
+        self._board = ttk.Treeview(board_box, columns=bcols, show="tree headings",
                                    selectmode="none", bootstyle=INFO, height=6)
+        self._board.heading("#0", text="")
+        self._board.column("#0", width=34, minwidth=34, stretch=False, anchor=CENTER)
         self._board.heading("Seat", text="Seat", anchor=W)
         self._board.heading("Player", text="Player", anchor=W)
-        self._board.column("Seat", width=170, anchor=W, stretch=True)
+        self._board.column("Seat", width=160, anchor=W, stretch=True)
         self._board.column("Player", width=200, anchor=W, stretch=True)
-        self._board.pack(fill=BOTH, expand=True)
+        self._board.pack(fill=X)
         self._bench_lbl = ttk.Label(board_box, text="", font=("Segoe UI", fs(9)),
-                                    foreground=muted_fg())
+                                    foreground=muted_fg(), wraplength=520, justify=LEFT)
         self._bench_lbl.pack(anchor=W, pady=(2, 0))
 
         # ── Roster ──
         roster_box = ttk.Labelframe(self._content, text=" Players ", padding=6)
-        roster_box.pack(fill=BOTH, expand=True, pady=4)
+        roster_box.pack(fill=X, pady=4)
         rbar = ttk.Frame(roster_box)
         rbar.pack(fill=X, pady=(0, 4))
         ttk.Button(rbar, text="➕ Add Players", bootstyle=SUCCESS,
@@ -197,12 +214,12 @@ class JazzView(ttk.Frame):
         self._roster.heading("Can play", text="Can play", anchor=W)
         self._roster.column("Player", width=150, anchor=W, stretch=False)
         self._roster.column("Can play", width=330, anchor=W, stretch=True)
-        self._roster.pack(fill=BOTH, expand=True)
+        self._roster.pack(fill=X)
         self._roster.bind("<Double-1>", lambda e: self._edit_player_parts())
 
         # ── Songs ──
         songs_box = ttk.Labelframe(self._content, text=" Songs — locked personnel ", padding=6)
-        songs_box.pack(fill=BOTH, expand=True, pady=(4, 2))
+        songs_box.pack(fill=X, pady=(4, 2))
         sbar = ttk.Frame(songs_box)
         sbar.pack(fill=X, pady=(0, 4))
         ttk.Button(sbar, text="➕ Add Song", bootstyle=SUCCESS,
@@ -221,7 +238,7 @@ class JazzView(ttk.Frame):
         self._songs.heading("Locked lineup", text="Locked lineup", anchor=W)
         self._songs.column("Song", width=150, anchor=W, stretch=False)
         self._songs.column("Locked lineup", width=330, anchor=W, stretch=True)
-        self._songs.pack(fill=BOTH, expand=True)
+        self._songs.pack(fill=X)
         self._songs.bind("<Double-1>", lambda e: self._edit_song())
 
     # ─────────────────────────────────────────────────────────── data load ────
@@ -252,11 +269,11 @@ class JazzView(ttk.Frame):
 
     def _show_placeholder(self, show):
         if show:
-            self._content.pack_forget()
+            self._content_outer.pack_forget()
             self._placeholder.pack(fill=BOTH, expand=True)
         else:
             self._placeholder.pack_forget()
-            self._content.pack(fill=BOTH, expand=True)
+            self._content_outer.pack(fill=BOTH, expand=True)
 
     def _on_selected(self):
         sel = self._tree.selection()
@@ -275,9 +292,27 @@ class JazzView(ttk.Frame):
             return None
         return self.db.get_jazz_ensemble(self._selected_id)
 
-    def _seats(self, e=None):
+    def _seats_raw(self, e=None):
+        """Seats as stored (list of {name, capacity} dicts)."""
         e = e or self._ensemble()
-        return jr._clean_seats(_loads(e["seats"], []) if e else [])
+        return _loads(e["seats"], []) if e else []
+
+    def _seat_pairs(self, e=None):
+        """Seats as ordered (name, capacity) tuples."""
+        return jr.normalize_seats(self._seats_raw(e))
+
+    def _seat_names(self, e=None):
+        return [n for n, _ in self._seat_pairs(e)]
+
+    def _pools(self, e=None):
+        e = e or self._ensemble()
+        if not e:
+            return []
+        try:
+            raw = e["pools"]
+        except (KeyError, IndexError):
+            raw = None
+        return _loads(raw, []) or []
 
     def _players_payload(self, e=None):
         e = e or self._ensemble()
@@ -305,17 +340,31 @@ class JazzView(ttk.Frame):
     def _render_seats(self):
         for w in self._seats_wrap.winfo_children():
             w.destroy()
-        seats = self._seats()
-        if not seats:
+        pairs = self._seat_pairs()
+        if not pairs:
             ttk.Label(self._seats_wrap,
                       text="No seats yet — click “Add / edit seats…”.",
                       font=("Segoe UI", fs(9)), foreground=muted_fg()).pack(anchor=W)
             return
-        for s in seats:
-            chip = tk.Label(self._seats_wrap, text=" " + s + " ",
-                            bg=seat_color(s), fg="#222", relief="solid", bd=1,
-                            font=("Segoe UI", fs(9), "bold"), padx=6, pady=2)
+        self._seat_chip_icons = []
+        for name, cap in pairs:
+            chip = ttk.Frame(self._seats_wrap, relief="solid", borderwidth=1)
             chip.pack(side=LEFT, padx=3, pady=2)
+            ic = jazz_icons.icon(chip, name, px=fs(16))
+            if ic is not None:
+                self._seat_chip_icons.append(ic)
+                ttk.Label(chip, image=ic).pack(side=LEFT, padx=(4, 0))
+            txt = f"{name} ×{cap}" if cap > 1 else name
+            ttk.Label(chip, text=txt, font=("Segoe UI", fs(9), "bold"),
+                      padding=(4, 2)).pack(side=LEFT)
+        pools = self._pools()
+        if pools:
+            summary = ";  ".join(
+                f"{p.get('name','?')}: max {p.get('limit','?')} across "
+                f"{', '.join(p.get('seats', []))}" for p in pools)
+            ttk.Label(self._seats_wrap, text="   " + summary,
+                      font=("Segoe UI", fs(8)),
+                      foreground=muted_fg()).pack(side=LEFT, padx=(8, 0))
 
     def _render_view_choices(self):
         choices = ["Warm-up rotation"]
@@ -340,14 +389,15 @@ class JazzView(ttk.Frame):
         e = self._ensemble()
         if not e:
             return
-        seats = self._seats(e)
+        seats = self._seats_raw(e)
         players = self._players_payload(e)
+        pools = self._pools(e)
         song = self._current_song()
         locked = _loads(song["locked"], {}) if song else {}
 
         # Day stepper only matters when something rotates (warm-up, or a song
         # with open seats).  A fully-locked song is the same every day.
-        cycle = jr.cycle_length(seats, players, locked)
+        cycle = jr.cycle_length(seats, players, locked, pools)
         self._day_spin.config(to=max(cycle, 1))
         self._cycle_lbl.config(text=f"of {cycle}")
         day = self._day()
@@ -360,16 +410,18 @@ class JazzView(ttk.Frame):
             except tk.TclError:
                 pass
 
-        assignments, bench = jr.day_assignments(seats, players, day, locked)
+        assignments, bench = jr.day_assignments(seats, players, day, locked, pools)
         self._board.delete(*self._board.get_children())
-        _configure_seat_tags(self._board, seats)
-        for seat, name in assignments:
-            is_locked = seat in locked and locked[seat]
-            shown = name or "—"
-            if is_locked and name:
-                shown = f"🔒 {name}"
-            self._board.insert("", "end", values=(seat, shown),
-                               tags=(_seat_tag(seat),))
+        self._board_icons = []          # keep PhotoImage refs alive
+        for seat, names in assignments:
+            shown = ", ".join(names) if names else "—"
+            if names and locked.get(seat):
+                shown = "🔒 " + shown
+            ic = jazz_icons.icon(self._board, seat, px=fs(20))
+            kw = {"image": ic} if ic is not None else {}
+            if ic is not None:
+                self._board_icons.append(ic)
+            self._board.insert("", "end", text="", values=(seat, shown), **kw)
         if bench:
             self._bench_lbl.config(text="Waiting / rotating out:  " + ", ".join(bench))
         else:
@@ -385,7 +437,8 @@ class JazzView(ttk.Frame):
         self._songs.delete(*self._songs.get_children())
         for s in self.db.get_jazz_songs(self._ensemble()["id"]):
             locked = _loads(s["locked"], {})
-            summary = ",  ".join(f"{seat}: {who}" for seat, who in locked.items() if who)
+            summary = ",  ".join(f"{seat}: {_who(who)}"
+                                 for seat, who in locked.items() if who)
             self._songs.insert("", "end", iid=str(s["id"]),
                                values=(s["title"], summary or "(all rotating)"))
 
@@ -416,7 +469,8 @@ class JazzView(ttk.Frame):
             return
         eid = self.db.add_jazz_ensemble({
             "school_year": self._year(), "name": name.strip(),
-            "seats": _dumps(list(jr.DEFAULT_SEATS)), "current_day": 1})
+            "seats": _dumps([dict(s) for s in jr.DEFAULT_SEATS]),
+            "pools": _dumps([]), "current_day": 1})
         self._selected_id = eid
         self.refresh()
 
@@ -446,10 +500,25 @@ class JazzView(ttk.Frame):
         e = self._ensemble()
         if not e:
             return
-        dlg = _SeatsDialog(self.winfo_toplevel(), self._seats(e))
+        dlg = _SeatsDialog(self.winfo_toplevel(), self._seat_pairs(e))
         self.wait_window(dlg)
         if dlg.saved:
             self.db.update_jazz_ensemble(e["id"], {"seats": _dumps(dlg.seats)})
+            self._render()
+
+    def _edit_pools(self):
+        e = self._ensemble()
+        if not e:
+            return
+        names = self._seat_names(e)
+        if not names:
+            Messagebox.show_info("Add some seats first (Add / edit seats…).",
+                                 title="No seats", parent=self)
+            return
+        dlg = _PartLimitsDialog(self.winfo_toplevel(), names, self._pools(e))
+        self.wait_window(dlg)
+        if dlg.saved:
+            self.db.update_jazz_ensemble(e["id"], {"pools": _dumps(dlg.pools)})
             self._render()
 
     # ─────────────────────────────────────────────────────────── roster CRUD ──
@@ -482,7 +551,7 @@ class JazzView(ttk.Frame):
         if not player:
             return
         dlg = _PlayerPartsDialog(self.winfo_toplevel(), player["name"],
-                                 self._seats(e), player["parts"])
+                                 self._seat_names(e), player["parts"])
         self.wait_window(dlg)
         if dlg.saved:
             self.db.update_jazz_player(pid, {"parts": _dumps(dlg.parts)})
@@ -547,7 +616,7 @@ class JazzView(ttk.Frame):
         song = self.db.get_jazz_song(sid)
         if not song:
             return
-        dlg = _SongLineupDialog(self.winfo_toplevel(), song["title"], self._seats(e),
+        dlg = _SongLineupDialog(self.winfo_toplevel(), song["title"], self._seat_pairs(e),
                                 self._players_payload(e), _loads(song["locked"], {}))
         self.wait_window(dlg)
         if dlg.saved:
@@ -585,27 +654,15 @@ class JazzView(ttk.Frame):
         Messagebox.show_info("Copied as text.", title="Copied", parent=self)
 
 
-# ── shared tag helpers for the board ──
-
-def _seat_tag(seat):
-    return "seat_" + seat_color(seat).lstrip("#")
-
-
-def _configure_seat_tags(tree, seats):
-    for s in seats:
-        c = seat_color(s)
-        tree.tag_configure("seat_" + c.lstrip("#"), background=c)
-
-
 # ══════════════════════════════════════════════════════════════ dialogs ══════
 
 class _SeatsDialog(ttk.Toplevel):
-    """Edit the ordered list of rhythm-section seats in play."""
+    """Edit the seats in play, each with a capacity (players at once)."""
 
-    def __init__(self, parent, seats):
+    def __init__(self, parent, pairs):
         super().__init__(parent)
         self.saved = False
-        self.seats = list(seats)
+        self.seats = []
         self.title("Seats in Play")
         self.resizable(False, True)
         self.grab_set()
@@ -617,47 +674,177 @@ class _SeatsDialog(ttk.Toplevel):
                   font=("Segoe UI", 12, "bold"),
                   bootstyle=(INVERSE, INFO)).pack(pady=10, padx=16, anchor=W)
 
-        body = ttk.Frame(self)
-        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
-        ttk.Label(body, text="One seat per line, in board order. Add an "
-                             "“Electric piano” to seat a second pianist, or a "
-                             "part like “Tenor Sax” for a doubler.",
-                  font=("Segoe UI", 9), wraplength=420, justify=LEFT).pack(anchor=W)
-
-        quick = ttk.Frame(body)
-        quick.pack(fill=X, pady=(6, 4))
-        ttk.Label(quick, text="Quick add:", font=("Segoe UI", 8),
-                  foreground=muted_fg()).pack(side=LEFT)
-        for s in jr.COMMON_SEATS:
-            ttk.Button(quick, text=s, bootstyle=(SECONDARY, OUTLINE, LINK),
-                       command=lambda ss=s: self._append(ss)).pack(side=LEFT, padx=1)
-
-        self._text = tk.Text(body, height=8, width=36, relief="solid", bd=1,
-                             font=("Segoe UI", 10))
-        self._text.pack(fill=BOTH, expand=True, pady=(4, 0))
-        self._text.insert("1.0", "\n".join(self.seats))
-
+        # Pin the buttons to the bottom first so they can't be pushed off.
         btn = ttk.Frame(self)
-        btn.pack(fill=X, padx=16, pady=12)
+        btn.pack(side=BOTTOM, fill=X, padx=16, pady=12)
         ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
                    command=self.destroy).pack(side=RIGHT, padx=4)
         ttk.Button(btn, text="Save", bootstyle=SUCCESS,
                    command=self._save).pack(side=RIGHT, padx=4)
 
-        from ui.theme import fit_window
-        fit_window(self, 460, 460)
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
+        ttk.Label(body, text="One seat per row, in board order. Capacity is how "
+                             "many players can be on it at once — most parts are "
+                             "1, but a mallet seat (vibes/marimba/bells) can hold "
+                             "several, which is where extra players go so nobody "
+                             "sits out.",
+                  font=("Segoe UI", 9), wraplength=430, justify=LEFT).pack(anchor=W)
 
-    def _append(self, seat):
-        cur = [l.strip() for l in self._text.get("1.0", "end").splitlines() if l.strip()]
-        if seat.lower() not in [c.lower() for c in cur]:
-            if cur:
-                self._text.insert("end", "\n" + seat)
-            else:
-                self._text.insert("1.0", seat)
+        cols = ttk.Frame(body)
+        cols.pack(fill=X, pady=(6, 0))
+        ttk.Label(cols, text="Seat", font=("Segoe UI", 9, "bold"),
+                  width=28).pack(side=LEFT)
+        ttk.Label(cols, text="At once", font=("Segoe UI", 9, "bold")).pack(side=LEFT)
+        self._rows_frame = ttk.Frame(body)
+        self._rows_frame.pack(fill=X)
+        self._rows = []
+        for name, cap in pairs:
+            self._add_row(name, cap)
+
+        addbar = ttk.Frame(body)
+        addbar.pack(fill=X, pady=(6, 0))
+        ttk.Button(addbar, text="➕ Add seat", bootstyle=(SUCCESS, OUTLINE),
+                   command=lambda: self._add_row("", 1)).pack(side=LEFT)
+        ttk.Label(addbar, text="Quick add:", font=("Segoe UI", 8),
+                  foreground=muted_fg()).pack(side=LEFT, padx=(10, 2))
+        for s in jr.COMMON_SEATS:
+            ttk.Button(addbar, text=s, bootstyle=(SECONDARY, OUTLINE, LINK),
+                       command=lambda ss=s: self._quick(ss)).pack(side=LEFT, padx=1)
+
+        from ui.theme import fit_window
+        fit_window(self, 480, 520)
+
+    def _add_row(self, name, cap):
+        row = ttk.Frame(self._rows_frame)
+        row.pack(fill=X, pady=2)
+        nv = tk.StringVar(value=name)
+        cv = tk.StringVar(value=str(cap))
+        ttk.Entry(row, textvariable=nv, width=28).pack(side=LEFT)
+        ttk.Spinbox(row, from_=1, to=12, width=4,
+                    textvariable=cv).pack(side=LEFT, padx=(8, 0))
+        rec = (row, nv, cv)
+
+        def remove():
+            row.destroy()
+            self._rows.remove(rec)
+        ttk.Button(row, text="✕", width=3, bootstyle=(DANGER, OUTLINE, LINK),
+                   command=remove).pack(side=LEFT, padx=(8, 0))
+        self._rows.append(rec)
+
+    def _quick(self, seat):
+        cur = [nv.get().strip().lower() for _r, nv, _c in self._rows]
+        if seat.lower() not in cur:
+            cap = 4 if seat.lower() in ("vibraphone", "aux percussion") else 1
+            self._add_row(seat, cap)
 
     def _save(self):
-        raw = [l.strip() for l in self._text.get("1.0", "end").splitlines() if l.strip()]
-        self.seats = jr._clean_seats(raw)
+        seats, seen = [], set()
+        for _row, nv, cv in self._rows:
+            name = nv.get().strip()
+            if not name or name.lower() in seen:
+                continue
+            seen.add(name.lower())
+            try:
+                cap = max(1, int(cv.get()))
+            except (TypeError, ValueError):
+                cap = 1
+            seats.append({"name": name, "capacity": cap})
+        self.seats = seats
+        self.saved = True
+        self.destroy()
+
+
+class _PartLimitsDialog(ttk.Toplevel):
+    """Shared limits across seats — e.g. only 3 amps, split any way across Bass
+    and Guitar.  Each limit caps the TOTAL players over the seats you check."""
+
+    def __init__(self, parent, seat_names, pools):
+        super().__init__(parent)
+        self.saved = False
+        self.pools = []
+        self._seat_names = list(seat_names)
+        self.title("Part Limits")
+        self.resizable(False, True)
+        self.grab_set()
+        self.lift()
+
+        hdr = ttk.Frame(self, bootstyle=INFO)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text="🎛  Shared part limits",
+                  font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, INFO)).pack(pady=10, padx=16, anchor=W)
+
+        btn = ttk.Frame(self)
+        btn.pack(side=BOTTOM, fill=X, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Save", bootstyle=SUCCESS,
+                   command=self._save).pack(side=RIGHT, padx=4)
+
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
+        ttk.Label(body, text="A limit caps the TOTAL players across the checked "
+                             "seats. Example: “Amps”, max 3, over Bass + Guitar — "
+                             "so two basses + a guitar, or two guitars + a bass, "
+                             "but never four.",
+                  font=("Segoe UI", 9), wraplength=440, justify=LEFT).pack(anchor=W)
+
+        self._rows_frame = ttk.Frame(body)
+        self._rows_frame.pack(fill=X, pady=(6, 0))
+        self._rows = []
+        for p in pools:
+            self._add_row(p.get("name", ""), p.get("limit", 1), p.get("seats", []))
+        if not pools:
+            self._add_row("Amps", 3, [])
+
+        ttk.Button(body, text="➕ Add limit", bootstyle=(SUCCESS, OUTLINE),
+                   command=lambda: self._add_row("", 1, [])).pack(anchor=W, pady=(6, 0))
+
+        from ui.theme import fit_window
+        fit_window(self, 500, 480)
+
+    def _add_row(self, name, limit, seats):
+        box = ttk.Labelframe(self._rows_frame, text="", padding=6)
+        box.pack(fill=X, pady=3)
+        top = ttk.Frame(box)
+        top.pack(fill=X)
+        nv = tk.StringVar(value=name)
+        lv = tk.StringVar(value=str(limit))
+        ttk.Label(top, text="Name:", font=("Segoe UI", 9)).pack(side=LEFT)
+        ttk.Entry(top, textvariable=nv, width=16).pack(side=LEFT, padx=(2, 10))
+        ttk.Label(top, text="Max total:", font=("Segoe UI", 9)).pack(side=LEFT)
+        ttk.Spinbox(top, from_=1, to=12, width=4, textvariable=lv).pack(side=LEFT, padx=2)
+        checks = ttk.Frame(box)
+        checks.pack(fill=X, pady=(4, 0))
+        chosen = {s for s in seats}
+        seat_vars = []
+        for nm in self._seat_names:
+            var = tk.BooleanVar(value=nm in chosen)
+            ttk.Checkbutton(checks, text=nm, variable=var,
+                            bootstyle=INFO).pack(side=LEFT, padx=(0, 8))
+            seat_vars.append((nm, var))
+        rec = {"box": box, "name": nv, "limit": lv, "seats": seat_vars}
+
+        def remove():
+            box.destroy()
+            self._rows.remove(rec)
+        ttk.Button(top, text="✕ remove", bootstyle=(DANGER, OUTLINE, LINK),
+                   command=remove).pack(side=RIGHT)
+        self._rows.append(rec)
+
+    def _save(self):
+        pools = []
+        for rec in self._rows:
+            name = rec["name"].get().strip()
+            seats = [nm for nm, v in rec["seats"] if v.get()]
+            try:
+                limit = max(1, int(rec["limit"].get()))
+            except (TypeError, ValueError):
+                limit = 1
+            if name and seats:
+                pools.append({"name": name, "limit": limit, "seats": seats})
+        self.pools = pools
         self.saved = True
         self.destroy()
 
@@ -756,7 +943,7 @@ class _SongLineupDialog(ttk.Toplevel):
 
     ROTATE = "— (rotate)"
 
-    def __init__(self, parent, title, seats, players, current):
+    def __init__(self, parent, title, pairs, players, current):
         super().__init__(parent)
         self.saved = False
         self.title_text = title
@@ -771,6 +958,13 @@ class _SongLineupDialog(ttk.Toplevel):
         ttk.Label(hdr, text=f"🎼  {title}", font=("Segoe UI", 12, "bold"),
                   bootstyle=(INVERSE, PRIMARY)).pack(pady=10, padx=16, anchor=W)
 
+        btn = ttk.Frame(self)
+        btn.pack(side=BOTTOM, fill=X, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Save", bootstyle=SUCCESS,
+                   command=self._save).pack(side=RIGHT, padx=4)
+
         body = ttk.Frame(self)
         body.pack(fill=BOTH, expand=True, padx=16, pady=10)
 
@@ -780,36 +974,38 @@ class _SongLineupDialog(ttk.Toplevel):
         self._title_var = tk.StringVar(value=title)
         ttk.Entry(trow, textvariable=self._title_var, width=28).pack(side=LEFT, padx=(6, 0))
 
-        ttk.Label(body, text="For each seat, pick the locked player or leave it "
-                             "rotating. Only players who can cover the seat are "
-                             "offered.",
-                  font=("Segoe UI", 9), wraplength=420, justify=LEFT).pack(anchor=W, pady=(0, 8))
+        ttk.Label(body, text="Lock this tune's players. A seat with room for "
+                             "several (e.g. a mallet seat) gets a line each; leave "
+                             "a slot on “rotate” to keep it open. Only players who "
+                             "can cover the seat are offered.",
+                  font=("Segoe UI", 9), wraplength=440, justify=LEFT).pack(anchor=W, pady=(0, 8))
 
         grid = ttk.Frame(body)
         grid.pack(fill=X)
         grid.columnconfigure(1, weight=1)
-        self._vars = []
-        for i, seat in enumerate(seats):
-            ttk.Label(grid, text=seat, font=("Segoe UI", 9, "bold")).grid(
-                row=i, column=0, sticky=W, pady=3, padx=(0, 10))
+        self._vars = []            # (seat, StringVar) — several per multi-cap seat
+        r = 0
+        for seat, cap in pairs:
             eligible = [p["name"] for p in players if seat in p["parts"]]
             values = [self.ROTATE] + eligible
-            var = tk.StringVar(value=current.get(seat) if current.get(seat) in eligible
-                               else self.ROTATE)
-            ttk.Combobox(grid, textvariable=var, values=values, state="readonly",
-                         width=26).grid(row=i, column=1, sticky=W, pady=3)
-            self._vars.append((seat, var))
-        if not seats:
+            cur = current.get(seat)
+            cur_list = cur if isinstance(cur, list) else ([cur] if cur else [])
+            for slot in range(max(1, cap)):
+                label = seat if slot == 0 else ""
+                ttk.Label(grid, text=label, font=("Segoe UI", 9, "bold")).grid(
+                    row=r, column=0, sticky=W, pady=3, padx=(0, 10))
+                pick = cur_list[slot] if slot < len(cur_list) and cur_list[slot] in eligible \
+                    else self.ROTATE
+                var = tk.StringVar(value=pick)
+                ttk.Combobox(grid, textvariable=var, values=values, state="readonly",
+                             width=26).grid(row=r, column=1, sticky=W, pady=3)
+                self._vars.append((seat, var))
+                r += 1
+        if not pairs:
             ttk.Label(body, text="Add seats first.", foreground=muted_fg()).pack(anchor=W)
 
-        btn = ttk.Frame(self)
-        btn.pack(fill=X, padx=16, pady=12)
-        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
-                   command=self.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(btn, text="Save", bootstyle=SUCCESS, command=self._save).pack(side=RIGHT, padx=4)
-
         from ui.theme import fit_window
-        fit_window(self, 480, 520)
+        fit_window(self, 480, 560)
 
     def _save(self):
         self.title = (self._title_var.get() or "").strip() or self.title_text
@@ -817,7 +1013,9 @@ class _SongLineupDialog(ttk.Toplevel):
         for seat, var in self._vars:
             val = var.get()
             if val and val != self.ROTATE:
-                locked[seat] = val
+                locked.setdefault(seat, [])
+                if val not in locked[seat]:
+                    locked[seat].append(val)
         self.locked = locked
         self.saved = True
         self.destroy()

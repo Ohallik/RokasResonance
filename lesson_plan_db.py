@@ -225,6 +225,7 @@ class LessonPlanDatabase:
                     school_year TEXT,
                     name TEXT NOT NULL,
                     seats TEXT,
+                    pools TEXT,
                     current_day INTEGER DEFAULT 1,
                     sort_order INTEGER DEFAULT 0,
                     notes TEXT,
@@ -425,6 +426,13 @@ class LessonPlanDatabase:
             # For students who can only play certain equipment (accessibility).
             try:
                 conn.execute("ALTER TABLE percussion_students ADD COLUMN allowed_stations TEXT")
+                conn.commit()
+            except Exception:
+                pass
+            # Migration: jazz ensembles gained shared-limit "pools" (e.g. 3 amps
+            # split across Bass + Guitar) after the initial jazz tables shipped.
+            try:
+                conn.execute("ALTER TABLE jazz_ensembles ADD COLUMN pools TEXT")
                 conn.commit()
             except Exception:
                 pass
@@ -1208,7 +1216,8 @@ class LessonPlanDatabase:
                                 (ensemble_id,)).fetchone()
 
     def add_jazz_ensemble(self, data):
-        cols = ["school_year", "name", "seats", "current_day", "sort_order", "notes"]
+        cols = ["school_year", "name", "seats", "pools", "current_day",
+                "sort_order", "notes"]
         with self._connect() as conn:
             if data.get("sort_order") is None:
                 row = conn.execute(
@@ -1222,7 +1231,7 @@ class LessonPlanDatabase:
             return cur.lastrowid
 
     def update_jazz_ensemble(self, ensemble_id, data):
-        cols = [c for c in ["school_year", "name", "seats", "current_day",
+        cols = [c for c in ["school_year", "name", "seats", "pools", "current_day",
                             "sort_order", "notes", "is_active"] if c in data]
         if not cols:
             return
