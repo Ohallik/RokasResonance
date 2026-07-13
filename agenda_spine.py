@@ -462,11 +462,22 @@ def build_default_day(d, ctx):
                        Assessments are set up per year and only surface (as a small
                        "Assessments" section) once she dates them.  No PJ.
     """
-    group = ctx.get("group") or ENTRY
-    is_jazz = group == JAZZ
-    is_entry = group == ENTRY
-    is_int = group == INTERMEDIATE
-    is_adv = group == ADVANCED
+    # A class points at a TEMPLATE (band_entry / band_intermediate /
+    # band_advanced / jazz / generic).  Older callers pass ``group`` instead —
+    # map the four legacy group names onto their templates so nothing breaks.
+    template = ctx.get("template")
+    if not template:
+        template = {ENTRY: "band_entry", INTERMEDIATE: "band_intermediate",
+                    ADVANCED: "band_advanced", JAZZ: "jazz"}.get(
+                        ctx.get("group") or ENTRY, "generic")
+    is_jazz = template == "jazz"
+    is_entry = template == "band_entry"
+    is_int = template == "band_intermediate"
+    is_generic = template == "generic"
+    # Advanced and generic share the same skeleton (blank warm-up + sheet music,
+    # no method book); only Advanced adds the Technique & Musicianship picker and
+    # its assessment seed, both handled in the view.
+    is_adv = template == "band_advanced" or is_generic
     book = 2 if is_int else 1
 
     # ── Jazz — intentionally the simplest day: a blank Warm Up and a blank Sheet
@@ -585,7 +596,7 @@ def build_default_day(d, ctx):
 
     # Banner: reminders (standing) + announcements (auto bits).
     announcements = []
-    if wd == 0:
+    if wd == 0 and is_entry:
         announcements.append("Don't forget Jazz 2")
     upcoming = [c["date"] for c in concerts
                 if c.get("date") and 0 <= (c["date"] - d).days <= 14]

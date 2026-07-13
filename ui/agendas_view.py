@@ -158,22 +158,45 @@ def _station_color(station):
 
 class AgendasView(ttk.Frame):
     def __init__(self, parent, db, main_db=None, base_dir=None,
-                 group=ENTRY_GROUP):
+                 group=None, klass=None):
         super().__init__(parent)
         self.db = db
         self.main_db = main_db
         self.base_dir = base_dir
-        # ``_mode`` is the ensemble config key (entry / intermediate / advanced /
-        # jazz); ``_group`` is the per-day storage key.  For the three concert
-        # bands they're identical.  Jazz differs: one tab serves any number of
+        # A class is described by a registry dict (class_registry.py) pointing at
+        # a TEMPLATE.  ``_template`` drives behavior (band_entry / band_intermediate
+        # / band_advanced / jazz / generic); ``_group`` is the per-day storage key.
+        # For the three concert bands the id equals the legacy group name so old
+        # saved agendas keep working.  Jazz differs: one tab serves any number of
         # jazz bands, so its storage key is "jazz_<ensemble id>" and the active
-        # band is chosen from a toolbar dropdown.
-        self._mode = group if group in GROUP_CONFIG else ENTRY_GROUP
-        self._cfg = GROUP_CONFIG[self._mode]
-        self._is_jazz = (self._mode == JAZZ_GROUP)
-        self._book = self._cfg["book"]
+        # band is chosen from a toolbar toggle.  Older callers pass ``group=`` (a
+        # legacy name) instead of ``klass=`` — build a class dict from GROUP_CONFIG.
+        import class_registry
+        if klass is None:
+            g = group if group in GROUP_CONFIG else ENTRY_GROUP
+            gc = GROUP_CONFIG[g]
+            klass = {"id": g,
+                     "label": gc["label"],
+                     "template": {ENTRY_GROUP: "band_entry",
+                                  INTERMEDIATE_GROUP: "band_intermediate",
+                                  ADVANCED_GROUP: "band_advanced",
+                                  JAZZ_GROUP: "jazz"}.get(g, "generic"),
+                     "ensemble": gc["ensemble"], "book": gc["book"],
+                     "percussion": gc["class_type"] is not None}
+        self._klass = klass
+        cfg = class_registry.class_config(klass)
+        self._template = cfg["template"]
+        self._is_jazz = cfg["is_jazz"]
+        self._book = cfg["book"]
+        self._percussion = cfg["percussion"]
+        ct = cfg["class_type"]
+        class_type = pr.ENTRY if ct == "entry" else (pr.INT_ADV if ct == "int_adv"
+                                                     else None)
+        self._cfg = {"label": cfg["label"], "ensemble": cfg["ensemble"],
+                     "book": cfg["book"], "class_type": class_type}
+        self._store_id = cfg["id"]
         self._jazz_eid = self._first_jazz_eid() if self._is_jazz else None
-        self._group = self._jazz_store_key() if self._is_jazz else self._mode
+        self._group = self._jazz_store_key() if self._is_jazz else self._store_id
         self._date = _snap_weekday(date.today())
         self._day = None
         self._saved = False
@@ -404,7 +427,7 @@ class AgendasView(ttk.Frame):
 
     def _context(self):
         start, end = self._year_bounds()
-        return {"group": self._mode,
+        return {"template": self._template,
                 "year_start": start, "year_end": end,
                 "calendar": self._calendar(),
                 "assessments": self._load_assessments(),   # None => seed default
@@ -456,9 +479,9 @@ class AgendasView(ttk.Frame):
         """The suggested seed list for this group.  Intermediate = her dateless
         set; Advanced = empty (she sets hers up fresh each year); Entry = the
         built-in dated cadence."""
-        if self._mode == INTERMEDIATE_GROUP:
+        if self._template == "band_intermediate":
             return spine.default_int_assessments()
-        if self._mode == ADVANCED_GROUP:
+        if self._template in ("band_advanced", "generic"):
             return []
         return spine.default_assessments(self._calendar(), *self._year_bounds())
 
@@ -663,17 +686,17 @@ class AgendasView(ttk.Frame):
         level = spine.fundamentals_level(self._date, cds)
         # Entry's warm-up level is pinned to the concert cycle; Intermediate's
         # "Broccoli" isn't leveled, so only Entry shows the level chip.
-        parts = [f"Warm Up: Level {level}"] if self._mode == ENTRY_GROUP else []
+        parts = [f"Warm Up: Level {level}"] if self._template == "band_entry" else []
         # Concert-cycle chip for Entry/Intermediate only.  Advanced has a short
         # cycle with many events (Chinook Night, Veterans Day, winter, festival,
         # June concert), so the cycle index isn't meaningful — just the school day.
-        if self._mode in (ENTRY_GROUP, INTERMEDIATE_GROUP):
+        if self._template in ("band_entry", "band_intermediate"):
             concert = spine._concert_for_level(level, concerts)
             if concert and concert.get("title"):
                 cd = concert["date"]
                 rel = "after" if self._date > cd else "rehearsing for"
                 parts.append(f"{rel} {concert['title']} ({cd.strftime('%b %d')})")
-            elif not cds and self._mode == ENTRY_GROUP:
+            elif not cds and self._template == "band_entry":
                 parts.append("level set by month — add concerts to anchor the cycle")
         cal = self._calendar()
         if cal:
@@ -894,7 +917,7 @@ class AgendasView(ttk.Frame):
 
         if kind == "bandbook":
             self._bandbook_picker(body, section)
-        if kind == "warmup" and self._mode == ADVANCED_GROUP and spine.tm_keys():
+        if kind == "warmup" and self._template == "band_advanced" and spine.tm_keys():
             self._tm_picker(body, section)
         if self._is_jazz and kind == "sheet":
             self._jazz_song_picker(body, section)
@@ -1216,17 +1239,18 @@ class AgendasView(ttk.Frame):
         that isn't an Advanced one); Advanced requires an explicit "adv" name so
         it never grabs the Intermediate sections."""
         ct = self._cfg["class_type"]
-        if ct is None:                          # jazz has no percussion sections
+        # No percussion for this class (jazz, choir/orchestra, a non-perc club).
+        if ct is None or not self._percussion:
             return []
         groups = [g for g in self.db.get_percussion_groups(self._year())
                   if g["class_type"] == ct]
-        if self._mode == ENTRY_GROUP:
+        if self._template == "band_entry":
             return groups
         kw = self._cfg["ensemble"]
         named = [g for g in groups if kw in (g["name"] or "").lower()]
         if named:
             return named
-        if self._mode == INTERMEDIATE_GROUP:
+        if self._template == "band_intermediate":
             return [g for g in groups if "adv" not in (g["name"] or "").lower()]
         return named            # Advanced: only explicitly "adv"-named sections
 
@@ -1244,7 +1268,7 @@ class AgendasView(ttk.Frame):
         if not groups:
             return None
         want = self.db.get_program_setting(self._section_setting_key())
-        if not want and self._mode == ENTRY_GROUP:
+        if not want and self._template == "band_entry":
             want = self.db.get_program_setting("agenda_entry_perc")  # legacy
         for g in groups:
             if str(g["id"]) == str(want):
@@ -1253,7 +1277,7 @@ class AgendasView(ttk.Frame):
 
     def _apply_section(self, group_id):
         self.db.set_program_setting(self._section_setting_key(), str(group_id))
-        if self._mode == ENTRY_GROUP:
+        if self._template == "band_entry":
             self.db.set_program_setting("agenda_entry_perc", str(group_id))  # legacy
 
     def _set_section(self, group_id):
