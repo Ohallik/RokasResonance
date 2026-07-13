@@ -112,6 +112,7 @@ class LessonPlansHub(ttk.Frame):
             w.destroy()
         self._agenda_views = []
         classes = self._classes()
+        program = self._program_type()
 
         from ui.seating_chart_view import SeatingChartView
         self._seating = SeatingChartView(self._notebook, self.db,
@@ -119,7 +120,10 @@ class LessonPlansHub(ttk.Frame):
         self._notebook.add(self._seating, text="  🪑 Seating Charts  ")
 
         self._percussion = None
-        if any(k.get("percussion") for k in classes):
+        # Choir/orchestra never have percussion; otherwise show the tab if any
+        # class uses a percussion rotation.
+        if program not in ("choir", "orchestra") and any(
+                k.get("percussion") for k in classes):
             from ui.percussion_rotation_view import PercussionRotationView
             self._percussion = PercussionRotationView(self._notebook, self.db)
             self._notebook.add(self._percussion, text="  🥁 Percussion  ")
@@ -227,10 +231,10 @@ class LessonPlansHub(ttk.Frame):
 
 # ── Template display names for the Manage Classes picker ──────────────────────
 _TMPL_DISPLAY = {
-    "generic": "General — warm-up + sheet music (choir / orchestra / club)",
-    "band_entry": "Band — Entry (Fundamentals, SoE Bk 1, percussion)",
-    "band_intermediate": "Band — Intermediate (Broccoli, SoE Bk 2, percussion)",
-    "band_advanced": "Band — Advanced (Technique & Musicianship, percussion)",
+    "generic": "General — warm-up + sheet music (no percussion rotation)",
+    "band_entry": "Band — Entry (Standard of Excellence Bk 1 + percussion)",
+    "band_intermediate": "Band — Intermediate (Standard of Excellence Bk 2 + percussion)",
+    "band_advanced": "Band — Advanced (+ percussion)",
     "jazz": "Jazz (rhythm-section rotation)",
 }
 

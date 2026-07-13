@@ -76,6 +76,7 @@ class SeatingChartView(ttk.Frame):
         self.program_type = _program_type(base_dir)
         self._chart_id = None
         self._cfg = _default_config()
+        self._apply_program_defaults()
         self._rows = []
         self._perc = []
         self._unseated = []
@@ -738,9 +739,18 @@ class SeatingChartView(ttk.Frame):
         self._regenerate(from_layout=layout)
         self._dirty = False
 
+    def _apply_program_defaults(self):
+        """Choir and orchestra basically never need the band-specific seating
+        options, so leave 'separate percussion into a back row' and 'center the
+        tuba' OFF for them by default."""
+        if self.program_type in ("choir", "orchestra"):
+            self._cfg["separate_percussion"] = False
+            self._cfg["center_tuba"] = False
+
     def _new_chart(self):
         self._chart_id = None
         self._cfg = _default_config()
+        self._apply_program_defaults()
         self._name_var.set("Untitled Chart")
         self._sort_var.set(self._cfg["sort_mode"])
         self._chart_var.set("")

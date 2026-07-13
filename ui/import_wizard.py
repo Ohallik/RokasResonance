@@ -77,7 +77,7 @@ class ImportWizard(ttk.Toplevel):
         self._build_rosters(body)
         self._build_results(body)
 
-        fit_window(self, 720, 680)
+        fit_window(self, 860, 700)
 
     def _program_type(self):
         try:
@@ -104,21 +104,22 @@ class ImportWizard(ttk.Toplevel):
                                           [("CSV", "*.csv")])
 
     def _file_row(self, parent, label, filetypes):
-        row = ttk.Frame(parent)
-        row.pack(fill=X, pady=(6, 0))
-        ttk.Label(row, text=label, width=42,
-                  font=("Segoe UI", fs(9))).pack(side=LEFT)
         var = tk.StringVar()
-        ent = ttk.Entry(row, textvariable=var)
-        ent.pack(side=LEFT, fill=X, expand=True, padx=(4, 4))
 
         def browse():
             p = filedialog.askopenfilename(parent=self, filetypes=filetypes +
                                            [("All files", "*.*")])
             if p:
                 var.set(p)
+        # Label stacked ABOVE the entry so the row stays narrow and the Browse
+        # button (pinned right) is always visible without resizing.
+        ttk.Label(parent, text=label, font=("Segoe UI", fs(9))).pack(
+            anchor=W, pady=(8, 0))
+        row = ttk.Frame(parent)
+        row.pack(fill=X)
         ttk.Button(row, text="Browse…", bootstyle=(SECONDARY, OUTLINE),
-                   command=browse).pack(side=LEFT)
+                   command=browse).pack(side=RIGHT, padx=(6, 0))
+        ttk.Entry(row, textvariable=var).pack(side=LEFT, fill=X, expand=True)
         return var
 
     # ── Rosters ──

@@ -675,12 +675,16 @@ def main():
         y = max(20, (sh - win_h) // 2)
         app.geometry(f"{win_w}x{win_h}+{x}+{y}")
 
+    # Close the window IMMEDIATELY, then back up — running the (occasionally slow,
+    # e.g. OneDrive) backup inside the close handler used to leave a frozen blank
+    # window if it stalled.  We stash the refs, destroy, and back up after the
+    # main loop returns, capped so the process can never hang on exit.
+    _pending = {}
+
     def on_close():
-        db = getattr(app, "_current_db", None)
-        data_dir = getattr(app, "_current_data_dir", None)
-        profile_name = getattr(app, "_current_profile_name", None)
-        if db and data_dir and profile_name:
-            _run_backups(db, data_dir, profile_name)
+        _pending["db"] = getattr(app, "_current_db", None)
+        _pending["data_dir"] = getattr(app, "_current_data_dir", None)
+        _pending["profile"] = getattr(app, "_current_profile_name", None)
         app.destroy()
 
     app.protocol("WM_DELETE_WINDOW", on_close)
@@ -688,6 +692,17 @@ def main():
     _log_line(f"REACHED mainloop at {datetime.now().isoformat()}")
     app.mainloop()
     _log_line(f"EXITED mainloop at {datetime.now().isoformat()}")
+
+    if _pending.get("db") and _pending.get("data_dir") and _pending.get("profile"):
+        try:
+            t = threading.Thread(
+                target=_run_backups,
+                args=(_pending["db"], _pending["data_dir"], _pending["profile"]),
+                daemon=True)
+            t.start()
+            t.join(30)          # a hard cap: never block exit on a stuck backup
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

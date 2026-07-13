@@ -188,7 +188,10 @@ class AgendasView(ttk.Frame):
         self._template = cfg["template"]
         self._is_jazz = cfg["is_jazz"]
         self._book = cfg["book"]
-        self._percussion = cfg["percussion"]
+        # Choir and orchestra never have a percussion rotation — force it off for
+        # those programs regardless of the class flag.
+        self._percussion = (cfg["percussion"]
+                            and self._program_type() not in ("choir", "orchestra"))
         ct = cfg["class_type"]
         class_type = pr.ENTRY if ct == "entry" else (pr.INT_ADV if ct == "int_adv"
                                                      else None)
@@ -208,6 +211,29 @@ class AgendasView(ttk.Frame):
     # ──────────────────────────────────────────────────────────── jazz mode ────
     # Jazz is the only ensemble whose one tab serves several bands.  These helpers
     # resolve the active band, its storage key, and its rhythm-section rotation.
+
+    def _program_type(self):
+        try:
+            from ui.settings_dialog import load_settings
+            return (load_settings(self.base_dir).get("teacher") or {}).get(
+                "program_type", "band")
+        except Exception:
+            return "band"
+
+    def _last_reminders(self):
+        """Carry the most recent saved day's Reminders forward — blank for a
+        brand-new user until they type their own."""
+        for iso in sorted(self.db.get_saved_agenda_dates(self._group), reverse=True):
+            sd = _parse_date(iso)
+            if not sd or sd > self._date:
+                continue
+            row = self.db.get_agenda_day(self._group, iso)
+            try:
+                day = json.loads(row["data"])
+            except Exception:
+                continue
+            return list(day.get("reminders") or [])
+        return []
 
     def _jazz_ensembles(self):
         return self.db.get_jazz_ensembles(self._year()) if self._is_jazz else []
@@ -428,6 +454,7 @@ class AgendasView(ttk.Frame):
     def _context(self):
         start, end = self._year_bounds()
         return {"template": self._template,
+                "reminders": self._last_reminders(),
                 "year_start": start, "year_end": end,
                 "calendar": self._calendar(),
                 "assessments": self._load_assessments(),   # None => seed default
@@ -684,9 +711,9 @@ class AgendasView(ttk.Frame):
         concerts = self._concerts()
         cds = [c["date"] for c in concerts]
         level = spine.fundamentals_level(self._date, cds)
-        # Entry's warm-up level is pinned to the concert cycle; Intermediate's
-        # "Broccoli" isn't leveled, so only Entry shows the level chip.
-        parts = [f"Warm Up: Level {level}"] if self._template == "band_entry" else []
+        # Warm-ups are blank by default now, so the old "Warm Up: Level" chip is
+        # gone; the concert-cycle context below is what stays useful.
+        parts = []
         # Concert-cycle chip for Entry/Intermediate only.  Advanced has a short
         # cycle with many events (Chinook Night, Veterans Day, winter, festival,
         # June concert), so the cycle index isn't meaningful — just the school day.
@@ -729,16 +756,21 @@ class AgendasView(ttk.Frame):
     # ── banner: Reminders · Announcements · Percussion (grid, no clipping) ──
 
     def _render_banner(self, parent):
+        # The third column (percussion / jazz rhythm) only exists for a class
+        # that has one; choir/orchestra and other non-percussion classes get a
+        # clean two-column banner with no percussion prompt at all.
+        show_third = self._is_jazz or self._percussion
         row = ttk.Frame(parent)
         row.pack(fill=X, pady=(0, 8))
         row.columnconfigure(0, weight=1, uniform="ban")
         row.columnconfigure(1, weight=1, uniform="ban")
-        row.columnconfigure(2, weight=0, minsize=fs(24) * 12)
+        if show_third:
+            row.columnconfigure(2, weight=0, minsize=fs(24) * 12)
         self._banner_text(row, "Reminders", "reminders", 0)
         self._banner_text(row, "Announcements", "announcements", 1)
         if self._is_jazz:
             self._banner_rhythm(row, 2)
-        else:
+        elif self._percussion:
             self._banner_percussion(row, 2)
 
     def _banner_text(self, parent, title, key, col):

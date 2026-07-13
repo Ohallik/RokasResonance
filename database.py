@@ -164,6 +164,7 @@ class Database:
                     act_cost REAL DEFAULT 0,
                     invoice_number TEXT,
                     notes TEXT,
+                    exclude_from_budget INTEGER DEFAULT 0,
                     FOREIGN KEY (instrument_id) REFERENCES instruments(id)
                 );
 
@@ -381,6 +382,13 @@ class Database:
                 conn.commit()
             except Exception:
                 pass  # Column already exists
+            # Migrate: flag imported/archival repairs so they stay in the repair
+            # log but don't count as current budget expenses.
+            try:
+                conn.execute("ALTER TABLE repairs ADD COLUMN exclude_from_budget INTEGER DEFAULT 0")
+                conn.commit()
+            except Exception:
+                pass  # Column already exists
             # Migrate: add corrections_applied column to omr_jobs
             try:
                 conn.execute(
@@ -506,7 +514,7 @@ class Database:
                         ("Field Trip", "expense"),
                         ("Guest Artist / Clinician", "expense"),
                         ("Festival / Registration", "expense"),
-                        ("Uniforms / Polos", "expense"),
+                        ("Uniforms / Attire", "expense"),
                         ("Fundraiser", "income"),
                         ("Ticket Sales", "income"),
                         ("Donations", "income"),
@@ -518,8 +526,10 @@ class Database:
                         conn.execute("INSERT INTO budget_categories (name, kind) VALUES (?, ?)",
                                      (name, kind))
                 if conn.execute("SELECT COUNT(*) FROM fee_types").fetchone()[0] == 0:
+                    # Only BSD-wide standards are seeded.  Uniform/attire fees vary
+                    # by program (HS marching uniforms, choir robes, a MS polo, …),
+                    # so teachers add their own rather than getting Chinook's polo.
                     for name, amt in [
-                        ("Polo Shirt", 15.0),                     # Chinook polo (editable)
                         ("Instrument Rental (School Year)", 75.0),  # BSD standard
                         ("Instrument Rental (Summer)", 20.0),       # BSD standard
                     ]:
@@ -1643,6 +1653,7 @@ class Database:
                           i.description AS inst
                    FROM repairs r LEFT JOIN instruments i ON i.id = r.instrument_id
                    WHERE COALESCE(NULLIF(r.act_cost,0),0) > 0
+                     AND COALESCE(r.exclude_from_budget,0)=0
                      AND COALESCE(NULLIF(r.date_repaired,''), r.date_added) >= ?
                      AND COALESCE(NULLIF(r.date_repaired,''), r.date_added) <= ?""",
                 (lo, hi)).fetchall()
@@ -1713,7 +1724,8 @@ class Database:
                     years.add(fy)
             for r in conn.execute(
                     "SELECT COALESCE(NULLIF(date_repaired,''), date_added) AS d FROM repairs "
-                    "WHERE COALESCE(NULLIF(act_cost,0),0) > 0").fetchall():
+                    "WHERE COALESCE(NULLIF(act_cost,0),0) > 0 "
+                    "AND COALESCE(exclude_from_budget,0)=0").fetchall():
                 fy = self._fiscal_year_of(r["d"])
                 if fy:
                     years.add(fy)
@@ -2001,7 +2013,11 @@ class Database:
         return {"updated": updated, "unmatched": len(unmatched_names)}
 
     def import_repair(self, data: dict) -> int:
-        """Insert repair record, skipping exact duplicates."""
+        """Insert a repair record from a bulk import, skipping exact duplicates.
+        Imported repairs are ARCHIVAL — they belong in the repair log for history
+        but must NOT count as current budget expenses (they were paid long ago
+        under some other budget), so they default to exclude_from_budget=1."""
+        excl = data.get("exclude_from_budget", 1)
         with self._connect() as conn:
             existing = conn.execute(
                 """SELECT id FROM repairs
@@ -2009,12 +2025,17 @@ class Database:
                 (data.get("instrument_id"), data.get("date_added"), data.get("description"))
             ).fetchone()
             if existing:
+                # Re-importing flags an already-imported repair as archival too,
+                # so it stops counting as a budget expense.
+                conn.execute("UPDATE repairs SET exclude_from_budget=? WHERE id=?",
+                             (excl, existing["id"]))
                 return existing["id"]
             cols = [
                 "instrument_id", "priority", "date_added", "assigned_to",
                 "date_repaired", "description", "location",
-                "est_cost", "act_cost", "invoice_number"
+                "est_cost", "act_cost", "invoice_number", "exclude_from_budget"
             ]
+            data = {**data, "exclude_from_budget": excl}
             values = [data.get(c) for c in cols]
             placeholders = ",".join(["?"] * len(cols))
             col_str = ",".join(cols)

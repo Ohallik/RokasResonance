@@ -13,6 +13,7 @@ the agenda tabs (class_registry).
 """
 
 import tkinter as tk
+from tkinter import filedialog
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
@@ -102,14 +103,27 @@ class OnboardingWizard(ttk.Toplevel):
         ttk.Label(grid, text="(Bellevue School District)", font=("Segoe UI", 8),
                   foreground=muted_fg()).grid(row=2, column=1, sticky=W)
 
+        ttk.Label(grid, text="Backup folder", font=("Segoe UI", 9, "bold")).grid(
+            row=3, column=0, sticky=W, pady=(8, 4), padx=(0, 10))
+        self._backup = tk.StringVar()
+        brow = ttk.Frame(grid)
+        brow.grid(row=3, column=1, sticky="ew", pady=(8, 0))
+        ttk.Button(brow, text="Browse…", bootstyle=(SECONDARY, OUTLINE),
+                   command=self._browse_backup).pack(side=RIGHT, padx=(6, 0))
+        ttk.Entry(brow, textvariable=self._backup).pack(side=LEFT, fill=X, expand=True)
+        ttk.Label(grid, text="Recommended: a OneDrive folder, so a copy of your "
+                            "data is saved off this computer automatically.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=430, justify=LEFT).grid(row=4, column=1, sticky=W)
+
         ttk.Label(box, text="What do you teach?",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(8, 2))
         self._focus = tk.StringVar(value="band")
         frow = ttk.Frame(box)
         frow.pack(anchor=W)
         for label, val in FOCUS:
-            ttk.Radiobutton(frow, text=label, value=val, variable=self._focus,
-                            command=self._reseed_classes).pack(side=LEFT, padx=(0, 12))
+            ttk.Radiobutton(frow, text=label, value=val,
+                            variable=self._focus).pack(side=LEFT, padx=(0, 12))
         ttk.Label(box, text="Choir and orchestra skip the percussion rotation; "
                             "band gets it. You can rename or add classes below.",
                   font=("Segoe UI", 8), foreground=muted_fg(),
@@ -119,24 +133,18 @@ class OnboardingWizard(ttk.Toplevel):
     def _build_classes(self, parent):
         box = ttk.Labelframe(parent, text=" 2. Your classes ", padding=10)
         box.pack(fill=X, pady=(0, 10))
-        ttk.Label(box, text="Each class gets its own agenda tab. These are the "
-                            "usual ones for your focus — rename, remove, or add "
-                            "your own (Jazz, a club, an extra section).",
+        ttk.Label(box, text="Type the name of each class you teach and pick its "
+                            "kind. Each gets its own agenda tab. Add a row per "
+                            "class (most teachers have about five); “General” "
+                            "just gives a warm-up + sheet music with no percussion "
+                            "rotation.",
                   font=("Segoe UI", 9), wraplength=620, justify=LEFT).pack(anchor=W)
         self._rows_frame = ttk.Frame(box)
         self._rows_frame.pack(fill=X, pady=(6, 0))
         self._rows = []
-        for k in self._cr.default_registry("band"):
-            self._add_class_row(k)
+        self._add_class_row(None)          # start with one blank row to fill in
         ttk.Button(box, text="➕ Add another class", bootstyle=(SUCCESS, OUTLINE),
                    command=lambda: self._add_class_row(None)).pack(anchor=W, pady=(6, 0))
-
-    def _reseed_classes(self):
-        for w in self._rows_frame.winfo_children():
-            w.destroy()
-        self._rows = []
-        for k in self._cr.default_registry(self._focus.get()):
-            self._add_class_row(k)
 
     def _add_class_row(self, klass):
         tmpl = (klass or {}).get("template", "generic")
@@ -160,7 +168,8 @@ class OnboardingWizard(ttk.Toplevel):
 
     # ── 3. Import ──
     def _build_import(self, parent):
-        box = ttk.Labelframe(parent, text=" 3. Bring in your data (optional) ",
+        box = ttk.Labelframe(parent,
+                             text=" 3. Bring in your data (recommended — first time only) ",
                              padding=10)
         box.pack(fill=X)
         ttk.Label(box, text="Import your instruments from CutTime (and repair / "
@@ -211,6 +220,11 @@ class OnboardingWizard(ttk.Toplevel):
                             "percussion": ti["percussion"]})
         return out
 
+    def _browse_backup(self):
+        p = filedialog.askdirectory(parent=self, title="Choose a backup folder")
+        if p:
+            self._backup.set(p)
+
     def _save(self):
         from ui.settings_dialog import load_settings, save_settings
         s = load_settings(self.base_dir) or {}
@@ -218,6 +232,9 @@ class OnboardingWizard(ttk.Toplevel):
         s["teacher"]["name"] = self._name_var.get().strip()
         s["teacher"]["school"] = self._school.get().strip()
         s["teacher"]["program_type"] = self._focus.get()
+        backup = self._backup.get().strip()
+        if backup:
+            s.setdefault("backup", {})["external_path"] = backup
         save_settings(self.base_dir, s)
         classes = self._collect_classes()
         if classes:

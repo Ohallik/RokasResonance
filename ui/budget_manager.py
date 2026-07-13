@@ -17,6 +17,35 @@ from ui.ensembles import ensembles_for
 from ui.names import display_last_first
 
 
+def _pick_from_list(parent, title, prompt, options):
+    """Tiny modal: choose one option from a dropdown.  Returns the string or
+    None if cancelled."""
+    dlg = ttk.Toplevel(parent)
+    dlg.title(title)
+    dlg.resizable(False, False)
+    dlg.grab_set()
+    dlg.lift()
+    result = {"value": None}
+    ttk.Label(dlg, text=prompt, font=("Segoe UI", 10)).pack(
+        anchor=W, padx=16, pady=(16, 4))
+    var = tk.StringVar(value=options[0] if options else "")
+    ttk.Combobox(dlg, textvariable=var, values=options, state="readonly",
+                 width=32).pack(padx=16, pady=(0, 10), fill=X)
+
+    def ok():
+        result["value"] = var.get().strip() or None
+        dlg.destroy()
+    btn = ttk.Frame(dlg)
+    btn.pack(fill=X, padx=16, pady=(0, 12))
+    ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+               command=dlg.destroy).pack(side=RIGHT, padx=4)
+    ttk.Button(btn, text="Add", bootstyle=SUCCESS, command=ok).pack(side=RIGHT, padx=4)
+    from ui.theme import fit_window
+    fit_window(dlg, 380, 170)
+    parent.wait_window(dlg)
+    return result["value"]
+
+
 def _money(v):
     try:
         return f"${float(v or 0):,.2f}"
@@ -878,8 +907,8 @@ class _FeesDialog(ttk.Toplevel):
         tb = ttk.Frame(self); tb.pack(fill=X, padx=12, pady=4)
         ttk.Button(tb, text="➕ Add Students…", bootstyle=SUCCESS,
                    command=self._add_students).pack(side=LEFT, padx=2)
-        ttk.Button(tb, text="🎓 Add all Entry students", bootstyle=(SUCCESS, OUTLINE),
-                   command=self._add_entry).pack(side=LEFT, padx=2)
+        ttk.Button(tb, text="🎓 Add fee to a class…", bootstyle=(SUCCESS, OUTLINE),
+                   command=self._add_class).pack(side=LEFT, padx=2)
         ttk.Button(tb, text="⧉ Duplicate", bootstyle=(SUCCESS, OUTLINE),
                    command=self._duplicate).pack(side=LEFT, padx=2)
         ttk.Separator(tb, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=2)
@@ -1072,22 +1101,42 @@ class _FeesDialog(ttk.Toplevel):
                 self.db.ensure_student_fee(sid, fee, self.school_year, amt)
             self._reload_list()
 
-    def _add_entry(self):
-        """Polo default: everyone in an Entry-level class."""
+    def _add_class(self):
+        """Apply the selected fee to every student in a chosen class/ensemble."""
         fee = self._fee_var.get()
         if not fee:
+            Messagebox.show_warning("Add a fee type first.", title="No Fee", parent=self)
             return
-        entry_names = [e for e in ensembles_for(self.program_type) if e.lower().startswith("entry")]
+        # The classes the teacher actually runs (registry), falling back to the
+        # program's standard ensembles.
+        options = self._class_labels()
+        chosen = _pick_from_list(self, "Add fee to a class",
+                                 f"Add “{fee}” to every student in:", options)
+        if not chosen:
+            return
         amt = self._fee_amount()
         added = 0
         for s in self.db.get_all_students(school_year=self.school_year):
-            ens = [x.strip() for x in (self.db_sval(s, "ensembles")).split(",") if x.strip()]
-            if any(e in ens for e in entry_names):
+            names = [x.strip() for x in self.db_sval(s, "ensembles").split(",") if x.strip()]
+            if chosen in names:
                 self.db.ensure_student_fee(s["id"], fee, self.school_year, amt)
                 added += 1
-        Messagebox.show_info(f"Added/kept {fee} for {added} Entry student(s).",
+        Messagebox.show_info(f"Added/kept “{fee}” for {added} student(s) in {chosen}.",
                              title="Done", parent=self)
         self._reload_list()
+
+    def _class_labels(self):
+        """The teacher's own class list (registry) if set, else the program's
+        standard ensembles."""
+        try:
+            import class_registry
+            classes = class_registry.load_classes(self.base_dir, self.program_type)
+            labels = [c["label"] for c in classes]
+            if labels:
+                return labels
+        except Exception:
+            pass
+        return list(ensembles_for(self.program_type))
 
     @staticmethod
     def db_sval(row, key):

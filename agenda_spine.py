@@ -498,7 +498,7 @@ def build_default_day(d, ctx):
     if is_jazz:
         return {
             "date": d.isoformat(),
-            "reminders": list(DEFAULT_REMINDERS),
+            "reminders": list(ctx.get("reminders") or []),
             "announcements": [],
             "sections": [
                 {"title": "Warm Up", "kind": "warmup", "items": [_item("")]},
@@ -518,27 +518,14 @@ def build_default_day(d, ctx):
 
     sections = []
 
-    # ── Warm-up (source differs per ensemble) ──
+    # ── Warm-up — left BLANK for every class.  The specific warm-up sets
+    #    (Fundamentals, "Broccoli", Technique & Musicianship) were one teacher's
+    #    and don't generalize, so new users fill in their own.  Entry still gets
+    #    the empty Rhythms image pane above it.
     if is_entry:
-        # Rhythms — heavier in the fall (reading foundation), tapers later.  It's
-        # a pasted-in rhythm image, not text: starts empty (use "Paste Image").
         sections.append({"title": "Rhythms", "kind": "rhythms", "items": []})
-        # Warm Up — the Fundamentals exercises at this cycle's level.
-        fund_items, mode = fundamentals_for_day(level, wd)
-        wtitle = "Warm Up"
-        if mode == "choose3":
-            wtitle += ": Choice x3"
-        sections.append({"title": wtitle, "kind": "warmup",
-                         "items": [_item(x) for x in fund_items]})
-    elif is_int:
-        # "Broccoli" (her own warm-up set) — blank boxes she fills in.
-        sections.append({"title": "Broccoli", "kind": "warmup",
-                         "items": [_item("") for _ in range(6)]})
-    else:
-        # Advanced — a blank Warm Up she fills in (Technique & Musicianship work,
-        # tuning, tone, balance — whatever the day needs).
-        sections.append({"title": "Warm Up", "kind": "warmup",
-                         "items": [_item("") for _ in range(4)]})
+    sections.append({"title": "Warm Up", "kind": "warmup",
+                     "items": [_item("") for _ in range(4)]})
 
     # ── Assessments (teacher-defined; the view passes its saved list, else we
     #    seed the group's suggested set — Advanced seeds EMPTY, set up per year).
@@ -618,7 +605,7 @@ def build_default_day(d, ctx):
 
     return {
         "date": d.isoformat(),
-        "reminders": list(DEFAULT_REMINDERS),
+        "reminders": list(ctx.get("reminders") or []),
         "announcements": announcements,
         "sections": sections,
         "practice_journal": pj,
