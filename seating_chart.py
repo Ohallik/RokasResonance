@@ -153,6 +153,103 @@ def concert_rank(instrument):
     return len(CONCERT_ORDER) - 1  # just ahead of Percussion
 
 
+# ── Jazz big-band layout ──────────────────────────────────────────────────────
+# A jazz band seats differently from a concert band: saxes across the FRONT,
+# trombones (and any other bass-clef players) behind them, trumpets (and any
+# extra high winds/strings) in the BACK — with the rhythm section off to one
+# side (usually stage left) and the whole band packed toward it, empty chairs
+# left on the far (stage-right) side.  Middle-school reality is highly variable
+# (any number per part, missing parts, doublers, even strings), so instruments
+# are mapped to a ROW BAND rather than to fixed pro-chart seats.
+JAZZ_RHYTHM = ["Piano", "Electric Piano", "Keyboard", "Guitar", "Bass Guitar",
+               "Electric Bass", "String Bass", "Bass", "Drums", "Drum Set",
+               "Drumset", "Percussion", "Vibraphone", "Vibes", "Aux Percussion"]
+# Front row — the saxes, in the usual order (altos toward the middle, then
+# tenors, bari on the end).
+JAZZ_SAXES = ["Alto Sax", "Alto Saxophone", "Tenor Sax", "Tenor Saxophone",
+              "Bari Sax", "Baritone Saxophone", "Soprano Sax"]
+# Middle "bass-clef" row: trombones and anything else she puts there — French
+# horns, baritones/euphoniums, tubas, bassoons, cellos, bass clarinet.
+JAZZ_LOW = ["Trombone", "Bass Trombone", "French Horn", "Baritone BC",
+            "Baritone TC", "Euphonium BC", "Euphonium TC", "Baritone/Euphonium",
+            "Tuba", "Bassoon", "Bass Clarinet", "Cello", "Cello 1", "Cello 2"]
+# Back row(s): trumpets and any extra high winds/strings (clarinet, flute, and
+# in some years oboe/violin/viola — enough to spill into an added row).
+JAZZ_HIGH = ["Trumpet", "Clarinet", "Flute", "Oboe", "Violin", "Violin 1",
+             "Violin 2", "Viola", "Viola 1", "Viola 2"]
+
+_JAZZ_ORDER = {"rhythm": JAZZ_RHYTHM, "sax": JAZZ_SAXES,
+               "low": JAZZ_LOW, "high": JAZZ_HIGH}
+
+
+def jazz_band(instrument):
+    """Which jazz block an instrument belongs to: 'rhythm', 'sax', 'low', or
+    'high'.  Anything unrecognized is treated as 'high' (it lands in the back
+    overflow rows rather than being dropped)."""
+    i = (instrument or "").strip()
+    for band in ("rhythm", "sax", "low"):
+        if i in _JAZZ_ORDER[band]:
+            return band
+    return "high"
+
+
+def jazz_layout(instruments, high_rows=1, rhythm_side="left"):
+    """Plan a jazz row layout from the instruments PRESENT.
+
+    ``instruments`` is one entry PER PLAYER (repeats expected), so the row widths
+    reflect how many students are actually on each part.  Returns
+    ``(section_order, zones, side_zones, row_caps)`` to feed ``build_chart``
+    (sections mode).  Rows are 0-based, front (audience side) = 0: row 0 = rhythm
+    + saxes, row 1 = bass-clef, rows 2.. = trumpets/high winds.  ``high_rows`` is
+    how many rows the back block may use (2 = "split the third row into a
+    fourth").  Every section is packed toward ``rhythm_side`` so the empty chairs
+    fall on the far side, and every row is the same width so the ragged,
+    packed-to-one-side look comes through.
+    """
+    from collections import Counter
+    counts = Counter(i for i in instruments if i)
+    present = [i for i in dict.fromkeys(instruments) if i]      # de-dup, order
+    bands = {"rhythm": [], "sax": [], "low": [], "high": []}
+    for i in present:
+        bands[jazz_band(i)].append(i)
+
+    def ordered(band):
+        pref = _JAZZ_ORDER[band]
+        return sorted(bands[band],
+                      key=lambda x: (pref.index(x) if x in pref else 999, x))
+
+    def players(band):
+        return sum(counts[i] for i in bands[band])
+
+    rhythm, sax = ordered("rhythm"), ordered("sax")
+    low, high = ordered("low"), ordered("high")
+    high_rows = max(1, int(high_rows or 1))
+    high_row_idx = list(range(2, 2 + high_rows))
+
+    zones = {}
+    for i in rhythm + sax:
+        zones[i] = [0]
+    for i in low:
+        zones[i] = [1]
+    for i in high:
+        zones[i] = list(high_row_idx)                # spill across the back rows
+
+    # Fill (and therefore left-to-right) order within a row: rhythm first so it
+    # sits at the packed-side end, then saxes; low row and back rows by section.
+    section_order = rhythm + sax + low + high
+    side = "right" if rhythm_side == "right" else "left"
+    side_zones = {i: side for i in section_order}
+
+    # Uniform row width = the widest row's PLAYER count (+1 slack), so shorter
+    # rows show empty chairs on the far side rather than re-centering.
+    front = players("rhythm") + players("sax")
+    mid = players("low")
+    per_high = -(-players("high") // high_rows) if players("high") else 0   # ceil
+    width = max(front, mid, per_high, 4) + 1
+    row_caps = [width, width] + [width] * high_rows
+    return section_order, zones, side_zones, row_caps
+
+
 def _by_last(students):
     return sorted(students, key=lambda s: ((s.get("last") or "").lower(),
                                            (s.get("first") or "").lower()))

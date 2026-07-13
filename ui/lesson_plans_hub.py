@@ -98,8 +98,13 @@ class LessonPlansHub(ttk.Frame):
                                            self.main_db, self._base_dir)
         self._notebook.add(self._field_trips, text="  🚌 Field Trips  ")
 
+        from ui.jazz_view import JazzView
+        self._jazz = JazzView(self._notebook, self.db)
+        self._notebook.add(self._jazz, text="  🎷 Jazz  ")
+
         from ui.agendas_view import (AgendasView, ENTRY_GROUP,
-                                      INTERMEDIATE_GROUP, ADVANCED_GROUP)
+                                      INTERMEDIATE_GROUP, ADVANCED_GROUP,
+                                      JAZZ_GROUP)
         self._agendas = AgendasView(self._notebook, self.db, self.main_db,
                                     self._base_dir, group=ENTRY_GROUP)
         self._notebook.add(self._agendas, text="  📋 Entry Agendas  ")
@@ -111,6 +116,10 @@ class LessonPlansHub(ttk.Frame):
         self._agendas_adv = AgendasView(self._notebook, self.db, self.main_db,
                                         self._base_dir, group=ADVANCED_GROUP)
         self._notebook.add(self._agendas_adv, text="  📋 Advanced Agendas  ")
+
+        self._agendas_jazz = AgendasView(self._notebook, self.db, self.main_db,
+                                         self._base_dir, group=JAZZ_GROUP)
+        self._notebook.add(self._agendas_jazz, text="  📋 Jazz Agendas  ")
 
         self._notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
@@ -127,8 +136,8 @@ class LessonPlansHub(ttk.Frame):
 
     def _tabs(self):
         return [self._seating, self._percussion, self._concerts,
-                self._field_trips, self._agendas, self._agendas_int,
-                self._agendas_adv]
+                self._field_trips, self._jazz, self._agendas, self._agendas_int,
+                self._agendas_adv, self._agendas_jazz]
 
     def _on_tab_changed(self, event):
         """Refresh the active tab's data when switching to it."""

@@ -29,6 +29,7 @@ import school_calendar as _scal   # pure date logic (no I/O), safe to import
 ENTRY = "entry"
 INTERMEDIATE = "intermediate"
 ADVANCED = "advanced"
+JAZZ = "jazz"
 
 # ── Fundamentals for Entry Band, by concert-cycle level ───────────────────────
 # Exercise names as the teacher writes them.  Level 1 runs to the December
@@ -462,10 +463,27 @@ def build_default_day(d, ctx):
                        "Assessments" section) once she dates them.  No PJ.
     """
     group = ctx.get("group") or ENTRY
+    is_jazz = group == JAZZ
     is_entry = group == ENTRY
     is_int = group == INTERMEDIATE
     is_adv = group == ADVANCED
     book = 2 if is_int else 1
+
+    # ── Jazz — intentionally the simplest day: a blank Warm Up and a blank Sheet
+    #    Music, no method book / assessments / practice journal.  The rhythm-
+    #    section lineups (rotation + per-song locked personnel) are attached in
+    #    the view, not baked into the spine.
+    if is_jazz:
+        return {
+            "date": d.isoformat(),
+            "reminders": list(DEFAULT_REMINDERS),
+            "announcements": [],
+            "sections": [
+                {"title": "Warm Up", "kind": "warmup", "items": [_item("")]},
+                {"title": "Sheet Music", "kind": "sheet", "items": [_item("")]},
+            ],
+            "practice_journal": None,
+        }
     concerts = ctx.get("concerts") or []
     concert_dates = [c.get("date") for c in concerts if c.get("date")]
     year_start = ctx.get("year_start") or date(d.year if d.month >= 8

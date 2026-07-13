@@ -152,6 +152,8 @@ class SeatingChartView(ttk.Frame):
                    command=self._shuffle_prompt).pack(fill=X, **bpad, pady=(4, 0))
         ttk.Button(parent, text="🎼  Concert Setup…", bootstyle=(INFO, OUTLINE),
                    command=self._edit_section_order).pack(fill=X, **bpad, pady=(4, 0))
+        ttk.Button(parent, text="🎷  Jazz Setup…", bootstyle=(INFO, OUTLINE),
+                   command=self._jazz_setup).pack(fill=X, **bpad, pady=(4, 0))
 
         # ── Group ──
         head("Group").pack(anchor=W, padx=10, pady=(10, 0))
@@ -858,6 +860,39 @@ class SeatingChartView(ttk.Frame):
             self._cfg["side_zones"] = dlg.result.get("side_zones", {})
             self._regenerate()
 
+    def _jazz_setup(self):
+        """Apply a jazz big-band layout to the current roster: saxes across the
+        front, bass-clef (trombones + horn/bari/tuba/bassoon/cello) behind, then
+        trumpets and any high winds/strings in the back — rhythm section on the
+        chosen side, the whole band packed toward it (empty chairs on the far
+        side).  Works as straight rows OR concert arcs."""
+        roster = self._resolve_roster()
+        if not roster:
+            Messagebox.show_info("Choose a group first.", title="No Students", parent=self)
+            return
+        dlg = _JazzSetupDialog(self.winfo_toplevel(),
+                               side=self._cfg.get("jazz_side", "left"),
+                               high_rows=int(self._cfg.get("jazz_high_rows", 1)),
+                               view=self._cfg.get("view", "rows"))
+        self.wait_window(dlg)
+        if dlg.result is None:
+            return
+        insts = [s.get("instrument") for s in roster if s.get("instrument")]
+        order, zones0, sides, caps = sc.jazz_layout(
+            insts, high_rows=dlg.result["high_rows"], rhythm_side=dlg.result["side"])
+        # cfg stores zones 1-based (the view converts back to 0-based per row count).
+        self._cfg["section_order"] = order
+        self._cfg["zones"] = {i: [r + 1 for r in rows] for i, rows in zones0.items()}
+        self._cfg["side_zones"] = sides
+        self._cfg["row_caps"] = ",".join(str(c) for c in caps)
+        self._cfg["view"] = dlg.result["view"]
+        self._cfg["separate_percussion"] = False   # keep drums/vibes in the layout
+        self._cfg["center_tuba"] = False           # don't re-center the low row
+        self._cfg["jazz_side"] = dlg.result["side"]
+        self._cfg["jazz_high_rows"] = dlg.result["high_rows"]
+        self._ensure_sections_mode()
+        self._regenerate()
+
     # ─────────────────────────────────────────────────────── AI assistant ────
 
     def _ai_assistant(self):
@@ -1001,6 +1036,86 @@ class SeatingChartView(ttk.Frame):
 
 
 # ══════════════════════════════════════════════════════════════ dialogs ══════
+
+class _JazzSetupDialog(ttk.Toplevel):
+    """Options for a jazz big-band layout: which side the rhythm section is on
+    (and the band packs toward), how many rows the trumpets/high winds may use,
+    and straight rows vs. concert arcs."""
+
+    def __init__(self, parent, side="left", high_rows=1, view="rows"):
+        super().__init__(parent)
+        self.result = None
+        self.title("Jazz Setup")
+        self.resizable(False, False)
+        self.grab_set()
+        self.lift()
+
+        hdr = ttk.Frame(self, bootstyle=INFO)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text="🎷  Jazz Band Setup", font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, INFO)).pack(pady=10, padx=16, anchor=W)
+
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
+        ttk.Label(body,
+                  text="Saxes go across the front, trombones (and any other "
+                       "bass-clef players — horns, baritones, tubas, bassoons, "
+                       "cellos) behind them, trumpets (plus any clarinets, "
+                       "flutes, or strings) in the back. The rhythm section sits "
+                       "on the side you pick and the whole band packs toward it, "
+                       "leaving the empty chairs on the far side.",
+                  font=("Segoe UI", 9), wraplength=420, justify=LEFT).pack(anchor=W)
+
+        ttk.Label(body, text="Rhythm section on / pack toward:",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 0))
+        self._side = tk.StringVar(value=side if side in ("left", "right") else "left")
+        srow = ttk.Frame(body)
+        srow.pack(fill=X)
+        ttk.Radiobutton(srow, text="Left side", value="left",
+                        variable=self._side).pack(side=LEFT, padx=(0, 12))
+        ttk.Radiobutton(srow, text="Right side", value="right",
+                        variable=self._side).pack(side=LEFT)
+        ttk.Label(body, text="(Flip this if the projected chart ends up mirrored "
+                             "from your room.)",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=420, justify=LEFT).pack(anchor=W)
+
+        ttk.Label(body, text="Back rows (trumpets + high winds/strings):",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 0))
+        self._high = tk.IntVar(value=2 if int(high_rows or 1) >= 2 else 1)
+        hrow = ttk.Frame(body)
+        hrow.pack(fill=X)
+        ttk.Radiobutton(hrow, text="One row", value=1,
+                        variable=self._high).pack(side=LEFT, padx=(0, 12))
+        ttk.Radiobutton(hrow, text="Two rows (split the trumpet row)", value=2,
+                        variable=self._high).pack(side=LEFT)
+
+        ttk.Label(body, text="Shape:", font=("Segoe UI", 9, "bold")).pack(
+            anchor=W, pady=(10, 0))
+        self._view = tk.StringVar(value=view if view in ("rows", "arcs") else "rows")
+        vrow = ttk.Frame(body)
+        vrow.pack(fill=X)
+        ttk.Radiobutton(vrow, text="Straight rows (jazz)", value="rows",
+                        variable=self._view).pack(side=LEFT, padx=(0, 12))
+        ttk.Radiobutton(vrow, text="Concert arcs", value="arcs",
+                        variable=self._view).pack(side=LEFT)
+
+        btn = ttk.Frame(self)
+        btn.pack(fill=X, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Apply", bootstyle=SUCCESS,
+                   command=self._ok).pack(side=RIGHT, padx=4)
+
+        from ui.theme import fit_window
+        fit_window(self, 470, 470)
+
+    def _ok(self):
+        self.result = {"side": self._side.get(),
+                       "high_rows": int(self._high.get()),
+                       "view": self._view.get()}
+        self.destroy()
+
 
 class _StudentPicker(ttk.Toplevel):
     def __init__(self, parent, program_type, selected, scope, extra):

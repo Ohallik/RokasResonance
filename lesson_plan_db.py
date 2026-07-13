@@ -220,6 +220,41 @@ class LessonPlanDatabase:
                     UNIQUE(group_key, day_date)
                 );
 
+                CREATE TABLE IF NOT EXISTS jazz_ensembles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    school_year TEXT,
+                    name TEXT NOT NULL,
+                    seats TEXT,
+                    current_day INTEGER DEFAULT 1,
+                    sort_order INTEGER DEFAULT 0,
+                    notes TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS jazz_players (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ensemble_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    parts TEXT,
+                    sort_order INTEGER DEFAULT 0,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (ensemble_id) REFERENCES jazz_ensembles(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS jazz_songs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ensemble_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    locked TEXT,
+                    notes TEXT,
+                    sort_order INTEGER DEFAULT 0,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (ensemble_id) REFERENCES jazz_ensembles(id)
+                );
+
                 CREATE TABLE IF NOT EXISTS seating_charts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     school_year TEXT,
@@ -1147,6 +1182,149 @@ class LessonPlanDatabase:
                 "DELETE FROM percussion_overrides WHERE group_id=? AND day_number=?",
                 (group_id, day_number),
             )
+
+    # ─── Jazz rhythm-section ──────────────────────────────────────────────────
+    # A jazz ensemble is a flexible rhythm section: an ordered SEATS list (the
+    # parts in play), PLAYERS each tagged with the seats they can cover, and
+    # SONGS whose seats are LOCKED to specific players once auditioned.  All
+    # year-scoped, mirroring the percussion tables.
+
+    def get_jazz_ensembles(self, school_year=None, include_inactive=False):
+        with self._connect() as conn:
+            conds, params = [], []
+            if not include_inactive:
+                conds.append("is_active=1")
+            if school_year:
+                conds.append("school_year=?")
+                params.append(school_year)
+            where = ("WHERE " + " AND ".join(conds)) if conds else ""
+            return conn.execute(
+                f"SELECT * FROM jazz_ensembles {where} ORDER BY sort_order, id",
+                params).fetchall()
+
+    def get_jazz_ensemble(self, ensemble_id):
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM jazz_ensembles WHERE id=?",
+                                (ensemble_id,)).fetchone()
+
+    def add_jazz_ensemble(self, data):
+        cols = ["school_year", "name", "seats", "current_day", "sort_order", "notes"]
+        with self._connect() as conn:
+            if data.get("sort_order") is None:
+                row = conn.execute(
+                    "SELECT COALESCE(MAX(sort_order), -1)+1 AS n FROM jazz_ensembles"
+                ).fetchone()
+                data = {**data, "sort_order": row["n"]}
+            vals = [data.get(c) for c in cols]
+            cur = conn.execute(
+                f"INSERT INTO jazz_ensembles ({','.join(cols)}) "
+                f"VALUES ({','.join(['?'] * len(cols))})", vals)
+            return cur.lastrowid
+
+    def update_jazz_ensemble(self, ensemble_id, data):
+        cols = [c for c in ["school_year", "name", "seats", "current_day",
+                            "sort_order", "notes", "is_active"] if c in data]
+        if not cols:
+            return
+        set_clause = ", ".join(f"{c}=?" for c in cols)
+        vals = [data[c] for c in cols] + [ensemble_id]
+        with self._connect() as conn:
+            conn.execute(f"UPDATE jazz_ensembles SET {set_clause} WHERE id=?", vals)
+
+    def set_jazz_current_day(self, ensemble_id, day):
+        with self._connect() as conn:
+            conn.execute("UPDATE jazz_ensembles SET current_day=? WHERE id=?",
+                         (max(1, int(day)), ensemble_id))
+
+    def delete_jazz_ensemble(self, ensemble_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM jazz_players WHERE ensemble_id=?", (ensemble_id,))
+            conn.execute("DELETE FROM jazz_songs WHERE ensemble_id=?", (ensemble_id,))
+            conn.execute("DELETE FROM jazz_ensembles WHERE id=?", (ensemble_id,))
+
+    # ── Jazz players ──
+
+    def get_jazz_players(self, ensemble_id, include_inactive=False):
+        with self._connect() as conn:
+            cond = "" if include_inactive else " AND is_active=1"
+            return conn.execute(
+                f"SELECT * FROM jazz_players WHERE ensemble_id=?{cond} "
+                "ORDER BY sort_order, id", (ensemble_id,)).fetchall()
+
+    def add_jazz_player(self, ensemble_id, name, parts=None, sort_order=None):
+        with self._connect() as conn:
+            if sort_order is None:
+                row = conn.execute(
+                    "SELECT COALESCE(MAX(sort_order), -1)+1 AS n "
+                    "FROM jazz_players WHERE ensemble_id=?", (ensemble_id,)
+                ).fetchone()
+                sort_order = row["n"]
+            cur = conn.execute(
+                "INSERT INTO jazz_players (ensemble_id, name, parts, sort_order) "
+                "VALUES (?, ?, ?, ?)", (ensemble_id, name, parts, sort_order))
+            return cur.lastrowid
+
+    def update_jazz_player(self, player_id, data):
+        cols = [c for c in ["name", "parts", "sort_order", "is_active"] if c in data]
+        if not cols:
+            return
+        set_clause = ", ".join(f"{c}=?" for c in cols)
+        vals = [data[c] for c in cols] + [player_id]
+        with self._connect() as conn:
+            conn.execute(f"UPDATE jazz_players SET {set_clause} WHERE id=?", vals)
+
+    def delete_jazz_player(self, player_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM jazz_players WHERE id=?", (player_id,))
+
+    def reorder_jazz_players(self, ordered_ids):
+        with self._connect() as conn:
+            for idx, pid in enumerate(ordered_ids):
+                conn.execute("UPDATE jazz_players SET sort_order=? WHERE id=?",
+                             (idx, pid))
+
+    # ── Jazz songs (locked personnel) ──
+
+    def get_jazz_songs(self, ensemble_id, include_inactive=False):
+        with self._connect() as conn:
+            cond = "" if include_inactive else " AND is_active=1"
+            return conn.execute(
+                f"SELECT * FROM jazz_songs WHERE ensemble_id=?{cond} "
+                "ORDER BY sort_order, id", (ensemble_id,)).fetchall()
+
+    def get_jazz_song(self, song_id):
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM jazz_songs WHERE id=?",
+                                (song_id,)).fetchone()
+
+    def add_jazz_song(self, ensemble_id, title, locked=None, notes=None,
+                      sort_order=None):
+        with self._connect() as conn:
+            if sort_order is None:
+                row = conn.execute(
+                    "SELECT COALESCE(MAX(sort_order), -1)+1 AS n "
+                    "FROM jazz_songs WHERE ensemble_id=?", (ensemble_id,)
+                ).fetchone()
+                sort_order = row["n"]
+            cur = conn.execute(
+                "INSERT INTO jazz_songs (ensemble_id, title, locked, notes, sort_order) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (ensemble_id, title, locked, notes, sort_order))
+            return cur.lastrowid
+
+    def update_jazz_song(self, song_id, data):
+        cols = [c for c in ["title", "locked", "notes", "sort_order",
+                            "is_active"] if c in data]
+        if not cols:
+            return
+        set_clause = ", ".join(f"{c}=?" for c in cols)
+        vals = [data[c] for c in cols] + [song_id]
+        with self._connect() as conn:
+            conn.execute(f"UPDATE jazz_songs SET {set_clause} WHERE id=?", vals)
+
+    def delete_jazz_song(self, song_id):
+        with self._connect() as conn:
+            conn.execute("DELETE FROM jazz_songs WHERE id=?", (song_id,))
 
     # ─── Seating Charts ───────────────────────────────────────────────────────
 

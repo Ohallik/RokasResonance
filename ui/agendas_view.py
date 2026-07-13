@@ -46,6 +46,7 @@ from ui.theme import muted_fg, fs
 ENTRY_GROUP = "entry"
 INTERMEDIATE_GROUP = "intermediate"
 ADVANCED_GROUP = "advanced"
+JAZZ_GROUP = "jazz"
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 
 # One parameterized view serves every ensemble.  Per-group config: display label,
@@ -60,6 +61,11 @@ GROUP_CONFIG = {
                          "ensemble": "interm", "book": 2},
     ADVANCED_GROUP: {"label": "Advanced Band", "class_type": pr.INT_ADV,
                      "ensemble": "adv", "book": None},
+    # Jazz — no method book, no earn-based percussion; its "percussion" panel is
+    # the jazz rhythm-section rotation, and multiple jazz bands are picked with a
+    # toolbar dropdown (each band is its own agenda, keyed "jazz_<ensemble id>").
+    JAZZ_GROUP: {"label": "Jazz Band", "class_type": None,
+                 "ensemble": "jazz", "book": None},
 }
 
 # Section-header chip.
@@ -157,9 +163,17 @@ class AgendasView(ttk.Frame):
         self.db = db
         self.main_db = main_db
         self.base_dir = base_dir
-        self._group = group if group in GROUP_CONFIG else ENTRY_GROUP
-        self._cfg = GROUP_CONFIG[self._group]
+        # ``_mode`` is the ensemble config key (entry / intermediate / advanced /
+        # jazz); ``_group`` is the per-day storage key.  For the three concert
+        # bands they're identical.  Jazz differs: one tab serves any number of
+        # jazz bands, so its storage key is "jazz_<ensemble id>" and the active
+        # band is chosen from a toolbar dropdown.
+        self._mode = group if group in GROUP_CONFIG else ENTRY_GROUP
+        self._cfg = GROUP_CONFIG[self._mode]
+        self._is_jazz = (self._mode == JAZZ_GROUP)
         self._book = self._cfg["book"]
+        self._jazz_eid = self._first_jazz_eid() if self._is_jazz else None
+        self._group = self._jazz_store_key() if self._is_jazz else self._mode
         self._date = _snap_weekday(date.today())
         self._day = None
         self._saved = False
@@ -168,6 +182,86 @@ class AgendasView(ttk.Frame):
         self._build()
         self.refresh()
 
+    # ──────────────────────────────────────────────────────────── jazz mode ────
+    # Jazz is the only ensemble whose one tab serves several bands.  These helpers
+    # resolve the active band, its storage key, and its rhythm-section rotation.
+
+    def _jazz_ensembles(self):
+        return self.db.get_jazz_ensembles(self._year()) if self._is_jazz else []
+
+    def _first_jazz_eid(self):
+        ens = self._jazz_ensembles()
+        return ens[0]["id"] if ens else None
+
+    def _jazz_store_key(self):
+        return f"jazz_{self._jazz_eid}" if self._jazz_eid else "jazz_none"
+
+    def _jazz_ensemble(self):
+        if not self._is_jazz or self._jazz_eid is None:
+            return None
+        return self.db.get_jazz_ensemble(self._jazz_eid)
+
+    def _sync_jazz_selection(self):
+        """Re-validate the active band against what exists now (bands are created
+        on the Jazz tab) and refill the toolbar dropdown."""
+        ens = self._jazz_ensembles()
+        self._jazz_ids = [e["id"] for e in ens]
+        if self._jazz_eid not in self._jazz_ids:
+            self._jazz_eid = self._jazz_ids[0] if self._jazz_ids else None
+        self._group = self._jazz_store_key()
+        if getattr(self, "_jazz_combo", None) is not None:
+            self._jazz_combo.config(values=[e["name"] for e in ens])
+            cur = self._jazz_ensemble()
+            self._jazz_var.set(cur["name"] if cur else "")
+
+    def _on_jazz_change(self, _e=None):
+        idx = self._jazz_combo.current()
+        if 0 <= idx < len(getattr(self, "_jazz_ids", [])):
+            self._jazz_eid = self._jazz_ids[idx]
+            self._group = self._jazz_store_key()
+            self.refresh()
+
+    def _jazz_seats_players(self):
+        e = self._jazz_ensemble()
+        if not e:
+            return [], []
+        import jazz_rotation as jr
+        seats = jr._clean_seats(_safe_json(e["seats"], []))
+        players = []
+        for r in self.db.get_jazz_players(e["id"]):
+            players.append({"name": r["name"],
+                            "parts": jr._clean_seats(_safe_json(r["parts"], []))})
+        return seats, players
+
+    def _jazz_day(self):
+        """Warm-up rotation day for this school day — auto-advances day to day and
+        wraps by the rotation cycle, like the percussion rotation."""
+        import jazz_rotation as jr
+        seats, players = self._jazz_seats_players()
+        cyc = jr.cycle_length(seats, players)
+        if cyc <= 0:
+            return 1
+        cal = self._calendar()
+        if cal:
+            idx = scal.school_day_index(cal, self._date)
+        else:
+            start, _end = self._year_bounds()
+            idx = spine._school_days_between(start, self._date)
+        return ((idx - 1) % cyc) + 1
+
+    def _jazz_rotation(self):
+        import jazz_rotation as jr
+        seats, players = self._jazz_seats_players()
+        if not seats:
+            return [], []
+        return jr.day_assignments(seats, players, self._jazz_day())
+
+    def _display_label(self):
+        if self._is_jazz:
+            e = self._jazz_ensemble()
+            return e["name"] if e else self._cfg["label"]
+        return self._cfg["label"]
+
     # ─────────────────────────────────────────────────────────────── build ────
 
     def _build(self):
@@ -175,12 +269,21 @@ class AgendasView(ttk.Frame):
         bar.pack(fill=X)
         ttk.Label(bar, text=f"📋  {self._cfg['label']} — Daily Agenda",
                   font=("Segoe UI", fs(12), "bold")).pack(side=LEFT, padx=10, pady=8)
+        if self._is_jazz:
+            ttk.Label(bar, text="Band:", font=("Segoe UI", fs(10))).pack(
+                side=LEFT, padx=(4, 2))
+            self._jazz_var = tk.StringVar()
+            self._jazz_combo = ttk.Combobox(bar, textvariable=self._jazz_var,
+                                            state="readonly", width=16, values=[])
+            self._jazz_combo.pack(side=LEFT, pady=6)
+            self._jazz_combo.bind("<<ComboboxSelected>>", self._on_jazz_change)
         self._section_bar = ttk.Frame(bar)      # P1/P2 toggle (populated on render)
         self._section_bar.pack(side=LEFT)
         ttk.Button(bar, text="🖥 Present", bootstyle=SUCCESS,
                    command=self._open_present).pack(side=RIGHT, padx=8, pady=6)
-        ttk.Button(bar, text="🎯 Assessments…", bootstyle=(INFO, OUTLINE),
-                   command=self._open_assessments).pack(side=RIGHT, padx=2, pady=6)
+        if not self._is_jazz:
+            ttk.Button(bar, text="🎯 Assessments…", bootstyle=(INFO, OUTLINE),
+                       command=self._open_assessments).pack(side=RIGHT, padx=2, pady=6)
         ttk.Button(bar, text="↺ Reset Day", bootstyle=(SECONDARY, OUTLINE),
                    command=self._reset_day).pack(side=RIGHT, padx=2, pady=6)
         ttk.Label(bar, text="Screen bg:", font=("Segoe UI", fs(9))).pack(
@@ -240,6 +343,8 @@ class AgendasView(ttk.Frame):
     # ─────────────────────────────────────────────────────────── data / ctx ───
 
     def refresh(self):
+        if self._is_jazz:
+            self._sync_jazz_selection()
         cal = self._calendar()
         if cal and not scal.is_school_day(cal, self._date):
             nd = scal.next_school_day(cal, self._date) or \
@@ -280,7 +385,7 @@ class AgendasView(ttk.Frame):
 
     def _context(self):
         start, end = self._year_bounds()
-        return {"group": self._group,
+        return {"group": self._mode,
                 "year_start": start, "year_end": end,
                 "calendar": self._calendar(),
                 "assessments": self._load_assessments(),   # None => seed default
@@ -332,9 +437,9 @@ class AgendasView(ttk.Frame):
         """The suggested seed list for this group.  Intermediate = her dateless
         set; Advanced = empty (she sets hers up fresh each year); Entry = the
         built-in dated cadence."""
-        if self._group == INTERMEDIATE_GROUP:
+        if self._mode == INTERMEDIATE_GROUP:
             return spine.default_int_assessments()
-        if self._group == ADVANCED_GROUP:
+        if self._mode == ADVANCED_GROUP:
             return []
         return spine.default_assessments(self._calendar(), *self._year_bounds())
 
@@ -523,17 +628,17 @@ class AgendasView(ttk.Frame):
         level = spine.fundamentals_level(self._date, cds)
         # Entry's warm-up level is pinned to the concert cycle; Intermediate's
         # "Broccoli" isn't leveled, so only Entry shows the level chip.
-        parts = [f"Warm Up: Level {level}"] if self._group == ENTRY_GROUP else []
+        parts = [f"Warm Up: Level {level}"] if self._mode == ENTRY_GROUP else []
         # Concert-cycle chip for Entry/Intermediate only.  Advanced has a short
         # cycle with many events (Chinook Night, Veterans Day, winter, festival,
         # June concert), so the cycle index isn't meaningful — just the school day.
-        if self._group in (ENTRY_GROUP, INTERMEDIATE_GROUP):
+        if self._mode in (ENTRY_GROUP, INTERMEDIATE_GROUP):
             concert = spine._concert_for_level(level, concerts)
             if concert and concert.get("title"):
                 cd = concert["date"]
                 rel = "after" if self._date > cd else "rehearsing for"
                 parts.append(f"{rel} {concert['title']} ({cd.strftime('%b %d')})")
-            elif not cds and self._group == ENTRY_GROUP:
+            elif not cds and self._mode == ENTRY_GROUP:
                 parts.append("level set by month — add concerts to anchor the cycle")
         cal = self._calendar()
         if cal:
@@ -573,7 +678,10 @@ class AgendasView(ttk.Frame):
         row.columnconfigure(2, weight=0, minsize=fs(24) * 12)
         self._banner_text(row, "Reminders", "reminders", 0)
         self._banner_text(row, "Announcements", "announcements", 1)
-        self._banner_percussion(row, 2)
+        if self._is_jazz:
+            self._banner_rhythm(row, 2)
+        else:
+            self._banner_percussion(row, 2)
 
     def _banner_text(self, parent, title, key, col):
         wrap = ttk.Frame(parent)
@@ -630,6 +738,106 @@ class AgendasView(ttk.Frame):
             ttk.Label(r, text=station,
                       font=("Segoe UI", fs(9))).pack(side=LEFT)
 
+    def _banner_rhythm(self, parent, col):
+        """Jazz counterpart to the percussion banner: the rhythm-section warm-up
+        rotation for this school day (drum set / piano / bass / … → player)."""
+        from ui.jazz_view import seat_color
+        wrap = ttk.Frame(parent)
+        wrap.grid(row=0, column=col, sticky="nsew")
+        self._hdr_label(wrap, "Rhythm Section", 11).pack(fill=X)
+        body = ttk.Frame(wrap, relief="solid", borderwidth=1, padding=4)
+        body.pack(fill=BOTH, expand=True)
+        e = self._jazz_ensemble()
+        if not e:
+            ttk.Label(body, text="Create a jazz band on the 🎷 Jazz tab (set its "
+                               "players and the parts each can cover); the warm-up "
+                               "rotation shows here.",
+                      wraplength=fs(24) * 11, font=("Segoe UI", fs(8)),
+                      foreground=muted_fg(), justify=LEFT).pack(anchor=W)
+            return
+        asg, bench = self._jazz_rotation()
+        if not asg:
+            ttk.Label(body, text="Add seats & players on the 🎷 Jazz tab.",
+                      font=("Segoe UI", fs(8)), foreground=muted_fg()).pack(anchor=W)
+            return
+        ttk.Label(body, text=f"Warm-up rotation · day {self._jazz_day()}",
+                  font=("Segoe UI", fs(8), "bold"),
+                  foreground=muted_fg()).pack(anchor=W, pady=(0, 2))
+        for seat, who in asg:
+            r = ttk.Frame(body)
+            r.pack(fill=X)
+            _tk(tk.Label, r, text=" ", background=seat_color(seat),
+                relief="solid", bd=1, width=2).pack(side=LEFT)
+            ttk.Label(r, text=seat, font=("Segoe UI", fs(9)),
+                      width=12, anchor=W).pack(side=LEFT, padx=(4, 2))
+            ttk.Label(r, text=who or "—",
+                      font=("Segoe UI", fs(9), "bold")).pack(side=LEFT)
+        if bench:
+            ttk.Label(body, text="Out: " + ", ".join(bench),
+                      font=("Segoe UI", fs(8)), foreground=muted_fg(),
+                      wraplength=fs(24) * 11, justify=LEFT).pack(anchor=W, pady=(2, 0))
+
+    def _jazz_rotation_button(self, parent, section):
+        """Under the jazz Warm Up: drop today's rotating rhythm lineup into the
+        agenda as lines (so it projects and she can tweak)."""
+        bar = ttk.Frame(parent)
+        bar.pack(fill=X, pady=(4, 0))
+        ttk.Button(bar, text="➕ Insert warm-up rotation", bootstyle=(INFO, OUTLINE),
+                   command=lambda: self._insert_rotation(section)).pack(side=LEFT)
+        if self._jazz_ensemble():
+            ttk.Label(bar, text=f"rotation day {self._jazz_day()}",
+                      font=("Segoe UI", fs(8)),
+                      foreground=muted_fg()).pack(side=LEFT, padx=6)
+
+    def _insert_rotation(self, section):
+        asg, _bench = self._jazz_rotation()
+        if not asg:
+            Messagebox.show_info("Add seats and players on the 🎷 Jazz tab first.",
+                                 title="No rotation", parent=self)
+            return
+        for seat, who in asg:
+            if who:
+                section.setdefault("items", []).append(
+                    spine._item(f"{seat}: {who}"))
+        self._save_day()
+        self._render()
+
+    def _jazz_song_picker(self, parent, section):
+        """Under the jazz Sheet Music: pick a song set up on the Jazz tab and drop
+        its LOCKED personnel in (Drum set: Murys, Piano: Emma, …) so she never
+        re-enters an established tune's lineup."""
+        e = self._jazz_ensemble()
+        if not e:
+            return
+        songs = self.db.get_jazz_songs(e["id"])
+        bar = ttk.Frame(parent)
+        bar.pack(fill=X, pady=(4, 0))
+        ttk.Label(bar, text="Insert song lineup:",
+                  font=("Segoe UI", fs(8))).pack(side=LEFT)
+        var = tk.StringVar()
+        combo = ttk.Combobox(bar, textvariable=var, width=24, state="readonly",
+                             values=[s["title"] for s in songs])
+        combo.pack(side=LEFT, padx=(2, 6))
+
+        def add():
+            title = var.get().strip()
+            song = next((s for s in songs if s["title"] == title), None)
+            if not song:
+                return
+            locked = _safe_json(song["locked"], {})
+            section.setdefault("items", []).append(spine._item(title))
+            for seat, who in locked.items():
+                if who:
+                    section["items"].append(spine._item(f"{seat}: {who}"))
+            self._save_day()
+            self._render()
+        ttk.Button(bar, text="➕ Add", bootstyle=(SUCCESS, OUTLINE),
+                   command=add).pack(side=LEFT)
+        if not songs:
+            ttk.Label(bar, text="(add songs on the 🎷 Jazz tab)",
+                      font=("Segoe UI", fs(8)),
+                      foreground=muted_fg()).pack(side=LEFT, padx=4)
+
     # ── a section ──
 
     def _render_section(self, parent, si, section):
@@ -669,8 +877,12 @@ class AgendasView(ttk.Frame):
 
         if kind == "bandbook":
             self._bandbook_picker(body, section)
-        if kind == "warmup" and self._group == ADVANCED_GROUP and spine.tm_keys():
+        if kind == "warmup" and self._mode == ADVANCED_GROUP and spine.tm_keys():
             self._tm_picker(body, section)
+        if self._is_jazz and kind == "warmup":
+            self._jazz_rotation_button(body, section)
+        if self._is_jazz and kind == "sheet":
+            self._jazz_song_picker(body, section)
 
         tools = ttk.Frame(body)
         tools.pack(fill=X, pady=(3, 0))
@@ -976,15 +1188,17 @@ class AgendasView(ttk.Frame):
         that isn't an Advanced one); Advanced requires an explicit "adv" name so
         it never grabs the Intermediate sections."""
         ct = self._cfg["class_type"]
+        if ct is None:                          # jazz has no percussion sections
+            return []
         groups = [g for g in self.db.get_percussion_groups(self._year())
                   if g["class_type"] == ct]
-        if self._group == ENTRY_GROUP:
+        if self._mode == ENTRY_GROUP:
             return groups
         kw = self._cfg["ensemble"]
         named = [g for g in groups if kw in (g["name"] or "").lower()]
         if named:
             return named
-        if self._group == INTERMEDIATE_GROUP:
+        if self._mode == INTERMEDIATE_GROUP:
             return [g for g in groups if "adv" not in (g["name"] or "").lower()]
         return named            # Advanced: only explicitly "adv"-named sections
 
@@ -1002,7 +1216,7 @@ class AgendasView(ttk.Frame):
         if not groups:
             return None
         want = self.db.get_program_setting(self._section_setting_key())
-        if not want and self._group == ENTRY_GROUP:
+        if not want and self._mode == ENTRY_GROUP:
             want = self.db.get_program_setting("agenda_entry_perc")  # legacy
         for g in groups:
             if str(g["id"]) == str(want):
@@ -1011,7 +1225,7 @@ class AgendasView(ttk.Frame):
 
     def _apply_section(self, group_id):
         self.db.set_program_setting(self._section_setting_key(), str(group_id))
-        if self._group == ENTRY_GROUP:
+        if self._mode == ENTRY_GROUP:
             self.db.set_program_setting("agenda_entry_perc", str(group_id))  # legacy
 
     def _set_section(self, group_id):
@@ -1365,7 +1579,7 @@ class _PresentWindow(ttk.Toplevel):
         self._stage.configure(bg=bg)
         self._body.configure(bg=bg)
         self._banner_host.configure(bg=bg)
-        self._title.config(text=self.view._cfg["label"] + "  ·  " +
+        self._title.config(text=self.view._display_label() + "  ·  " +
                            self.view._date.strftime("%A, %b %d"))
         for w in self._banner_host.winfo_children():
             w.destroy()
@@ -1408,6 +1622,9 @@ class _PresentWindow(ttk.Toplevel):
         self.rebuild()
 
     def _build_perc_panel(self, bg):
+        if self.view._is_jazz:
+            self._build_rhythm_panel(bg)
+            return
         group = self.view._linked_perc_group()
         asg, dnum, cyc = ([], 0, 0)
         if group:
@@ -1451,6 +1668,47 @@ class _PresentWindow(ttk.Toplevel):
             _tk(tk.Label, r, text=name, bg=bg, fg=_auto_fg(bg), width=10,
                 anchor="w", font=("Segoe UI", fs(12), "bold")).pack(side=LEFT, padx=6)
             _tk(tk.Label, r, text=station, bg=bg, fg=_auto_fg(bg),
+                font=("Segoe UI", fs(12))).pack(side=LEFT)
+        panel.place(relx=1.0, y=8, anchor="ne", x=-10)
+        self._perc_widget = panel
+
+    def _build_rhythm_panel(self, bg):
+        """Present-mode floating panel for the jazz rhythm-section rotation."""
+        from ui.jazz_view import seat_color
+        asg, bench = self.view._jazz_rotation()
+        if not asg:
+            return
+        dnum = self.view._jazz_day()
+        if self._perc_collapsed:
+            btn = _tk(tk.Button, self._stage, text="🎷 Rhythm  ▾",
+                      bg=HDR_BG, fg=HDR_FG, activebackground=HDR_BG,
+                      activeforeground=HDR_FG, bd=0, cursor="hand2",
+                      relief="flat", padx=10, pady=4,
+                      font=("Segoe UI", fs(12), "bold"), command=self._toggle_perc)
+            btn.place(relx=1.0, y=8, anchor="ne", x=-10)
+            self._perc_widget = btn
+            return
+        panel = _tk(tk.Frame, self._stage, bg=bg,
+                    highlightbackground="#8aa0b8", highlightthickness=2)
+        head = _tk(tk.Frame, panel, bg=HDR_BG)
+        head.pack(fill=X)
+        _tk(tk.Label, head, text=f"🎷 Rhythm — warm-up day {dnum}",
+            bg=HDR_BG, fg=HDR_FG, anchor="w", padx=8, pady=3,
+            font=("Segoe UI", fs(13), "bold")).pack(side=LEFT, fill=X, expand=True)
+        _tk(tk.Button, head, text="▸ hide", bg=HDR_BG, fg=HDR_FG,
+            activebackground=HDR_BG, activeforeground=HDR_FG, bd=0, cursor="hand2",
+            relief="flat", padx=6, font=("Segoe UI", fs(10), "bold"),
+            command=self._toggle_perc).pack(side=RIGHT, padx=2)
+        table = _tk(tk.Frame, panel, bg=bg)
+        table.pack(fill=BOTH, padx=8, pady=(4, 6))
+        for seat, who in asg:
+            r = _tk(tk.Frame, table, bg=bg)
+            r.pack(fill=X, pady=1)
+            _tk(tk.Label, r, text="  ", background=seat_color(seat),
+                relief="solid", bd=1).pack(side=LEFT)
+            _tk(tk.Label, r, text=seat, bg=bg, fg=_auto_fg(bg), width=12,
+                anchor="w", font=("Segoe UI", fs(12), "bold")).pack(side=LEFT, padx=6)
+            _tk(tk.Label, r, text=who or "—", bg=bg, fg=_auto_fg(bg),
                 font=("Segoe UI", fs(12))).pack(side=LEFT)
         panel.place(relx=1.0, y=8, anchor="ne", x=-10)
         self._perc_widget = panel
@@ -1684,3 +1942,12 @@ def _parse_date(s):
         return date.fromisoformat(str(s)[:10])
     except Exception:
         return None
+
+
+def _safe_json(raw, default):
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except Exception:
+        return default
