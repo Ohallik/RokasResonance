@@ -50,6 +50,14 @@ class FieldTripsView(ttk.Frame):
         ttk.Button(hdr, text="📋 Copy From Previous…",
                    bootstyle=(SECONDARY, OUTLINE),
                    command=self._copy_from_previous).pack(side=RIGHT)
+        ttk.Button(hdr, text="📊 Export Roster (Excel)…",
+                   bootstyle=(INFO, OUTLINE),
+                   command=self._export_roster).pack(side=RIGHT, padx=(0, 4))
+
+    def _export_roster(self):
+        from ui.roster_export_view import open_roster_export
+        open_roster_export(self, self.main_db, self.base_dir, self._student_year(),
+                           context="For a field trip: choose the class(es) going.")
 
         # ── Upcoming trips: scrollable cards, Word-doc style ──
         up_frame = tk.LabelFrame(self, text=" Upcoming Field Trips ",

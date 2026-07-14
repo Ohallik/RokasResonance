@@ -59,6 +59,15 @@ class ConcertsView(ttk.Frame):
                   font=("Segoe UI", fs(8)), foreground=subtle_fg()).pack(anchor=W)
         ttk.Button(hdr, text="➕ New Concert", bootstyle=SUCCESS,
                    command=self._new_concert).pack(side=RIGHT)
+        ttk.Button(hdr, text="📊 Export Roster (Excel)…",
+                   bootstyle=(INFO, OUTLINE),
+                   command=self._export_roster).pack(side=RIGHT, padx=(0, 4))
+
+    def _export_roster(self):
+        from ui.roster_export_view import open_roster_export
+        open_roster_export(self, self.main_db, self.base_dir, self._student_year(),
+                           context="For an in-school performance: choose the "
+                                   "class(es) performing.")
 
         # ── Upcoming concerts: scrollable cards, checklist on each ──
         up_frame = tk.LabelFrame(self, text=" Upcoming Concerts ",

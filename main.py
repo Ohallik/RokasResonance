@@ -126,7 +126,7 @@ sys.path.insert(0, APP_DIR)
 from database import Database
 from ui.main_menu import MainMenu
 
-VERSION = "v0.12.1"
+VERSION = "v0.12.2"
 
 # User data lives in AppData so app-folder updates never touch it
 _LOCALAPPDATA = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
@@ -543,11 +543,25 @@ def _load_profile(app, profile_name: str):
 
 
 def _needs_onboarding(data_dir: str) -> bool:
-    """True if this profile has never been set up.  The onboarding wizard writes
-    settings.json on Finish or Skip, so its presence means setup already ran.
-    Existing/legacy profiles already have one and are never re-prompted; a
-    brand-new profile (any profile, not just the very first) has none yet."""
-    return not os.path.exists(os.path.join(data_dir, "settings.json"))
+    """True if this profile still needs the one-time setup wizard.
+
+    Runs when there's no settings.json at all (a brand-new profile), AND also
+    when a profile has settings but never chose a teaching FOCUS
+    (teacher.program_type).  The latter catches early testers whose profiles
+    pre-date the setup wizard: without a focus, every class picker falls back to
+    the band default, so an orchestra/choir teacher would wrongly see band
+    classes.  Prompting them once (they can Skip) fixes it with no manual
+    intervention.  Properly set-up profiles always have program_type, so they're
+    never re-prompted."""
+    settings_path = os.path.join(data_dir, "settings.json")
+    if not os.path.exists(settings_path):
+        return True
+    try:
+        from ui.settings_dialog import load_settings
+        teacher = (load_settings(data_dir).get("teacher") or {})
+        return not str(teacher.get("program_type") or "").strip()
+    except Exception:
+        return False
 
 
 def _maybe_onboard(app, menu, profile_name):

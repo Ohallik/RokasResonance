@@ -59,6 +59,9 @@ hiddenimports = [
     "sharing",
     "shared_sync",
     "ui.sharing_view",
+    # Roster-to-Excel export (lazy-imported from field trips / concerts).
+    "roster_export",
+    "ui.roster_export_view",
 ]
 hiddenimports += collect_submodules("ttkbootstrap")
 hiddenimports += collect_submodules("openpyxl")

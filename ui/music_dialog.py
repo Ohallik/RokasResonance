@@ -18,8 +18,10 @@ GENRE_OPTIONS = [
 ]
 
 ENSEMBLE_OPTIONS = [
+    "Band/Choir/Orchestra",   # combined piece all three programs can perform together
     "Concert Band", "Symphonic Band", "Wind Ensemble", "Jazz Band", "Vocal Jazz",
-    "Symphony Orchestra", "String Orchestra", "Chamber Orchestra", "Full Orchestra",
+    "Choir", "Symphony Orchestra", "String Orchestra", "Chamber Orchestra",
+    "Full Orchestra",
     "Percussion Ensemble", "Small Ensemble", "Solo", "Marching Band", "Other",
 ]
 

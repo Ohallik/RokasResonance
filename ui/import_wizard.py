@@ -159,29 +159,91 @@ class ImportWizard(ttk.Toplevel):
         default_cls = preset or (self._classes[0]["label"] if self._classes else "")
         cls = tk.StringVar(value=default_cls)
         per = tk.StringVar(value="1")
-        ent = ttk.Entry(row, textvariable=path, width=30)
+        rec = {"path": path, "cls": cls, "per": per, "row": row,
+               "sections": [], "section_map": None}
+        ent = ttk.Entry(row, textvariable=path, width=26)
         ent.pack(side=LEFT)
 
         def browse():
             p = filedialog.askopenfilename(parent=self,
                                            filetypes=[("CSV", "*.csv"),
                                                       ("All files", "*.*")])
-            if p:
-                path.set(p)
+            if not p:
+                return
+            path.set(p)
+            # A single Synergy export can contain more than one class (co-directors
+            # get each other's rosters).  Detect that and, if so, ask which of the
+            # teacher's classes each section maps to.
+            try:
+                import synergy_import
+                rec["sections"] = synergy_import.summarize_sections(p)
+            except Exception:
+                rec["sections"] = []
+            if len(rec["sections"]) > 1:
+                self._map_sections(rec)
+            else:
+                rec["section_map"] = None
+                rec["status"].config(text="")
+                rec["cls_cb"].config(state="readonly")
         ttk.Button(row, text="…", width=3, bootstyle=(SECONDARY, OUTLINE),
                    command=browse).pack(side=LEFT, padx=(2, 6))
-        ttk.Combobox(row, textvariable=cls, state="readonly", width=20,
-                     values=[c["label"] for c in self._classes]).pack(side=LEFT)
+        rec["cls_cb"] = ttk.Combobox(row, textvariable=cls, state="readonly",
+                                     width=18, values=[c["label"] for c in self._classes])
+        rec["cls_cb"].pack(side=LEFT)
         ttk.Combobox(row, textvariable=per, state="readonly", width=5,
                      values=["(all)"] + PERIOD_OPTIONS).pack(side=LEFT, padx=(6, 0))
-        rec = {"path": path, "cls": cls, "per": per, "row": row}
+        rec["status"] = ttk.Label(row, text="", font=("Segoe UI", fs(8)),
+                                  foreground=muted_fg())
+        rec["status"].pack(side=LEFT, padx=(6, 0))
 
         def remove():
             row.destroy()
             self._rosters.remove(rec)
         ttk.Button(row, text="✕", width=2, bootstyle=(DANGER, OUTLINE, LINK),
-                   command=remove).pack(side=LEFT, padx=(6, 0))
+                   command=remove).pack(side=RIGHT, padx=(6, 0))
         self._rosters.append(rec)
+
+    def _map_sections(self, rec):
+        """Ask which of the teacher's classes each section in a multi-class file
+        maps to (or skip).  Stores the map on the roster row."""
+        secs = rec["sections"]
+        dlg = ttk.Toplevel(self)
+        dlg.title("Map class sections")
+        dlg.grab_set()
+        dlg.lift()
+        ttk.Label(dlg, text="This file has more than one class in it. Choose which "
+                            "of your classes each section is — or skip one you "
+                            "don't want to import.",
+                  font=("Segoe UI", fs(9)), wraplength=470, justify=LEFT).pack(
+            anchor=W, padx=12, pady=(12, 8))
+        body = ttk.Frame(dlg)
+        body.pack(fill=X, padx=12)
+        opts = ["— skip —"] + [c["label"] for c in self._classes]
+        pickers = {}
+        for s in secs:
+            r = ttk.Frame(body)
+            r.pack(fill=X, pady=3)
+            who = s["teacher"] or s["section"]
+            ttk.Label(r, text=f"{who}  ({s['count']} students)",
+                      width=34).pack(side=LEFT)
+            v = tk.StringVar(value="— skip —")
+            ttk.Combobox(r, textvariable=v, state="readonly", width=24,
+                         values=opts).pack(side=LEFT)
+            pickers[s["section"]] = v
+        bar = ttk.Frame(dlg)
+        bar.pack(fill=X, padx=12, pady=12)
+
+        def ok():
+            rec["section_map"] = {sec: ("" if v.get() == "— skip —" else v.get())
+                                  for sec, v in pickers.items()}
+            n = sum(1 for x in rec["section_map"].values() if x)
+            rec["status"].config(text=f"→ {n} class(es)")
+            rec["cls_cb"].config(state="disabled")
+            dlg.destroy()
+        ttk.Button(bar, text="OK", bootstyle=SUCCESS, command=ok).pack(side=RIGHT)
+        ttk.Button(bar, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=dlg.destroy).pack(side=RIGHT, padx=(0, 6))
+        fit_window(dlg, 540, 150 + 34 * len(secs))
 
     # ── Results ──
     def _build_results(self, parent):
@@ -247,11 +309,20 @@ class ImportWizard(ttk.Toplevel):
                     continue
                 per = r["per"].get()
                 per = "" if per == "(all)" else per
-                res = isvc.import_students(self.db, p, r["cls"].get(), per,
-                                           self.school_year)
-                lines.append(f"{r['cls'].get()} (P{per or 'all'}): "
-                             f"{res['added']} added, {res['updated']} merged "
-                             f"(of {res['total']})")
+                if r.get("section_map"):
+                    res = isvc.import_students_sectioned(
+                        self.db, p, r["section_map"], per, self.school_year)
+                    by = ", ".join(f"{k}: {v}" for k, v in
+                                   (res.get("per_class") or {}).items()) or "none"
+                    lines.append(f"{os.path.basename(p)}: {res['added']} added, "
+                                 f"{res['updated']} merged, {res['skipped']} skipped "
+                                 f"→ {by}")
+                else:
+                    res = isvc.import_students(self.db, p, r["cls"].get(), per,
+                                               self.school_year)
+                    lines.append(f"{r['cls'].get()} (P{per or 'all'}): "
+                                 f"{res['added']} added, {res['updated']} merged "
+                                 f"(of {res['total']})")
         except Exception as e:
             self._log("Import error:\n" + str(e))
             self._status.config(text="Error")

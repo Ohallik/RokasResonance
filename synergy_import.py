@@ -76,16 +76,54 @@ def _split_city_state_zip(csz):
     return city, state, zc
 
 
+def _read_rows(source):
+    """Read a Synergy export (file path OR raw CSV text) into a list of rows."""
+    if os.path.exists(str(source)):
+        with open(source, encoding="utf-8-sig", newline="") as fh:
+            return list(csv.reader(fh))
+    return list(csv.reader(io.StringIO(source)))
+
+
+def summarize_sections(source):
+    """List the distinct class SECTIONS in a Synergy export, each with its
+    teacher name and distinct-student count.  A single export can contain more
+    than one class (co-directors are given each other's rosters), so the import
+    wizard uses this to let the teacher map each section to one of their classes.
+    Returns ``[{"section", "teacher", "count"}]`` in first-seen order."""
+    rows = _read_rows(source)
+    if not rows:
+        return []
+    headers = rows[0]
+    si = _header_index(headers, "Section")
+    ti = _header_index(headers, "Teacher")
+    sidi = _header_index(headers, "Student ID")
+
+    def val(row, i):
+        return row[i].strip() if (i is not None and i < len(row)) else ""
+
+    order, seen = [], {}
+    for row in rows[1:]:
+        sec = val(row, si)
+        if not sec:
+            continue
+        if sec not in seen:
+            seen[sec] = {"teacher": val(row, ti), "students": set()}
+            order.append(sec)
+        sid = val(row, sidi) or val(row, _header_index(headers, "Student Name"))
+        if sid:
+            seen[sec]["students"].add(sid)
+    return [{"section": s, "teacher": seen[s]["teacher"],
+             "count": len(seen[s]["students"])} for s in order]
+
+
 def parse_synergy_students(source):
     """Parse a Synergy export (a file path OR the raw CSV text) into a list of
     student dicts — one per student, in first-seen order — with keys matching the
     ``students`` table (minus school_year / ensembles / class_periods, which the
-    importer assigns per class)."""
-    if os.path.exists(str(source)):
-        with open(source, encoding="utf-8-sig", newline="") as fh:
-            rows = list(csv.reader(fh))
-    else:
-        rows = list(csv.reader(io.StringIO(source)))
+    importer assigns per class).  Each dict also carries ``sections`` (the list of
+    class sections the student appears in) and ``teacher`` for section-aware
+    routing; ``add_student`` ignores these extra keys."""
+    rows = _read_rows(source)
     if not rows:
         return []
     headers = rows[0]
@@ -106,6 +144,7 @@ def parse_synergy_students(source):
         "lang": _header_index(headers, "Communication Home Language",
                               "Home Language"),
         "section": _header_index(headers, "Section"),
+        "teacher": _header_index(headers, "Teacher"),
     }
 
     def cell(row, key):
@@ -134,10 +173,14 @@ def parse_synergy_students(source):
                 "address": cell(row, "addr"),
                 "city": city, "state": state, "zip_code": zc,
                 "_lang": cell(row, "lang"),
-                "_section": cell(row, "section"),
+                "_sections": [],
+                "_teacher": cell(row, "teacher"),
                 "_parents": {},
             }
             order.append(key)
+        sec = cell(row, "section")
+        if sec and sec not in students[key]["_sections"]:
+            students[key]["_sections"].append(sec)
         pname = cell(row, "pname")
         if pname:
             try:
@@ -157,6 +200,10 @@ def parse_synergy_students(source):
         s = students[key]
         parents = [s["_parents"][k] for k in sorted(s["_parents"])]
         rec = {k: v for k, v in s.items() if not k.startswith("_")}
+        # Section-aware routing info (ignored by add_student's fixed column list).
+        rec["sections"] = list(s["_sections"])
+        rec["section"] = s["_sections"][0] if s["_sections"] else ""
+        rec["teacher"] = s["_teacher"]
         if parents:
             p = parents[0]
             rec.update(parent1_name=p["name"], parent1_relation=p["relation"],

@@ -82,6 +82,57 @@ def import_students(db, csv_source, ensemble_label, period, school_year):
     return {"added": added, "updated": updated, "total": len(studs)}
 
 
+def import_students_sectioned(db, csv_source, section_to_class, period, school_year):
+    """Import a Synergy CSV that contains MORE THAN ONE class section, routing
+    each student to the class mapped from their Section.
+
+    ``section_to_class`` maps a section code -> class label; a section mapped to
+    a blank/None label is skipped (e.g. the co-director's section you don't want
+    to pull in).  A student appearing in several mapped sections is tagged with
+    all of them.  Dedups across the run by district Student ID, merging the
+    ensembles/periods onto the existing record rather than duplicating."""
+    studs = synergy_import.parse_synergy_students(csv_source)
+    existing = {s["student_id"]: s for s in db.get_all_students(school_year)
+                if s["student_id"]}
+    per = str(period) if period else None
+    added = updated = skipped = 0
+    per_class = {}
+    for s in studs:
+        labels = []
+        for sec in (s.get("sections") or ([s.get("section")] if s.get("section") else [])):
+            lab = (section_to_class.get(sec) or "").strip()
+            if lab and lab not in labels:
+                labels.append(lab)
+        if not labels:
+            skipped += 1
+            continue
+        prior = existing.get(s.get("student_id"))
+        if prior:
+            merged = dict(prior)
+            ens = prior.get("ensembles")
+            for lab in labels:
+                ens = _merge_csv(ens, lab)
+            merged["ensembles"] = ens
+            merged["class_periods"] = _merge_csv(prior.get("class_periods"), per or "")
+            db.update_student(prior["id"], merged)
+            merged["id"] = prior["id"]
+            existing[s["student_id"]] = merged
+            updated += 1
+        else:
+            rec = dict(s)
+            rec["school_year"] = school_year
+            rec["ensembles"] = ", ".join(labels)
+            rec["class_periods"] = per
+            new_id = db.add_student(rec)
+            rec["id"] = new_id
+            existing[s["student_id"]] = rec
+            added += 1
+        for lab in labels:
+            per_class[lab] = per_class.get(lab, 0) + 1
+    return {"added": added, "updated": updated, "skipped": skipped,
+            "total": len(studs), "per_class": per_class}
+
+
 def _merge_csv(existing, new):
     have = [x.strip() for x in (existing or "").split(",") if x.strip()]
     if new and new not in have:
