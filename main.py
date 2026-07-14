@@ -126,7 +126,7 @@ sys.path.insert(0, APP_DIR)
 from database import Database
 from ui.main_menu import MainMenu
 
-VERSION = "v0.12.0"
+VERSION = "v0.12.1"
 
 # User data lives in AppData so app-folder updates never touch it
 _LOCALAPPDATA = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
@@ -474,6 +474,15 @@ def _load_profile(app, profile_name: str):
 
     db = Database(db_path)
     _run_backups(db, data_dir, profile_name)
+
+    # Point the shared class vocabulary at THIS profile's configured classes so
+    # every picker (students, seating, field trips, budget, concerts …) offers
+    # the classes the teacher set up, not the built-in Chinook defaults.
+    try:
+        from ui.ensembles import set_current_profile
+        set_current_profile(data_dir)
+    except Exception:
+        pass
 
     # Co-director shared inventory (opt-in; off for almost everyone).  Bind and
     # pull the cloud copy into the local mirror before anything reads it.  Done

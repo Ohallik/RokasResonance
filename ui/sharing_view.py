@@ -171,7 +171,9 @@ class SharingPanel(ttk.Frame):
                                 font=("Consolas", 8))
         self._gen_out.pack(fill=X)
         self._gen_out.insert("1.0", "(your code appears here)")
-        self._gen_out.config(state="disabled")
+        # Read-only but still SELECTABLE, so the code can be highlighted and
+        # copied with the mouse / Ctrl+C (a fully-disabled Text can't be copied).
+        self._gen_out.bind("<Key>", self._readonly_guard)
         grow = ttk.Frame(gbox)
         grow.pack(fill=X, pady=(4, 0))
         ttk.Button(grow, text="Copy code", bootstyle=(SECONDARY, OUTLINE),
@@ -181,6 +183,17 @@ class SharingPanel(ttk.Frame):
                    command=self._use_generated).pack(side=LEFT, padx=(8, 0))
 
     # ── generate-code handlers ──
+    @staticmethod
+    def _readonly_guard(event):
+        """Block edits to the code box but allow selection, copy, and select-all."""
+        if (event.state & 0x4) and event.keysym.lower() in ("c", "a"):
+            return  # Ctrl+C / Ctrl+A
+        if event.keysym in ("Left", "Right", "Up", "Down", "Home", "End",
+                            "Prior", "Next", "Shift_L", "Shift_R",
+                            "Control_L", "Control_R"):
+            return
+        return "break"
+
     def _generate(self):
         from sharing import make_connection_code
         try:
@@ -189,16 +202,15 @@ class SharingPanel(ttk.Frame):
         except ValueError as e:
             Messagebox.show_warning(str(e), title="Can't make a code", parent=self)
             return
-        self._gen_out.config(state="normal")
         self._gen_out.delete("1.0", "end")
         self._gen_out.insert("1.0", code)
-        self._gen_out.config(state="disabled")
 
     def _copy_code(self):
         code = self._gen_out.get("1.0", "end").strip()
         if code and not code.startswith("("):
             self.clipboard_clear()
             self.clipboard_append(code)
+            self.update()          # flush so the clipboard survives after focus loss
             Messagebox.show_info("Code copied to the clipboard.", title="Copied",
                                  parent=self)
 

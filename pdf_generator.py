@@ -19,7 +19,9 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 
 # Fallback defaults, used only when the profile's Settings leave these blank.
-SCHOOL_NAME   = "Chinook Middle School"
+# School is intentionally blank (never hard-code one school's name onto every
+# teacher's forms); district stays BSD since all users are in the district.
+SCHOOL_NAME   = ""
 DISTRICT_NAME = "Bellevue School District"
 MAINT_YEAR    = "$75"
 MAINT_SUMMER  = "$20"
@@ -527,6 +529,32 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     return output_path
 
 
+def _find_student_by_name(conn, name):
+    """Find a student whose name matches `name` in any common format
+    (First Last / Last First / Last, First), case- and spacing-insensitive.
+    Returns the student row (contact + guardian columns) or None.  Lets a
+    CutTime-imported checkout pull guardian info without the checkout being
+    linked to a student id."""
+    raw = (name or "").strip()
+    if not raw:
+        return None
+
+    def norm(s):
+        return " ".join(str(s or "").replace(",", " ").split()).lower()
+
+    target = norm(raw)
+    rows = conn.execute(
+        "SELECT grade, address, city, state, zip_code, phone, "
+        "parent1_name, parent2_name, first_name, last_name "
+        "FROM students WHERE COALESCE(is_active, 1) = 1"
+    ).fetchall()
+    for r in rows:
+        fn, ln = str(r["first_name"] or ""), str(r["last_name"] or "")
+        if target and target in (norm(f"{fn} {ln}"), norm(f"{ln} {fn}")):
+            return r
+    return None
+
+
 def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
     """
     Look up checkout + instrument data and generate the PDF.
@@ -543,6 +571,20 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
         ).fetchone()
         if not checkout:
             raise ValueError(f"Checkout {checkout_id} not found")
+
+        checkout = dict(checkout)
+        # A checkout imported from CutTime carries the student's NAME but isn't
+        # linked to a Roka student record (no student_id), so the join above
+        # returns blank contact/guardian info.  Look the student up by name and
+        # fill it in automatically — no prompting.
+        if not any(checkout.get(k) for k in
+                   ("grade", "address", "phone", "parent1_name")):
+            match = _find_student_by_name(conn, checkout.get("student_name"))
+            if match:
+                for k in ("grade", "address", "city", "state", "zip_code",
+                          "phone", "parent1_name", "parent2_name"):
+                    if not checkout.get(k):
+                        checkout[k] = match[k]
 
         instrument = None
         if checkout["instrument_id"]:

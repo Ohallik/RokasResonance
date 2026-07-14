@@ -79,7 +79,7 @@ class SettingsDialog(ttk.Toplevel):
         self._load()
 
         from ui.theme import fit_window
-        fit_window(self, 500, 400)
+        fit_window(self, 520, 640)
 
     # ───────────────────────────────────────────────────── Build UI ────────
 
@@ -89,6 +89,21 @@ class SettingsDialog(ttk.Toplevel):
         hdr.pack(fill=X)
         ttk.Label(hdr, text="  Settings", font=("Segoe UI", 13, "bold"),
                   bootstyle=(INVERSE, SECONDARY)).pack(pady=12, padx=16, anchor=W)
+
+        # Bottom button bar — packed BEFORE the notebook and pinned to the bottom
+        # so Save/Cancel are ALWAYS visible.  Previously it was packed after the
+        # expanding notebook, so on smaller screens / larger font scaling the
+        # notebook pushed it off-screen: the teacher never saw Save, so nothing
+        # they entered ever persisted (observed on a co-director's laptop).
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(side=BOTTOM, fill=X, padx=16, pady=12)
+        ttk.Button(btn_frame, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn_frame, text="Save", bootstyle=SUCCESS,
+                   command=self._save).pack(side=RIGHT, padx=4)
+        self._test_btn = ttk.Button(btn_frame, text="Test Connection",
+                                    bootstyle=(INFO, OUTLINE),
+                                    command=self._test_connection)
 
         # Notebook — Teacher tab first
         nb = ttk.Notebook(self, bootstyle=SECONDARY)
@@ -109,22 +124,15 @@ class SettingsDialog(ttk.Toplevel):
         sharing_tab = ttk.Frame(nb)
         nb.add(sharing_tab, text="  Sharing  ")
 
-        self._build_teacher_tab(teacher_tab)
-        self._build_display_tab(display_tab)
-        self._build_llm_tab(llm_tab)
-        self._build_backup_tab(backup_tab)
-        self._build_sharing_tab(sharing_tab)
+        # Each tab's content lives in a scrollable frame, so even on a small
+        # screen or with large font scaling every field (and the pinned Save bar
+        # below) stays reachable — controls can never be clipped off-screen.
+        self._build_teacher_tab(self._make_scrollable(teacher_tab))
+        self._build_display_tab(self._make_scrollable(display_tab))
+        self._build_llm_tab(self._make_scrollable(llm_tab))
+        self._build_backup_tab(self._make_scrollable(backup_tab))
+        self._build_sharing_tab(self._make_scrollable(sharing_tab))
 
-        # Bottom buttons
-        btn_frame = ttk.Frame(self)
-        btn_frame.pack(fill=X, padx=16, pady=12)
-        ttk.Button(btn_frame, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
-                   command=self.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(btn_frame, text="Save", bootstyle=SUCCESS,
-                   command=self._save).pack(side=RIGHT, padx=4)
-        self._test_btn = ttk.Button(btn_frame, text="Test Connection",
-                                    bootstyle=(INFO, OUTLINE),
-                                    command=self._test_connection)
         # Show/hide Test Connection based on active tab (LLM is now index 2)
         def _on_tab_change(event):
             idx = nb.index(nb.select())
@@ -135,6 +143,24 @@ class SettingsDialog(ttk.Toplevel):
         nb.bind("<<NotebookTabChanged>>", _on_tab_change)
         self._nb = nb
         # Teacher tab is first — button starts hidden
+
+    def _make_scrollable(self, tab):
+        """Wrap a tab in a vertical-scrolling canvas and return the inner frame to
+        build into.  Guarantees content is reachable at any window size."""
+        cv = tk.Canvas(tab, highlightthickness=0)
+        sb = ttk.Scrollbar(tab, orient=VERTICAL, command=cv.yview)
+        cv.configure(yscrollcommand=sb.set)
+        sb.pack(side=RIGHT, fill=Y)
+        cv.pack(side=LEFT, fill=BOTH, expand=True)
+        inner = ttk.Frame(cv)
+        win = cv.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>",
+                   lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cv.bind("<Configure>", lambda e: cv.itemconfig(win, width=e.width))
+        cv.bind("<Enter>", lambda e: cv.bind_all(
+            "<MouseWheel>", lambda ev: cv.yview_scroll(int(-ev.delta / 120), "units")))
+        cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
+        return inner
 
     def _build_teacher_tab(self, parent):
         outer = ttk.Frame(parent)

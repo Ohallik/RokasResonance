@@ -8,9 +8,37 @@ concert-program importer so they all offer the same choices.
 Middle-school level for now; high-school users will get a different set later.
 """
 
+# Fallback defaults, used only before a profile is loaded (or if a profile has
+# no configured classes).  The REAL class list a teacher works with comes from
+# their setup wizard via class_registry — see ensembles_for() below.
 BAND_ENSEMBLES      = ["Entry Band", "Intermediate Band", "Advanced Band", "Jazz 1", "Jazz 2"]
 ORCHESTRA_ENSEMBLES = ["Entry Orchestra", "Intermediate Orchestra", "Advanced Orchestra"]
 CHOIR_ENSEMBLES     = ["Entry Choir", "Intermediate Choir", "Advanced Choir"]
+
+# The active profile's base_dir, set once when a profile loads (main.py).  Lets
+# ensembles_for() return the teacher's own configured classes everywhere without
+# threading base_dir through every dialog.  Single active profile, so a module
+# global is safe.
+_current_base_dir = None
+
+
+def set_current_profile(base_dir):
+    """Point the shared class vocabulary at the loaded profile's classes."""
+    global _current_base_dir
+    _current_base_dir = base_dir
+
+
+def _configured_labels(program_type, base_dir):
+    """The teacher's own class labels from their setup, or None if unavailable."""
+    if not base_dir:
+        return None
+    try:
+        import class_registry
+        labels = [c["label"] for c in class_registry.load_classes(base_dir, program_type)
+                  if c.get("label")]
+        return labels or None
+    except Exception:
+        return None
 
 PERIOD_OPTIONS = ["1", "2", "3", "4", "5", "6", "7"]
 
@@ -38,8 +66,13 @@ JAZZ_INSTRUMENTS = BAND_INSTRUMENTS + [
 ]
 
 
-def ensembles_for(program_type: str):
-    """The performing ensembles / classes for this program type."""
+def ensembles_for(program_type: str, base_dir=None):
+    """The performing ensembles / classes for this program type.  Returns the
+    teacher's OWN configured classes (from the setup wizard) whenever a profile
+    is loaded; falls back to the built-in defaults only before that."""
+    labels = _configured_labels(program_type, base_dir or _current_base_dir)
+    if labels:
+        return labels
     if program_type == "choir":
         return CHOIR_ENSEMBLES
     if program_type == "orchestra":
@@ -47,10 +80,20 @@ def ensembles_for(program_type: str):
     return BAND_ENSEMBLES
 
 
-def progression_levels(program_type: str):
-    """The ordered leveled classes a student moves UP through (Entry →
-    Intermediate → Advanced).  Jazz / non-leveled ensembles are excluded — they
-    aren't a single-grade progression."""
+def progression_levels(program_type: str, base_dir=None):
+    """The ordered leveled classes a student moves UP through.  Uses the
+    teacher's configured classes (excluding jazz, which isn't a single-grade
+    progression) when available, else the built-in leveled defaults."""
+    bd = base_dir or _current_base_dir
+    if bd:
+        try:
+            import class_registry
+            levels = [c["label"] for c in class_registry.load_classes(bd, program_type)
+                      if c.get("label") and c.get("template") != "jazz"]
+            if levels:
+                return levels
+        except Exception:
+            pass
     if program_type == "choir":
         return list(CHOIR_ENSEMBLES)
     if program_type == "orchestra":
