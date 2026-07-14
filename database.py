@@ -570,11 +570,15 @@ class Database:
             # Band", Jr. All-State) shown next to names on concert programs.
             # jazz_instrument: what they play in jazz band when it differs
             # from their concert instrument (e.g. Horn player on Guitar).
+            # provisional: an "incoming" student pre-loaded from a feeder
+            # school's handoff (with instruments) before the official roster
+            # exists.  Shown grayed/tagged; contactable; confirmed or removed
+            # when the official class list is imported.
             for col in ("ensembles TEXT", "class_periods TEXT",
                         "primary_instrument TEXT", "secondary_instrument TEXT",
                         "preferred_name TEXT",
                         "honors INTEGER DEFAULT 0", "all_state INTEGER DEFAULT 0",
-                        "jazz_instrument TEXT"):
+                        "jazz_instrument TEXT", "provisional INTEGER DEFAULT 0"):
                 try:
                     conn.execute(f"ALTER TABLE students ADD COLUMN {col}")
                     conn.commit()
@@ -981,6 +985,34 @@ class Database:
                 (first_name.lower(), last_name.lower())
             ).fetchone()
 
+    # ─── Provisional / "incoming" students ──────────────────────────────────────
+
+    def get_provisional_students(self, school_year=None):
+        """Active students still flagged provisional (pre-loaded from a feeder
+        handoff, not yet confirmed by an official roster import)."""
+        sql = ("SELECT * FROM students WHERE COALESCE(provisional,0)=1 "
+               "AND COALESCE(is_active,1)=1")
+        args = ()
+        if school_year:
+            sql += " AND school_year=?"
+            args = (school_year,)
+        sql += " ORDER BY last_name, first_name"
+        with self._connect() as conn:
+            return conn.execute(sql, args).fetchall()
+
+    def clear_provisional(self, ids):
+        """Confirm students (drop the provisional flag) once they appear on the
+        official roster."""
+        with self._connect() as conn:
+            for i in ids:
+                conn.execute("UPDATE students SET provisional=0 WHERE id=?", (i,))
+
+    def set_students_active(self, ids, active=1):
+        with self._connect() as conn:
+            for i in ids:
+                conn.execute("UPDATE students SET is_active=? WHERE id=?",
+                             (1 if active else 0, i))
+
     def add_student(self, data: dict) -> int:
         cols = [
             "school_year", "first_name", "last_name", "student_id", "grade",
@@ -989,7 +1021,7 @@ class Database:
             "parent1_phone", "parent1_email", "parent2_name", "parent2_relation",
             "parent2_phone", "parent2_email", "notes",
             "ensembles", "class_periods", "primary_instrument", "secondary_instrument",
-            "preferred_name", "jazz_instrument"
+            "preferred_name", "jazz_instrument", "provisional"
         ]
         values = [data.get(c) for c in cols]
         placeholders = ",".join(["?"] * len(cols))
@@ -1008,7 +1040,7 @@ class Database:
             "parent1_phone", "parent1_email", "parent2_name", "parent2_relation",
             "parent2_phone", "parent2_email", "notes",
             "ensembles", "class_periods", "primary_instrument", "secondary_instrument",
-            "preferred_name", "jazz_instrument", "is_active"
+            "preferred_name", "jazz_instrument", "is_active", "provisional"
         ]
         set_clause = ", ".join([f"{c}=?" for c in cols])
         values = [data.get(c) for c in cols] + [student_id]

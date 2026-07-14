@@ -46,6 +46,25 @@ def filter_students(students, ensembles):
     return rows
 
 
+def filter_full(students, ensembles):
+    """Full student dicts (all columns) for students in any of ``ensembles``
+    (empty/None = every active student in at least one ensemble).  Used for the
+    handoff export, which needs instruments + contacts, not just name/grade/id."""
+    want = {e.strip() for e in (ensembles or []) if e and e.strip()}
+    out = []
+    for s in students:
+        if s.get("is_active") == 0:
+            continue
+        mine = _ensembles_of(s)
+        if want:
+            if not (set(mine) & want):
+                continue
+        elif not mine:
+            continue
+        out.append(dict(s))
+    return out
+
+
 def write_roster_xlsx(rows, out_path, title="Roster", subtitle=""):
     """Write rows (from ``filter_students``) to an .xlsx with a header row."""
     from openpyxl import Workbook

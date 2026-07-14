@@ -75,6 +75,7 @@ class ImportWizard(ttk.Toplevel):
 
         self._build_inventory(body)
         self._build_rosters(body)
+        self._build_incoming(body)
         self._build_results(body)
 
         fit_window(self, 860, 700)
@@ -224,11 +225,29 @@ class ImportWizard(ttk.Toplevel):
         dlg.lift()
         ttk.Label(dlg, text="This file has more than one class in it. Choose which "
                             "of your classes each section is — or skip one you "
-                            "don't want to import.",
-                  font=("Segoe UI", fs(9)), wraplength=470, justify=LEFT).pack(
+                            "don't want. (You can point two sections at the same "
+                            "class to combine them, or different classes to split.)",
+                  font=("Segoe UI", fs(9)), wraplength=490, justify=LEFT).pack(
             anchor=W, padx=12, pady=(12, 8))
-        body = ttk.Frame(dlg)
-        body.pack(fill=X, padx=12)
+        # Pinned button bar (bottom) + scrollable section list, so any number of
+        # sections stays usable and the buttons never get pushed off-screen.
+        bar = ttk.Frame(dlg)
+        bar.pack(side=BOTTOM, fill=X, padx=12, pady=12)
+        outer = ttk.Frame(dlg)
+        outer.pack(fill=BOTH, expand=True)
+        cv = tk.Canvas(outer, highlightthickness=0)
+        sb = ttk.Scrollbar(outer, orient=VERTICAL, command=cv.yview)
+        cv.configure(yscrollcommand=sb.set)
+        sb.pack(side=RIGHT, fill=Y)
+        cv.pack(side=LEFT, fill=BOTH, expand=True)
+        body = ttk.Frame(cv, padding=(12, 0))
+        win = cv.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cv.bind("<Configure>", lambda e: cv.itemconfig(win, width=e.width))
+        cv.bind("<Enter>", lambda e: cv.bind_all(
+            "<MouseWheel>", lambda ev: cv.yview_scroll(int(-ev.delta / 120), "units")))
+        cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
+
         opts = ["— skip —"] + [c["label"] for c in self._classes]
         own = self._own_name()
         preset = rec["cls"].get()
@@ -250,20 +269,39 @@ class ImportWizard(ttk.Toplevel):
             ttk.Combobox(r, textvariable=v, state="readonly", width=24,
                          values=opts).pack(side=LEFT)
             pickers[s["section"]] = v
-        bar = ttk.Frame(dlg)
-        bar.pack(fill=X, padx=12, pady=12)
 
         def ok():
             rec["section_map"] = {sec: ("" if v.get() == "— skip —" else v.get())
                                   for sec, v in pickers.items()}
-            n = sum(1 for x in rec["section_map"].values() if x)
+            n = len({x for x in rec["section_map"].values() if x})
             rec["status"].config(text=f"→ {n} class(es)")
             rec["cls_cb"].config(state="disabled")
             dlg.destroy()
         ttk.Button(bar, text="OK", bootstyle=SUCCESS, command=ok).pack(side=RIGHT)
         ttk.Button(bar, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
                    command=dlg.destroy).pack(side=RIGHT, padx=(0, 6))
-        fit_window(dlg, 540, 150 + 34 * len(secs))
+        fit_window(dlg, 560, min(200 + 34 * len(secs), 560))
+
+    # ── Incoming students (handoff from another director) ──
+    def _build_incoming(self, parent):
+        box = ttk.Labelframe(
+            parent, text=" 3. Incoming students from another director (optional) ",
+            padding=10)
+        box.pack(fill=X, pady=(0, 10))
+        ttk.Label(box, text="Over the summer, pre-load next year's incoming "
+                            "students — with their instruments and guardian "
+                            "contacts — from a handoff file their previous director "
+                            "sent you. They show up grayed as \"Incoming\" and are "
+                            "confirmed (or offered for removal) when you later import "
+                            "your official class roster above.",
+                  font=("Segoe UI", fs(9)), wraplength=640, justify=LEFT).pack(anchor=W)
+        self._incoming = self._file_row(
+            box, "Handoff file (.csv from another director)", [("CSV", "*.csv")])
+
+    def _reconcile(self, provisional):
+        """After an official roster import, review the incoming students who never
+        appeared on it and let the teacher deactivate them."""
+        _ReconcileDialog(self, self.db, provisional)
 
     # ── Results ──
     def _build_results(self, parent):
@@ -288,7 +326,8 @@ class ImportWizard(ttk.Toplevel):
         ci = self._charms_inv.get().strip()
         cr = self._charms_rep.get().strip()
         rosters = [r for r in self._rosters if r["path"].get().strip()]
-        if not (ct or ci or cr or rosters):
+        incoming = self._incoming.get().strip()
+        if not (ct or ci or cr or rosters or incoming):
             Messagebox.show_warning("Add at least one file to import.",
                                     title="Nothing chosen", parent=self)
             return
@@ -322,11 +361,22 @@ class ImportWizard(ttk.Toplevel):
                     lines.append(f"  • {s['loans']} current loans recreated"
                                  + (f" ({unm} not yet linked to a student — "
                                     "import rosters first)" if unm else ""))
+            if incoming:
+                if os.path.exists(incoming):
+                    import student_transfer as st
+                    ri = st.import_handoff(self.db, incoming, self.school_year)
+                    lines.append(f"Incoming students: {ri['added']} pre-loaded"
+                                 + (f", {ri['skipped']} already present"
+                                    if ri['skipped'] else "") + " (shown as Incoming).")
+                else:
+                    lines.append(f"Incoming file not found: {os.path.basename(incoming)}")
+            official_imported = False
             for r in rosters:
                 p = r["path"].get().strip()
                 if not os.path.exists(p):
                     lines.append(f"Roster skipped (not found): {os.path.basename(p)}")
                     continue
+                official_imported = True
                 # A multi-class file that was never mapped must not fall back to
                 # dumping every student into one class — make the teacher map it.
                 if len(r.get("sections") or []) > 1 and not r.get("section_map"):
@@ -360,3 +410,65 @@ class ImportWizard(ttk.Toplevel):
         self._log("\n".join(lines))
         self._status.config(text="Done ✓")
         self._import_btn.config(state="normal")
+
+        # After importing an official roster, any still-"Incoming" students never
+        # appeared on it — offer to review/remove those phantoms.
+        if official_imported:
+            leftover = self.db.get_provisional_students(self.school_year)
+            if leftover:
+                self.after(150, lambda: self._reconcile(leftover))
+
+
+class _ReconcileDialog(ttk.Toplevel):
+    """Review incoming students who weren't on the official roster; deactivate
+    the ones who never enrolled (recoverable), keep any late arrivals."""
+
+    def __init__(self, parent, db, provisional):
+        super().__init__(parent)
+        self.db = db
+        self.title("Review Incoming Students")
+        self.grab_set()
+        self.lift()
+        ttk.Label(self, text="These pre-loaded \"Incoming\" students did NOT appear "
+                             "on the official roster you just imported. Uncheck "
+                             "anyone you want to keep (a late enrollee); the rest "
+                             "will be deactivated (archived and recoverable).",
+                  font=("Segoe UI", fs(9)), wraplength=460, justify=LEFT).pack(
+            anchor=W, padx=14, pady=(14, 8))
+        bar = ttk.Frame(self)
+        bar.pack(side=BOTTOM, fill=X, padx=14, pady=12)
+        outer = ttk.Frame(self)
+        outer.pack(fill=BOTH, expand=True)
+        cv = tk.Canvas(outer, highlightthickness=0)
+        sb = ttk.Scrollbar(outer, orient=VERTICAL, command=cv.yview)
+        cv.configure(yscrollcommand=sb.set)
+        sb.pack(side=RIGHT, fill=Y)
+        cv.pack(side=LEFT, fill=BOTH, expand=True)
+        inner = ttk.Frame(cv, padding=(14, 0))
+        win = cv.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cv.bind("<Configure>", lambda e: cv.itemconfig(win, width=e.width))
+        cv.bind("<Enter>", lambda e: cv.bind_all(
+            "<MouseWheel>", lambda ev: cv.yview_scroll(int(-ev.delta / 120), "units")))
+        cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
+        self._vars = {}
+        for s in provisional:
+            v = tk.BooleanVar(value=True)     # default: deactivate the phantom
+            name = f"{s['last_name']}, {s['first_name']}".strip(", ")
+            inst = (s.get("primary_instrument") or "").strip()
+            ttk.Checkbutton(inner, text=name + (f"  ({inst})" if inst else ""),
+                            variable=v).pack(anchor=W, pady=1)
+            self._vars[s["id"]] = v
+        ttk.Button(bar, text="Deactivate checked", bootstyle=DANGER,
+                   command=self._apply).pack(side=RIGHT)
+        ttk.Button(bar, text="Keep all", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=(0, 6))
+        fit_window(self, 460, min(230 + 26 * len(provisional), 560))
+
+    def _apply(self):
+        ids = [i for i, v in self._vars.items() if v.get()]
+        if ids:
+            self.db.set_students_active(ids, active=0)
+        Messagebox.show_info(f"Deactivated {len(ids)} student(s). Any you kept stay "
+                             "as Incoming until confirmed.", title="Done", parent=self)
+        self.destroy()

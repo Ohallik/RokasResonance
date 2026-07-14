@@ -74,6 +74,7 @@ def import_students(db, csv_source, ensemble_label, period, school_year):
             merged["ensembles"] = _merge_csv(prior["ensembles"], ensemble_label)
             merged["class_periods"] = _merge_csv(prior["class_periods"],
                                                  str(period) if period else "")
+            merged["provisional"] = 0     # official roster confirms an incoming student
             db.update_student(prior["id"], merged)
             updated += 1
         else:
@@ -114,6 +115,7 @@ def import_students_sectioned(db, csv_source, section_to_class, period, school_y
                 ens = _merge_csv(ens, lab)
             merged["ensembles"] = ens
             merged["class_periods"] = _merge_csv(prior.get("class_periods"), per or "")
+            merged["provisional"] = 0     # official roster confirms an incoming student
             db.update_student(prior["id"], merged)
             merged["id"] = prior["id"]
             existing[s["student_id"]] = merged

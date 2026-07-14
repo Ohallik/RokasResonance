@@ -453,8 +453,41 @@ class _SectionAssignDialog(ttk.Toplevel):
             anchor=W, padx=16, pady=(2, 8))
 
         self._pickers = {}
-        body = ttk.Frame(self)
-        body.pack(fill=X, padx=16)
+        # Pinned buttons + period picker at the bottom, scrollable section list
+        # above — robust for a file with many sections (Edd has one with six).
+        btns = ttk.Frame(self)
+        btns.pack(side=BOTTOM, fill=X, padx=16, pady=14)
+        ttk.Button(btns, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btns, text="Import", bootstyle=SUCCESS,
+                   command=self._ok).pack(side=RIGHT, padx=4)
+        pf = ttk.Frame(self)
+        pf.pack(side=BOTTOM, fill=X, padx=16, pady=(0, 4))
+        ttk.Label(pf, text="Class period(s) — optional",
+                  font=("Segoe UI", fs(9), "bold")).pack(anchor=W)
+        grid = ttk.Frame(pf)
+        grid.pack(anchor=W)
+        self._period_vars = {}
+        for i, p in enumerate(PERIOD_OPTIONS):
+            vv = tk.BooleanVar(value=False)
+            self._period_vars[p] = vv
+            ttk.Checkbutton(grid, text=p, variable=vv, bootstyle=PRIMARY
+                            ).grid(row=0, column=i, padx=(0, 8))
+
+        outer = ttk.Frame(self)
+        outer.pack(fill=BOTH, expand=True)
+        cv = tk.Canvas(outer, highlightthickness=0)
+        sb = ttk.Scrollbar(outer, orient=VERTICAL, command=cv.yview)
+        cv.configure(yscrollcommand=sb.set)
+        sb.pack(side=RIGHT, fill=Y)
+        cv.pack(side=LEFT, fill=BOTH, expand=True)
+        body = ttk.Frame(cv, padding=(16, 0))
+        win = cv.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cv.bind("<Configure>", lambda e: cv.itemconfig(win, width=e.width))
+        cv.bind("<Enter>", lambda e: cv.bind_all(
+            "<MouseWheel>", lambda ev: cv.yview_scroll(int(-ev.delta / 120), "units")))
+        cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
         for s in secs:
             r = ttk.Frame(body)
             r.pack(fill=X, pady=3)
@@ -466,25 +499,7 @@ class _SectionAssignDialog(ttk.Toplevel):
                          values=opts).pack(side=LEFT)
             self._pickers[s["section"]] = v
 
-        ttk.Label(self, text="Class period(s) — optional",
-                  font=("Segoe UI", fs(9), "bold")).pack(anchor=W, padx=16,
-                                                         pady=(10, 0))
-        grid = ttk.Frame(self)
-        grid.pack(anchor=W, padx=16)
-        self._period_vars = {}
-        for i, p in enumerate(PERIOD_OPTIONS):
-            vv = tk.BooleanVar(value=False)
-            self._period_vars[p] = vv
-            ttk.Checkbutton(grid, text=p, variable=vv, bootstyle=PRIMARY
-                            ).grid(row=0, column=i, padx=(0, 8))
-
-        btns = ttk.Frame(self)
-        btns.pack(fill=X, padx=16, pady=14)
-        ttk.Button(btns, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
-                   command=self.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(btns, text="Import", bootstyle=SUCCESS,
-                   command=self._ok).pack(side=RIGHT, padx=4)
-        fit_window(self, 480, 240 + 30 * len(secs))
+        fit_window(self, 500, min(280 + 30 * len(secs), 560))
 
     def _ok(self):
         section_map = {sec: ("" if v.get() == "— skip —" else v.get())

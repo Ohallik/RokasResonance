@@ -62,6 +62,8 @@ hiddenimports = [
     # Roster-to-Excel export (lazy-imported from field trips / concerts).
     "roster_export",
     "ui.roster_export_view",
+    # Incoming-student handoff (lazy-imported from the import wizard).
+    "student_transfer",
 ]
 hiddenimports += collect_submodules("ttkbootstrap")
 hiddenimports += collect_submodules("openpyxl")

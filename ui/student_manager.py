@@ -416,6 +416,7 @@ class StudentManager(ttk.Frame):
 
         # Configure inactive tag with current theme color
         self.tree.tag_configure("inactive", foreground=subtle_fg())
+        self.tree.tag_configure("provisional", foreground=subtle_fg())
 
         self.tree.delete(*self.tree.get_children())
         for s in students:
@@ -424,8 +425,18 @@ class StudentManager(ttk.Frame):
             active_str = f"✓ {active}" if active > 0 else ""
             iid = str(s["id"])
             is_inactive = not s["is_active"]
-            tags = ("inactive",) if is_inactive else ()
-            name_display = f"{full_name} (inactive)" if is_inactive else full_name
+            # "Incoming" students (pre-loaded from a feeder handoff, not yet on the
+            # official roster) are grayed and tagged, but stay fully contactable.
+            is_prov = bool(s.get("provisional")) and not is_inactive
+            if is_inactive:
+                tags = ("inactive",)
+                name_display = f"{full_name} (inactive)"
+            elif is_prov:
+                tags = ("provisional",)
+                name_display = f"{full_name}  — incoming"
+            else:
+                tags = ()
+                name_display = full_name
             ensembles = self._sval(s, "ensembles") or ""
             periods = self._sval(s, "class_periods") or ""
             prim = self._sval(s, "primary_instrument") or ""
