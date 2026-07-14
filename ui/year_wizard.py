@@ -102,6 +102,21 @@ def read_class_csv(path):
     return out
 
 
+def students_by_section(path):
+    """For a multi-class Synergy export, group students by their Section into the
+    ``{first, last, instrument}`` shape ``import_class_list`` expects.  Instruments
+    come from each returning student's existing record (Synergy has none), so
+    they're left blank here and carried forward by the name match."""
+    import synergy_import
+    out = {}
+    for s in synergy_import.parse_synergy_students(path):
+        rec = {"first": s.get("first_name", ""), "last": s.get("last_name", ""),
+               "instrument": ""}
+        for sec in (s.get("sections") or []):
+            out.setdefault(sec, []).append(rec)
+    return out
+
+
 def import_class_list(db, students, school_year, ensemble, periods):
     """Assign every parsed student to ensemble/periods for school_year.
     Returning students (matched by name, any year) are rolled forward and
@@ -262,6 +277,17 @@ class NewSchoolYearWizard(ttk.Toplevel):
             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
         if not path:
             return
+        # A combined Synergy export (co-directors' shared rosters) has more than
+        # one class in it — map each section to an ensemble instead of dumping
+        # everyone into one, same as the first-time import wizard.
+        try:
+            import synergy_import
+            secs = synergy_import.summarize_sections(path)
+        except Exception:
+            secs = []
+        if len(secs) > 1:
+            self._import_sectioned(path, year, secs)
+            return
         try:
             students = read_class_csv(path)
         except Exception as e:
@@ -285,6 +311,32 @@ class NewSchoolYearWizard(ttk.Toplevel):
             f"• {os.path.basename(path)} → {ensemble or '(no ensemble)'}"
             f"{' · periods ' + ','.join(periods) if periods else ''}"
             f"  ({added} new, {updated} returning)")
+        self._import_log.config(text="\n".join(self._imports),
+                                foreground="#1a7a1a")
+
+    def _import_sectioned(self, path, year, secs):
+        """Roll forward a multi-class file: map each section to an ensemble, then
+        route each section's students through the returning-student carry-forward."""
+        dlg = _SectionAssignDialog(self, self.base_dir, os.path.basename(path), secs)
+        self.wait_window(dlg)
+        if not dlg.result:
+            return
+        section_map, periods = dlg.result
+        by_sec = students_by_section(path)
+        bits, total_new, total_ret = [], 0, 0
+        for sec, ens in section_map.items():
+            if not ens:
+                continue
+            studs = by_sec.get(sec, [])
+            if not studs:
+                continue
+            a, u = import_class_list(self.main_db, studs, year, ens, periods)
+            total_new += a
+            total_ret += u
+            bits.append(f"{ens}: {a} new, {u} returning")
+        if not bits:
+            return
+        self._imports.append(f"• {os.path.basename(path)} → " + "; ".join(bits))
         self._import_log.config(text="\n".join(self._imports),
                                 foreground="#1a7a1a")
 
@@ -372,4 +424,75 @@ class _AssignDialog(ttk.Toplevel):
             return
         periods = [p for p, v in self._period_vars.items() if v.get()]
         self.result = (ens, periods)
+        self.destroy()
+
+
+class _SectionAssignDialog(ttk.Toplevel):
+    """Map each class SECTION in a combined roster to an ensemble (or skip),
+    then optionally tag a shared class period.  Returns
+    ``({section: ensemble}, [periods])``."""
+
+    def __init__(self, parent, base_dir, filename, secs):
+        super().__init__(parent)
+        self.result = None
+        self.title("Map Class Sections")
+        self.grab_set()
+
+        from ui.settings_dialog import load_settings
+        program_type = (load_settings(base_dir).get("teacher") or {}).get(
+            "program_type", "band")
+        from ui.ensembles import ensembles_for, PERIOD_OPTIONS
+        opts = ["— skip —"] + list(ensembles_for(program_type))
+
+        ttk.Label(self, text=f"📄  {filename}", font=("Segoe UI", fs(11), "bold"),
+                  bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(14, 0))
+        ttk.Label(self, text="This file has more than one class in it. Choose "
+                             "which ensemble each section rolls into — or skip one "
+                             "you don't want.",
+                  font=("Segoe UI", fs(9)), wraplength=460, justify=LEFT).pack(
+            anchor=W, padx=16, pady=(2, 8))
+
+        self._pickers = {}
+        body = ttk.Frame(self)
+        body.pack(fill=X, padx=16)
+        for s in secs:
+            r = ttk.Frame(body)
+            r.pack(fill=X, pady=3)
+            who = s["teacher"] or s["section"]
+            ttk.Label(r, text=f"{who}  ({s['count']} students)",
+                      width=32).pack(side=LEFT)
+            v = tk.StringVar(value="— skip —")
+            ttk.Combobox(r, textvariable=v, state="readonly", width=24,
+                         values=opts).pack(side=LEFT)
+            self._pickers[s["section"]] = v
+
+        ttk.Label(self, text="Class period(s) — optional",
+                  font=("Segoe UI", fs(9), "bold")).pack(anchor=W, padx=16,
+                                                         pady=(10, 0))
+        grid = ttk.Frame(self)
+        grid.pack(anchor=W, padx=16)
+        self._period_vars = {}
+        for i, p in enumerate(PERIOD_OPTIONS):
+            vv = tk.BooleanVar(value=False)
+            self._period_vars[p] = vv
+            ttk.Checkbutton(grid, text=p, variable=vv, bootstyle=PRIMARY
+                            ).grid(row=0, column=i, padx=(0, 8))
+
+        btns = ttk.Frame(self)
+        btns.pack(fill=X, padx=16, pady=14)
+        ttk.Button(btns, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btns, text="Import", bootstyle=SUCCESS,
+                   command=self._ok).pack(side=RIGHT, padx=4)
+        fit_window(self, 480, 240 + 30 * len(secs))
+
+    def _ok(self):
+        section_map = {sec: ("" if v.get() == "— skip —" else v.get())
+                       for sec, v in self._pickers.items()}
+        if not any(section_map.values()):
+            Messagebox.show_warning("Map at least one section to an ensemble.",
+                                    title="Nothing mapped", parent=self)
+            return
+        periods = [p for p, v in self._period_vars.items() if v.get()]
+        self.result = (section_map, periods)
         self.destroy()
