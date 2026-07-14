@@ -202,6 +202,13 @@ class MainMenu(ttk.Frame):
         import_lbl.pack(side=LEFT)
         import_lbl.bind("<Button-1>", lambda e: self._open_import_wizard())
 
+        # Ownership / copyright notice — proprietary software, all rights reserved.
+        _copy = "© 2026 Meagan Mangum. All rights reserved."
+        if self._version:
+            _copy += f"   •   {self._version}"
+        ttk.Label(footer, text=_copy, font=("Segoe UI", fs(7)),
+                  foreground=subtle_fg()).pack(pady=(0, 3))
+
         # ── Main Navigation Grid ─────────────────────────────────────────────
         # Two-column layout for compact, accessible navigation.
         import tkinter.ttk as _ttkbase
