@@ -484,7 +484,12 @@ def build_default_day(d, ctx):
     is_jazz = template == "jazz"
     is_entry = template == "band_entry"
     is_int = template == "band_intermediate"
-    is_generic = template == "generic"
+    # Everything that isn't one of the four legacy band/jazz templates (choir,
+    # orchestra, guitar/steel, HS bands, 5th-grade, one-off clubs) gets the blank
+    # "generic" day.  Keeping this as a catch-all means new templates don't have
+    # to be enumerated here — they just render blank warm-up + sheet music.
+    is_generic = template not in ("band_entry", "band_intermediate",
+                                  "band_advanced", "jazz")
     # Advanced and generic share the same skeleton (blank warm-up + sheet music,
     # no method book); only Advanced adds the Technique & Musicianship picker and
     # its assessment seed, both handled in the view.
@@ -527,16 +532,10 @@ def build_default_day(d, ctx):
     sections.append({"title": "Warm Up", "kind": "warmup",
                      "items": [_item("") for _ in range(4)]})
 
-    # ── Assessments (teacher-defined; the view passes its saved list, else we
-    #    seed the group's suggested set — Advanced seeds EMPTY, set up per year).
-    assessments = ctx.get("assessments")
-    if assessments is None:
-        if is_entry:
-            assessments = default_assessments(cal, year_start, year_end)
-        elif is_int:
-            assessments = default_int_assessments()
-        else:
-            assessments = []
+    # ── Assessments (teacher-defined only).  We no longer seed any suggested
+    #    schedule — the only thing tracked is due dates the teacher enters
+    #    themselves.  The view passes its saved list; absent that, none.
+    assessments = ctx.get("assessments") or []
     assess_items = []
     for ref, due in assessments_visible(d, assessments):
         label = ref
@@ -585,12 +584,10 @@ def build_default_day(d, ctx):
         sections.append({"title": "Sheet Music", "kind": "sheet",
                          "items": [_item(p) for p in pieces] or [_item("")]})
 
-    # ── Practice Journal — ENTRY ONLY, turned in Fridays ──
+    # Practice journals are not auto-tracked — that was one teacher's weekly
+    # routine and doesn't belong in the shared default.  Kept as None so any
+    # consumer reading day["practice_journal"] still works.
     pj = None
-    if is_entry and wd == 4:
-        pj = practice_journal_number(d, year_start)
-        sections.append({"title": "Practice Journal", "kind": "pj",
-                         "items": [_item(f"Practice Journal {pj}")]})
 
     # Banner: reminders (standing) + announcements (auto bits).
     # Announcements start blank for everyone (the old "Don't forget Jazz 2" was

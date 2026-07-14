@@ -82,6 +82,7 @@ class OnboardingWizard(ttk.Toplevel):
         self._build_about(body, profile_name)
         self._build_classes(body)
         self._build_import(body)
+        self._build_sharing(body)
         fit_window(self, 700, 700)
 
     # ── 1. About ──
@@ -179,6 +180,32 @@ class OnboardingWizard(ttk.Toplevel):
                   font=("Segoe UI", 9), wraplength=620, justify=LEFT).pack(anchor=W)
         ttk.Button(box, text="📥 Open the import wizard…", bootstyle=(INFO, OUTLINE),
                    command=self._open_import).pack(anchor=W, pady=(6, 0))
+
+    # ── 4. Sharing (optional, rare) ──
+    def _build_sharing(self, parent):
+        box = ttk.Labelframe(parent, text=" 4. Share an inventory with a co-director "
+                                          "(optional) ", padding=10)
+        box.pack(fill=X, pady=(10, 0))
+        ttk.Label(box, text="Only for two directors at one school who share the same "
+                            "instruments, check-outs, repairs, and music library "
+                            "while keeping separate class lists. Most teachers skip "
+                            "this. You can also set it up later in Settings ▸ Sharing.",
+                  font=("Segoe UI", 9), wraplength=620, justify=LEFT).pack(anchor=W)
+        ttk.Button(box, text="🔗 Set up co-director sharing…",
+                   bootstyle=(INFO, OUTLINE),
+                   command=self._open_sharing).pack(anchor=W, pady=(6, 0))
+
+    def _open_sharing(self):
+        # Save first so the panel writes into a settings.json that already has the
+        # teacher/classes chosen above.
+        self._save()
+        top = ttk.Toplevel(self)
+        top.title("Co-director sharing")
+        top.grab_set()
+        from ui.sharing_view import SharingPanel
+        SharingPanel(top, self.base_dir).pack(fill=BOTH, expand=True)
+        from ui.theme import fit_window
+        fit_window(top, 560, 620)
 
     def _open_import(self):
         # Save first so the import wizard sees the chosen program type + classes.

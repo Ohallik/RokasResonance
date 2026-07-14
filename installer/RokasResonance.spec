@@ -55,6 +55,10 @@ hiddenimports = [
     # CutTime inventory import reads .xlsx via openpyxl.
     "openpyxl",
     "et_xmlfile",
+    # Co-director shared inventory (pure-stdlib Turso client + sync engine + UI).
+    "sharing",
+    "shared_sync",
+    "ui.sharing_view",
 ]
 hiddenimports += collect_submodules("ttkbootstrap")
 hiddenimports += collect_submodules("openpyxl")

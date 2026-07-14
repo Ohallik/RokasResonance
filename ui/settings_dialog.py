@@ -106,10 +106,14 @@ class SettingsDialog(ttk.Toplevel):
         backup_tab = ttk.Frame(nb)
         nb.add(backup_tab, text="  Backup  ")
 
+        sharing_tab = ttk.Frame(nb)
+        nb.add(sharing_tab, text="  Sharing  ")
+
         self._build_teacher_tab(teacher_tab)
         self._build_display_tab(display_tab)
         self._build_llm_tab(llm_tab)
         self._build_backup_tab(backup_tab)
+        self._build_sharing_tab(sharing_tab)
 
         # Bottom buttons
         btn_frame = ttk.Frame(self)
@@ -485,6 +489,11 @@ class SettingsDialog(ttk.Toplevel):
             backup_btn_row, text="", font=("Segoe UI", 8), foreground="#555",
         )
         self._backup_status_lbl.pack(side=LEFT, padx=(10, 0))
+
+    def _build_sharing_tab(self, parent):
+        from ui.sharing_view import SharingPanel
+        panel = SharingPanel(parent, self.base_dir)
+        panel.pack(fill=BOTH, expand=True)
 
     # ───────────────────────────────────────────────────── Logic ───────────
 

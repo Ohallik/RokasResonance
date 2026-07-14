@@ -220,6 +220,17 @@ class AgendasView(ttk.Frame):
         except Exception:
             return "band"
 
+    def _technique_enabled(self):
+        """The Advanced 'Technique & Musicianship' key picker is one teacher's
+        personal warm-up system and confuses everyone else, so it's off unless a
+        profile explicitly opts in (teacher.technique_musicianship = true)."""
+        try:
+            from ui.settings_dialog import load_settings
+            return bool((load_settings(self.base_dir).get("teacher") or {}).get(
+                "technique_musicianship"))
+        except Exception:
+            return False
+
     def _last_reminders(self):
         """Carry the most recent saved day's Reminders forward — blank for a
         brand-new user until they type their own."""
@@ -503,14 +514,11 @@ class AgendasView(ttk.Frame):
         self.refresh()
 
     def _default_assessments(self):
-        """The suggested seed list for this group.  Intermediate = her dateless
-        set; Advanced = empty (she sets hers up fresh each year); Entry = the
-        built-in dated cadence."""
-        if self._template == "band_intermediate":
-            return spine.default_int_assessments()
-        if self._template in ("band_advanced", "generic"):
-            return []
-        return spine.default_assessments(self._calendar(), *self._year_bounds())
+        """No suggested schedule is seeded for any class anymore; assessments are
+        entirely teacher-entered (the app only tracks due dates they add)."""
+        # No suggested schedule is seeded for any class. Assessments are entirely
+        # teacher-entered — the app only tracks due dates the teacher adds.
+        return []
 
     def _open_assessments(self):
         items = self._load_assessments()
@@ -949,7 +957,8 @@ class AgendasView(ttk.Frame):
 
         if kind == "bandbook":
             self._bandbook_picker(body, section)
-        if kind == "warmup" and self._template == "band_advanced" and spine.tm_keys():
+        if (kind == "warmup" and self._template == "band_advanced"
+                and self._technique_enabled() and spine.tm_keys()):
             self._tm_picker(body, section)
         if self._is_jazz and kind == "sheet":
             self._jazz_song_picker(body, section)

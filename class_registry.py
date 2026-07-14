@@ -31,38 +31,76 @@ view consumes.
 # grouping token ("entry" / "int_adv" / None) mapped to percussion_rotation
 # constants by the view; ``book`` is the default Standard of Excellence book.
 TEMPLATES = {
-    "band_entry": {
-        "label": "Entry Band", "book": 1, "class_type": "entry",
+    "generic": {
+        "label": "General", "book": None, "class_type": None, "percussion": False,
+        "desc": "Blank warm-up + sheet music. For any class or club you run your "
+                "own way (no percussion rotation).",
+    },
+    "band_5": {
+        "label": "5th Grade Band", "book": None, "class_type": "entry",
         "percussion": True,
-        "desc": "Rhythms + Fundamentals warm-up + Standard of Excellence Bk 1 "
-                "+ Friday Practice Journal (beginning band).",
+        "desc": "Blank agendas with a fully customizable percussion rotation.",
+    },
+    "orch_5": {
+        "label": "5th Grade Orchestra", "book": None, "class_type": None,
+        "percussion": False,
+        "desc": "Blank agendas, no percussion rotation.",
+    },
+    "band_entry": {
+        "label": "MS Band (Entry)", "book": 1, "class_type": "entry",
+        "percussion": True,
+        "desc": "Rhythms + Standard of Excellence Bk 1 with a customizable "
+                "percussion rotation (beginning band).",
     },
     "band_intermediate": {
-        "label": "Intermediate Band", "book": 2, "class_type": "int_adv",
+        "label": "MS Band (Intermediate)", "book": 2, "class_type": "int_adv",
         "percussion": True,
-        "desc": "Broccoli warm-up + Standard of Excellence Bk 2 (2nd-year band).",
+        "desc": "Standard of Excellence Bk 2 with a percussion rotation "
+                "(2nd-year band).",
     },
     "band_advanced": {
-        "label": "Advanced Band", "book": None, "class_type": "int_adv",
+        "label": "MS Band (Advanced)", "book": None, "class_type": "int_adv",
         "percussion": True,
-        "desc": "Blank warm-up + Technique & Musicianship picker, teacher-set "
-                "assessments (top band).",
+        "desc": "Blank warm-up + sheet music with a percussion rotation "
+                "(top band).",
+    },
+    "orch_mshs": {
+        "label": "MS/HS Orchestra", "book": None, "class_type": None,
+        "percussion": False,
+        "desc": "Blank agendas, no percussion rotation.",
+    },
+    "choir_mshs": {
+        "label": "MS/HS Choir", "book": None, "class_type": None,
+        "percussion": False,
+        "desc": "Blank agendas, no percussion rotation.",
+    },
+    "guitar_steel": {
+        "label": "MS/HS Guitar / Steel Drum", "book": None, "class_type": None,
+        "percussion": False,
+        "desc": "Blank agendas, no rotation.",
+    },
+    "hs_band_winds": {
+        "label": "HS Band (Winds)", "book": None, "class_type": None,
+        "percussion": False,
+        "desc": "Blank agendas, no percussion rotation.",
+    },
+    "hs_band_perc": {
+        "label": "HS Band (Percussion)", "book": None, "class_type": "entry",
+        "percussion": True,
+        "desc": "Blank agendas with a fully customizable percussion rotation.",
     },
     "jazz": {
         "label": "Jazz", "book": None, "class_type": None, "percussion": False,
         "desc": "Simple warm-up + sheet music with the jazz rhythm-section "
                 "rotation (choose the band with the top toggle).",
     },
-    "generic": {
-        "label": "Class", "book": None, "class_type": None, "percussion": False,
-        "desc": "Blank warm-up + sheet music. For choir, orchestra, and any "
-                "club or class you run your own way.",
-    },
 }
 
-# The order templates are offered in the Manage Classes picker.
-TEMPLATE_ORDER = ["generic", "band_entry", "band_intermediate", "band_advanced",
-                  "jazz"]
+# The order templates are offered in the Manage Classes / onboarding picker.
+TEMPLATE_ORDER = ["generic", "band_5", "orch_5",
+                  "band_entry", "band_intermediate", "band_advanced",
+                  "orch_mshs", "choir_mshs", "guitar_steel",
+                  "hs_band_winds", "hs_band_perc", "jazz"]
 
 
 def template_desc(template):
@@ -76,12 +114,12 @@ def template_desc(template):
 
 def _band_default():
     return [
-        {"id": "entry", "label": "Entry Band", "template": "band_entry",
+        {"id": "entry", "label": "MS Band (Entry)", "template": "band_entry",
          "ensemble": "entry", "book": 1, "percussion": True},
-        {"id": "intermediate", "label": "Intermediate Band",
+        {"id": "intermediate", "label": "MS Band (Intermediate)",
          "template": "band_intermediate", "ensemble": "interm", "book": 2,
          "percussion": True},
-        {"id": "advanced", "label": "Advanced Band", "template": "band_advanced",
+        {"id": "advanced", "label": "MS Band (Advanced)", "template": "band_advanced",
          "ensemble": "adv", "book": None, "percussion": True},
         {"id": "jazz", "label": "Jazz", "template": "jazz", "ensemble": "jazz",
          "book": None, "percussion": False},

@@ -126,7 +126,7 @@ sys.path.insert(0, APP_DIR)
 from database import Database
 from ui.main_menu import MainMenu
 
-VERSION = "v0.11.1"
+VERSION = "v0.12.0"
 
 # User data lives in AppData so app-folder updates never touch it
 _LOCALAPPDATA = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
@@ -474,19 +474,48 @@ def _load_profile(app, profile_name: str):
 
     db = Database(db_path)
     _run_backups(db, data_dir, profile_name)
-    db.relink_checkouts_to_students()
 
-    # Fold "Chinook Jazz 1"-style names (imported from joint-concert programs)
-    # into the teacher's own cohorts ("Jazz 1"), using Settings' school name.
+    # Co-director shared inventory (opt-in; off for almost everyone).  Bind and
+    # pull the cloud copy into the local mirror before anything reads it.  Done
+    # here (not in Database) so a network hiccup can't block launch.
+    sharing_active = False
     try:
-        from ui.settings_dialog import load_settings
-        school = ((load_settings(data_dir).get("teacher") or {})
-                  .get("school_name") or "")
-        if school.strip():
-            db.normalize_performance_ensembles(school)
+        import shared_sync
+        _sync = shared_sync.build_from_settings(data_dir, db_path)
+        if _sync is not None:
+            db.bind_sharing(_sync)
+            _sync.resume()          # best-effort pull; offline keeps last mirror
+            sharing_active = _sync.active
+            app._current_sync = _sync
+            # Poll the cloud so a co-director's changes appear without a restart.
+            # Pull runs on a worker thread so it never blocks the UI; the mirror
+            # is refreshed in place and shows up next time a view is opened/refreshed.
+            def _sync_tick(a=app, s=_sync, interval=120000):
+                import threading as _th
+                _th.Thread(target=s.refresh, daemon=True).start()
+                a.after(interval, _sync_tick)
+            app.after(120000, _sync_tick)
     except Exception:
         import traceback
         traceback.print_exc()
+
+    # These two startup normalizers rewrite shared tables (checkouts /
+    # performances).  In a shared set the "student_id" link and ensemble names
+    # are personal to whoever made the record, so don't let one director's
+    # startup overwrite the co-director's rows.  Solo profiles run them as before.
+    if not sharing_active:
+        db.relink_checkouts_to_students()
+        # Fold "Chinook Jazz 1"-style names (imported from joint-concert
+        # programs) into the teacher's own cohorts ("Jazz 1").
+        try:
+            from ui.settings_dialog import load_settings
+            school = ((load_settings(data_dir).get("teacher") or {})
+                      .get("school_name") or "")
+            if school.strip():
+                db.normalize_performance_ensembles(school)
+        except Exception:
+            import traceback
+            traceback.print_exc()
 
     # Stash current profile state on the app so the close handler can back it up
     app._current_db = db
@@ -502,6 +531,26 @@ def _load_profile(app, profile_name: str):
     menu = MainMenu(app, db, base_dir=data_dir, app_dir=APP_DIR, teacher_name=profile_name, version=VERSION)
     menu.pack(fill=BOTH, expand=True)
     return menu
+
+
+def _needs_onboarding(data_dir: str) -> bool:
+    """True if this profile has never been set up.  The onboarding wizard writes
+    settings.json on Finish or Skip, so its presence means setup already ran.
+    Existing/legacy profiles already have one and are never re-prompted; a
+    brand-new profile (any profile, not just the very first) has none yet."""
+    return not os.path.exists(os.path.join(data_dir, "settings.json"))
+
+
+def _maybe_onboard(app, menu, profile_name):
+    """Run the one-time onboarding for a freshly created profile.  Non-fatal."""
+    if menu is None or not _needs_onboarding(menu.base_dir):
+        return
+    try:
+        from ui.onboarding import OnboardingWizard
+        OnboardingWizard(app, menu.base_dir, menu.db, profile_name,
+                         on_finish=getattr(menu, "_refresh_stats", None))
+    except Exception:
+        pass
 
 
 def _resolve_startup_display(profiles, last_used):
@@ -597,7 +646,6 @@ def main():
     apply_global_font_scaling()
 
     # Pick initial profile (no dialog on first launch)
-    first_run = not profiles
     if not profiles:
         # Show the main window before the Querybox so the dialog has a visible parent
         # to anchor to — otherwise the prompt renders off-screen on some systems
@@ -646,22 +694,18 @@ def main():
         current_menu[0] = _load_profile(app, new_profile)
         # Re-attach the switch callback
         app._switch_profile_callback = switch_profile
+        # A newly created profile gets the one-time setup wizard here too.
+        _maybe_onboard(app, current_menu[0], new_profile)
 
     # Attach the callback so MainMenu._switch_profile can reach it
     app._switch_profile_callback = switch_profile
 
     current_menu[0] = _load_profile(app, profile_name)
 
-    # Brand-new profile → run the one-time onboarding (name / school / focus →
-    # classes → optional import).  Non-fatal if anything goes wrong.
-    if first_run and current_menu[0] is not None:
-        try:
-            from ui.onboarding import OnboardingWizard
-            menu = current_menu[0]
-            OnboardingWizard(app, menu.base_dir, menu.db, profile_name,
-                             on_finish=getattr(menu, "_refresh_stats", None))
-        except Exception:
-            pass
+    # Any profile that hasn't been set up yet → run the one-time onboarding
+    # (name / school / focus → classes → optional import).  This covers both the
+    # very first launch AND a brand-new profile created later.  Non-fatal.
+    _maybe_onboard(app, current_menu[0], profile_name)
 
     # Auto-fit window to actual content, capped at screen size
     app.update_idletasks()

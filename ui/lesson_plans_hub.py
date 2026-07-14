@@ -230,12 +230,22 @@ class LessonPlansHub(ttk.Frame):
 
 
 # ── Template display names for the Manage Classes picker ──────────────────────
+# Plain names only — teachers pick during first-run setup before they know what
+# each includes, so descriptions here would just confuse. (Details live in each
+# template's ``desc`` and show up later in Manage Classes.)
 _TMPL_DISPLAY = {
-    "generic": "General — warm-up + sheet music (no percussion rotation)",
-    "band_entry": "Band — Entry (Standard of Excellence Bk 1 + percussion)",
-    "band_intermediate": "Band — Intermediate (Standard of Excellence Bk 2 + percussion)",
-    "band_advanced": "Band — Advanced (+ percussion)",
-    "jazz": "Jazz (rhythm-section rotation)",
+    "generic": "General",
+    "band_5": "5th Grade Band",
+    "orch_5": "5th Grade Orchestra",
+    "band_entry": "MS Band (Entry)",
+    "band_intermediate": "MS Band (Intermediate)",
+    "band_advanced": "MS Band (Advanced)",
+    "orch_mshs": "MS/HS Orchestra",
+    "choir_mshs": "MS/HS Choir",
+    "guitar_steel": "MS/HS Guitar / Steel Drum",
+    "hs_band_winds": "HS Band (Winds)",
+    "hs_band_perc": "HS Band (Percussion)",
+    "jazz": "Jazz",
 }
 
 

@@ -70,13 +70,21 @@ class _DictRow(dict):
 class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
+        self._sync = None          # optional co-director SharedSync (off by default)
         self._init_db()
+
+    def bind_sharing(self, sync):
+        """Attach a shared_sync.SharedSync so shared-table writes route to the
+        cloud.  Passing None (or a sync that isn't active) restores solo mode."""
+        self._sync = sync
 
     def _connect(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = _DictRow
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
+        if self._sync is not None and getattr(self._sync, "active", False):
+            return self._sync.wrap(conn)
         return conn
 
     def _init_db(self):

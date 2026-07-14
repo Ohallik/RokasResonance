@@ -126,10 +126,11 @@ class ImportWizard(ttk.Toplevel):
     def _build_rosters(self, parent):
         box = ttk.Labelframe(parent, text=" 2. Class rosters (Synergy) ", padding=10)
         box.pack(fill=X, pady=(0, 10))
-        ttk.Label(box, text="Export each class list from Synergy as a CSV and add "
-                            "a row per class, choosing which class and period it "
-                            "is. A student in two of your classes is merged, not "
-                            "duplicated.",
+        ttk.Label(box, text="Your classes are listed below (from the setup you just "
+                            "did). Export each one from Synergy as a CSV, then Browse "
+                            "to attach it and pick its period. Skip any you don't have "
+                            "yet, or use “Add class list” for anything extra. A student "
+                            "in two of your classes is merged, not duplicated.",
                   font=("Segoe UI", 9), wraplength=640, justify=LEFT).pack(anchor=W)
         cols = ttk.Frame(box)
         cols.pack(fill=X, pady=(6, 2))
@@ -141,15 +142,22 @@ class ImportWizard(ttk.Toplevel):
         self._roster_frame = ttk.Frame(box)
         self._roster_frame.pack(fill=X)
         self._rosters = []
-        self._add_roster()
+        # One row per class the teacher entered during setup, so they just attach
+        # a CSV to each instead of re-typing their class list.
+        if self._classes:
+            for c in self._classes:
+                self._add_roster(preset=c["label"])
+        else:
+            self._add_roster()
         ttk.Button(box, text="➕ Add class list", bootstyle=(SUCCESS, OUTLINE),
-                   command=self._add_roster).pack(anchor=W, pady=(6, 0))
+                   command=lambda: self._add_roster()).pack(anchor=W, pady=(6, 0))
 
-    def _add_roster(self):
+    def _add_roster(self, preset=None):
         row = ttk.Frame(self._roster_frame)
         row.pack(fill=X, pady=2)
         path = tk.StringVar()
-        cls = tk.StringVar(value=self._classes[0]["label"] if self._classes else "")
+        default_cls = preset or (self._classes[0]["label"] if self._classes else "")
+        cls = tk.StringVar(value=default_cls)
         per = tk.StringVar(value="1")
         ent = ttk.Entry(row, textvariable=path, width=30)
         ent.pack(side=LEFT)
