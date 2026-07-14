@@ -203,6 +203,17 @@ class ImportWizard(ttk.Toplevel):
                    command=remove).pack(side=RIGHT, padx=(6, 0))
         self._rosters.append(rec)
 
+    def _own_name(self):
+        """The current teacher's name (lowercased) for matching the CSV's Teacher
+        column to auto-select their own section."""
+        try:
+            from ui.settings_dialog import load_settings
+            t = (load_settings(self.base_dir).get("teacher") or {})
+            name = t.get("name") or os.path.basename(self.base_dir.rstrip("\\/"))
+        except Exception:
+            name = os.path.basename(self.base_dir.rstrip("\\/"))
+        return (name or "").lower()
+
     def _map_sections(self, rec):
         """Ask which of the teacher's classes each section in a multi-class file
         maps to (or skip).  Stores the map on the roster row."""
@@ -219,14 +230,23 @@ class ImportWizard(ttk.Toplevel):
         body = ttk.Frame(dlg)
         body.pack(fill=X, padx=12)
         opts = ["— skip —"] + [c["label"] for c in self._classes]
+        own = self._own_name()
+        preset = rec["cls"].get()
         pickers = {}
         for s in secs:
             r = ttk.Frame(body)
             r.pack(fill=X, pady=3)
             who = s["teacher"] or s["section"]
+            # Pre-select the class the teacher was importing for THEIR OWN section
+            # (Teacher column matches their name); leave the co-director's on skip.
+            surname = ""
+            if s.get("teacher"):
+                surname = s["teacher"].split(",")[0].strip().split(" ")[0].lower()
+            default = preset if (surname and surname in own and preset in opts) \
+                else "— skip —"
             ttk.Label(r, text=f"{who}  ({s['count']} students)",
                       width=34).pack(side=LEFT)
-            v = tk.StringVar(value="— skip —")
+            v = tk.StringVar(value=default)
             ttk.Combobox(r, textvariable=v, state="readonly", width=24,
                          values=opts).pack(side=LEFT)
             pickers[s["section"]] = v
@@ -306,6 +326,13 @@ class ImportWizard(ttk.Toplevel):
                 p = r["path"].get().strip()
                 if not os.path.exists(p):
                     lines.append(f"Roster skipped (not found): {os.path.basename(p)}")
+                    continue
+                # A multi-class file that was never mapped must not fall back to
+                # dumping every student into one class — make the teacher map it.
+                if len(r.get("sections") or []) > 1 and not r.get("section_map"):
+                    lines.append(f"{os.path.basename(p)}: skipped — this file has "
+                                 "more than one class; click Browse again and map "
+                                 "the sections first.")
                     continue
                 per = r["per"].get()
                 per = "" if per == "(all)" else per
