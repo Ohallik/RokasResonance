@@ -635,6 +635,64 @@ class Database:
             except Exception:
                 pass
 
+            # Migrate: uniform / attire inventory + assignments.  Mirrors the
+            # instruments + checkouts pair but for garments (marching jackets,
+            # pants, shakos, rain gear, and — for choir/orchestra later — robes,
+            # dresses, tuxes, etc.).  Unlike instruments, a garment piece can be
+            # assigned to only ONE student at a time (enforced in checkout_uniform),
+            # and no rental fee is auto-added.  garment_types is a user-definable
+            # list so any ensemble can define its own clothing items.
+            try:
+                conn.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS garment_types (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        sort_order INTEGER DEFAULT 0,
+                        is_active INTEGER DEFAULT 1
+                    );
+                    CREATE TABLE IF NOT EXISTS uniforms (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        garment_type TEXT,        -- e.g. 'Marching Jacket' (see garment_types)
+                        item_number TEXT,         -- the number kids remember, e.g. '158'
+                        size TEXT,
+                        style TEXT,
+                        gender TEXT,
+                        color TEXT,
+                        manufacturer TEXT,
+                        barcode TEXT,
+                        location TEXT,
+                        condition TEXT,
+                        date_last_cleaned TEXT,
+                        date_purchased TEXT,
+                        purchase_price REAL DEFAULT 0,
+                        comments TEXT,
+                        is_active INTEGER DEFAULT 1,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE TABLE IF NOT EXISTS uniform_checkouts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        uniform_id INTEGER NOT NULL,
+                        student_id INTEGER,
+                        student_name TEXT,
+                        date_assigned TEXT,
+                        date_returned TEXT,
+                        due_date TEXT,
+                        notes TEXT,
+                        form_generated INTEGER DEFAULT 0,
+                        FOREIGN KEY (uniform_id) REFERENCES uniforms(id),
+                        FOREIGN KEY (student_id) REFERENCES students(id)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_uniform_checkouts_uniform
+                        ON uniform_checkouts(uniform_id);
+                    CREATE INDEX IF NOT EXISTS idx_uniform_checkouts_student
+                        ON uniform_checkouts(student_id);
+                    """
+                )
+                conn.commit()
+            except Exception:
+                pass
+
     # ─── Backup ────────────────────────────────────────────────────────────────
 
     def _companion_files(self):
@@ -886,6 +944,391 @@ class Database:
                    ORDER BY c.id""",
                 (instrument_id,)
             ).fetchall()
+
+    # ─── Uniforms / attire ──────────────────────────────────────────────────────
+    #
+    # A parallel inventory to instruments, for marching-band garments (and, later,
+    # choir robes / orchestra attire).  Two rules differ from instruments:
+    #   1. A garment piece is assigned to only ONE student at a time — there is no
+    #      shared-mouthpiece exception, so checkout_uniform refuses a second open
+    #      assignment on the same piece.
+    #   2. No rental fee is auto-added on checkout.
+    _UNIFORM_COLS = [
+        "garment_type", "item_number", "size", "style", "gender", "color",
+        "manufacturer", "barcode", "location", "condition", "date_last_cleaned",
+        "date_purchased", "purchase_price", "comments",
+    ]
+
+    def get_garment_types(self, include_inactive=False):
+        """User-definable list of garment types (Marching Jacket, Shako, Robe …).
+        Falls back to any distinct garment_type values already on uniform rows so
+        an imported inventory always has its types listed even before the director
+        curates them."""
+        with self._connect() as conn:
+            filt = "" if include_inactive else "WHERE is_active=1"
+            defined = [r["name"] for r in conn.execute(
+                f"SELECT name FROM garment_types {filt} ORDER BY sort_order, name"
+            ).fetchall()]
+            used = [r[0] for r in conn.execute(
+                "SELECT DISTINCT garment_type FROM uniforms "
+                "WHERE is_active=1 AND garment_type IS NOT NULL AND TRIM(garment_type)!=''"
+            ).fetchall()]
+        out = list(defined)
+        for u in used:
+            if u not in out:
+                out.append(u)
+        return out
+
+    def add_garment_type(self, name: str) -> int:
+        name = (name or "").strip()
+        if not name:
+            return 0
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM garment_types WHERE LOWER(name)=LOWER(?)", (name,)
+            ).fetchone()
+            if existing:
+                conn.execute("UPDATE garment_types SET is_active=1 WHERE id=?",
+                             (existing["id"],))
+                return existing["id"]
+            nxt = conn.execute(
+                "SELECT COALESCE(MAX(sort_order),0)+1 FROM garment_types"
+            ).fetchone()[0]
+            cur = conn.execute(
+                "INSERT INTO garment_types (name, sort_order) VALUES (?, ?)",
+                (name, nxt))
+            return cur.lastrowid
+
+    def rename_garment_type(self, old_name: str, new_name: str):
+        old_name, new_name = (old_name or "").strip(), (new_name or "").strip()
+        if not old_name or not new_name:
+            return
+        with self._connect() as conn:
+            conn.execute("UPDATE garment_types SET name=? WHERE LOWER(name)=LOWER(?)",
+                         (new_name, old_name))
+            conn.execute("UPDATE uniforms SET garment_type=? WHERE garment_type=?",
+                         (new_name, old_name))
+
+    def delete_garment_type(self, name: str):
+        """Soft-remove a type from the list.  Existing uniform rows keep their
+        garment_type text, so nothing in inventory is lost."""
+        with self._connect() as conn:
+            conn.execute("UPDATE garment_types SET is_active=0 WHERE LOWER(name)=LOWER(?)",
+                         ((name or "").strip(),))
+
+    def get_all_uniforms(self, include_inactive=False):
+        with self._connect() as conn:
+            if include_inactive:
+                return conn.execute(
+                    "SELECT * FROM uniforms ORDER BY garment_type, item_number"
+                ).fetchall()
+            return conn.execute(
+                "SELECT * FROM uniforms WHERE is_active=1 "
+                "ORDER BY garment_type, item_number"
+            ).fetchall()
+
+    def get_uniform(self, uniform_id: int):
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM uniforms WHERE id=?", (uniform_id,)
+            ).fetchone()
+
+    def get_uniform_by_barcode(self, barcode: str):
+        """First active garment matching barcode, or (garment_type + item_number)
+        typed as 'Jacket 158' won't match here — barcode/exact only."""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM uniforms WHERE is_active=1 AND barcode=? LIMIT 1",
+                (barcode,)
+            ).fetchone()
+
+    def add_uniform(self, data: dict) -> int:
+        cols = self._UNIFORM_COLS
+        values = [data.get(c) for c in cols]
+        placeholders = ",".join(["?"] * len(cols))
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"INSERT INTO uniforms ({','.join(cols)}) VALUES ({placeholders})",
+                values)
+            return cur.lastrowid
+
+    def update_uniform(self, uniform_id: int, data: dict):
+        cols = self._UNIFORM_COLS + ["is_active"]
+        set_clause = ", ".join([f"{c}=?" for c in cols])
+        values = [data.get(c) for c in cols] + [uniform_id]
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE uniforms SET {set_clause} WHERE id=?", values)
+
+    def deactivate_uniform(self, uniform_id: int):
+        with self._connect() as conn:
+            conn.execute("UPDATE uniforms SET is_active=0 WHERE id=?", (uniform_id,))
+
+    def get_uniforms_with_status(self, include_inactive=False):
+        """Uniform rows with computed 'Available'/'Checked Out' status and the
+        current holder's name.  One open checkout max per piece, so no counting
+        gymnastics are needed."""
+        active_filter = "" if include_inactive else "AND u.is_active=1"
+        sql = f"""
+            SELECT
+                u.*,
+                (SELECT c.student_name FROM uniform_checkouts c
+                    WHERE c.uniform_id = u.id AND c.date_returned IS NULL
+                    ORDER BY c.id DESC LIMIT 1) AS checkout_name,
+                (SELECT c.date_assigned FROM uniform_checkouts c
+                    WHERE c.uniform_id = u.id AND c.date_returned IS NULL
+                    ORDER BY c.id DESC LIMIT 1) AS checkout_date
+            FROM uniforms u
+            WHERE 1=1 {active_filter}
+            ORDER BY u.garment_type, CAST(u.item_number AS INTEGER), u.item_number
+        """
+        with self._connect() as conn:
+            rows = conn.execute(sql).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            if (d.get("checkout_name") or "").strip():
+                d["status"] = "Checked Out"
+                d["checked_out_to"] = d["checkout_name"]
+            else:
+                d["status"] = "Available"
+                d["checked_out_to"] = ""
+            out.append(d)
+        return out
+
+    def checkout_uniform(self, uniform_id: int, student_id, student_name: str,
+                         date_assigned: str, notes: str = "", due_date: str = "") -> int:
+        """Assign a garment piece to a student.  Refuses if the piece is already
+        out to someone (one piece → one kid).  No rental fee side effect."""
+        with self._connect() as conn:
+            open_row = conn.execute(
+                "SELECT id, student_name FROM uniform_checkouts "
+                "WHERE uniform_id=? AND date_returned IS NULL LIMIT 1",
+                (uniform_id,)
+            ).fetchone()
+            if open_row:
+                raise ValueError(
+                    f"That garment is already checked out to "
+                    f"{open_row['student_name'] or 'another student'}. "
+                    f"Check it in first.")
+            cur = conn.execute(
+                """INSERT INTO uniform_checkouts
+                   (uniform_id, student_id, student_name, date_assigned, notes, due_date)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (uniform_id, student_id, student_name, date_assigned, notes, due_date))
+            return cur.lastrowid
+
+    def import_open_uniform_checkout(self, uniform_id: int, student_id,
+                                     student_name: str, date_assigned: str) -> int:
+        """Recreate a current (open) garment assignment during a data import,
+        skipping pieces that already have one so re-running is safe."""
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM uniform_checkouts WHERE uniform_id=? AND "
+                "(date_returned IS NULL OR TRIM(date_returned)='')",
+                (uniform_id,)).fetchone()
+            if existing:
+                return existing["id"]
+            cur = conn.execute(
+                "INSERT INTO uniform_checkouts (uniform_id, student_id, "
+                "student_name, date_assigned) VALUES (?, ?, ?, ?)",
+                (uniform_id, student_id, student_name, date_assigned))
+            return cur.lastrowid
+
+    def checkin_uniform(self, checkout_id: int, date_returned: str, notes: str = ""):
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE uniform_checkouts SET date_returned=?, notes=? WHERE id=?",
+                (date_returned, notes, checkout_id))
+
+    def get_active_uniform_checkout(self, uniform_id: int):
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT c.*, s.grade, s.phone, s.parent1_name, s.parent1_phone
+                   FROM uniform_checkouts c
+                   LEFT JOIN students s ON s.id = c.student_id
+                   WHERE c.uniform_id=? AND c.date_returned IS NULL
+                   ORDER BY c.id DESC LIMIT 1""",
+                (uniform_id,)
+            ).fetchone()
+
+    def get_uniform_checkout_history(self, uniform_id: int):
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM uniform_checkouts WHERE uniform_id=? "
+                "ORDER BY date_assigned DESC, id DESC",
+                (uniform_id,)
+            ).fetchall()
+
+    def get_all_active_uniform_checkouts(self):
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT c.*, u.garment_type, u.item_number, u.size, u.barcode
+                   FROM uniform_checkouts c
+                   JOIN uniforms u ON u.id = c.uniform_id
+                   WHERE c.date_returned IS NULL
+                   ORDER BY c.student_name"""
+            ).fetchall()
+
+    def mark_uniform_form_generated(self, checkout_id: int):
+        with self._connect() as conn:
+            conn.execute("UPDATE uniform_checkouts SET form_generated=1 WHERE id=?",
+                         (checkout_id,))
+
+    def get_uniform_stats(self) -> dict:
+        with self._connect() as conn:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM uniforms WHERE is_active=1").fetchone()[0]
+            checked_out = conn.execute(
+                """SELECT COUNT(*) FROM uniform_checkouts c
+                   JOIN uniforms u ON u.id=c.uniform_id
+                   WHERE c.date_returned IS NULL AND u.is_active=1"""
+            ).fetchone()[0]
+        return {
+            "total": total,
+            "checked_out": checked_out,
+            "available": total - checked_out,
+        }
+
+    def get_uniform_chart(self, school_year=None):
+        """Data for the 'who has which garment' chart: for every current student,
+        the item_number they hold in each garment type (blank where unassigned).
+        Returns (garment_types, rows) where each row is
+        {student, grade, assignments: {garment_type: item_number}}.
+        Only OPEN assignments count.  Also surfaces any assigned holder whose name
+        isn't on the current roster (e.g. a still-out piece from a former student)
+        so nothing is silently dropped."""
+        types = self.get_garment_types()
+        roster = self.get_current_roster()
+        # Map open assignments by holder name -> {garment_type: item_number}
+        with self._connect() as conn:
+            open_rows = conn.execute(
+                """SELECT c.student_id, c.student_name, u.garment_type, u.item_number
+                   FROM uniform_checkouts c
+                   JOIN uniforms u ON u.id = c.uniform_id
+                   WHERE c.date_returned IS NULL"""
+            ).fetchall()
+
+        def _key(name):
+            return (name or "").strip().lower()
+
+        by_name = {}
+        by_id = {}
+        for r in open_rows:
+            entry = None
+            if r["student_id"] is not None:
+                entry = by_id.setdefault(r["student_id"], {})
+            else:
+                entry = by_name.setdefault(_key(r["student_name"]), {})
+            gt = r["garment_type"] or "(unspecified)"
+            if r["item_number"]:
+                entry[gt] = r["item_number"]
+
+        try:
+            from ui.names import display_full  # local import; UI layer optional
+        except Exception:
+            def display_full(s):
+                return f"{s.get('first_name','')} {s.get('last_name','')}".strip()
+        rows = []
+        seen_ids = set()
+        seen_names = set()
+        for s in sorted(roster, key=lambda x: ((x.get("last_name") or "").lower(),
+                                               (x.get("first_name") or "").lower())):
+            assignments = {}
+            if s["id"] in by_id:
+                assignments = by_id[s["id"]]
+                seen_ids.add(s["id"])
+            name_key = _key(f"{s.get('first_name','')} {s.get('last_name','')}")
+            if name_key in by_name:
+                for k, v in by_name[name_key].items():
+                    assignments.setdefault(k, v)
+                seen_names.add(name_key)
+            try:
+                disp = display_full(s)
+            except Exception:
+                disp = f"{s.get('last_name','')}, {s.get('first_name','')}"
+            rows.append({
+                "student": disp,
+                "grade": s.get("grade") or "",
+                "assignments": assignments,
+            })
+        # Holders not on the current roster but still holding gear
+        for r in open_rows:
+            if r["student_id"] is not None and r["student_id"] in seen_ids:
+                continue
+            if r["student_id"] is None and _key(r["student_name"]) in seen_names:
+                continue
+            nm = (r["student_name"] or "").strip()
+            if not nm:
+                continue
+            # find or create a row for this off-roster holder
+            existing = next((x for x in rows if x["student"] == nm + " (not on roster)"), None)
+            if not existing:
+                existing = {"student": nm + " (not on roster)", "grade": "",
+                            "assignments": {}}
+                rows.append(existing)
+            gt = r["garment_type"] or "(unspecified)"
+            if r["item_number"]:
+                existing["assignments"][gt] = r["item_number"]
+        return types, rows
+
+    def get_last_uniform_for_student(self, student_id, student_name: str,
+                                     garment_type: str):
+        """Most recent garment of *garment_type* this student has held (open or
+        returned) — powers the 'what did they have last year' + size-up
+        suggestion.  Matches by student_id first, then by name."""
+        with self._connect() as conn:
+            row = None
+            if student_id is not None:
+                row = conn.execute(
+                    """SELECT u.item_number, u.size, c.date_assigned
+                       FROM uniform_checkouts c JOIN uniforms u ON u.id=c.uniform_id
+                       WHERE c.student_id=? AND u.garment_type=?
+                       ORDER BY c.date_assigned DESC, c.id DESC LIMIT 1""",
+                    (student_id, garment_type)).fetchone()
+            if row is None and student_name:
+                row = conn.execute(
+                    """SELECT u.item_number, u.size, c.date_assigned
+                       FROM uniform_checkouts c JOIN uniforms u ON u.id=c.uniform_id
+                       WHERE LOWER(c.student_name)=LOWER(?) AND u.garment_type=?
+                       ORDER BY c.date_assigned DESC, c.id DESC LIMIT 1""",
+                    (student_name.strip(), garment_type)).fetchone()
+            return row
+
+    def get_available_uniforms_of_type(self, garment_type: str):
+        """Active, currently-unassigned pieces of a garment type — the pool the
+        size-up suggestion draws from."""
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT u.* FROM uniforms u
+                   WHERE u.is_active=1 AND u.garment_type=?
+                     AND NOT EXISTS (SELECT 1 FROM uniform_checkouts c
+                         WHERE c.uniform_id=u.id AND c.date_returned IS NULL)
+                   ORDER BY CAST(u.item_number AS INTEGER), u.item_number""",
+                (garment_type,)).fetchall()
+
+    def checkin_uniforms_for_inactive_students(self, date_returned: str) -> int:
+        """Close open garment assignments held by students who are no longer
+        active (graduated / left).  Used at year rollover so leftover gear from
+        departed students frees up, while returning students KEEP their pieces.
+        Returns how many were checked in."""
+        with self._connect() as conn:
+            open_rows = conn.execute(
+                """SELECT c.id, c.student_id FROM uniform_checkouts c
+                   WHERE c.date_returned IS NULL AND c.student_id IS NOT NULL"""
+            ).fetchall()
+            n = 0
+            for r in open_rows:
+                active = conn.execute(
+                    "SELECT 1 FROM students WHERE id=? AND is_active=1",
+                    (r["student_id"],)).fetchone()
+                if not active:
+                    conn.execute(
+                        "UPDATE uniform_checkouts SET date_returned=?, "
+                        "notes=COALESCE(NULLIF(notes,''),'')||' [auto-returned at rollover]' "
+                        "WHERE id=?", (date_returned, r["id"]))
+                    n += 1
+        return n
 
     # ─── Loans (to another school) ──────────────────────────────────────────────
 

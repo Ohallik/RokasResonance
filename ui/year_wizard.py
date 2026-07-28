@@ -255,6 +255,19 @@ class NewSchoolYearWizard(ttk.Toplevel):
                              "a new class list"
                         ).pack(anchor=W, pady=(2, 0))
 
+        # ── Step 3.5: uniforms ──
+        step("3½", "Roll uniforms forward",
+             "Returning students KEEP the uniform pieces they had last year — "
+             "those stay assigned and won't show as available, so you don't "
+             "re-issue everyone from scratch. The option below only releases "
+             "gear still held by students who did NOT return (graduated / "
+             "dropped), so those pieces free up for reassignment. Runs on "
+             "Finish, after archiving. Nothing else about uniforms changes.")
+        self._release_uniforms_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(body, variable=self._release_uniforms_var, bootstyle=PRIMARY,
+                        text="Release uniforms held by students who didn't return"
+                        ).pack(anchor=W, pady=(2, 0))
+
         # ── Step 4: what happens next ──
         step(4, "After you finish",
              "• Teacher Tools switches to the new year — add concert and "
@@ -349,6 +362,16 @@ class NewSchoolYearWizard(ttk.Toplevel):
         archived = 0
         if self._archive_var.get():
             archived = self.main_db.archive_school_year(self.current_year)
+        # Release uniforms held by students who didn't return (now inactive after
+        # archiving).  Returning students keep theirs untouched.
+        released = 0
+        if self._release_uniforms_var.get():
+            from datetime import datetime as _dt
+            try:
+                released = self.main_db.checkin_uniforms_for_inactive_students(
+                    _dt.today().strftime("%Y-%m-%d"))
+            except Exception:
+                released = 0
         # Create the new year's Teacher Tools file
         from lesson_plan_db import get_lesson_plan_db
         get_lesson_plan_db(self.base_dir, year)
@@ -358,6 +381,9 @@ class NewSchoolYearWizard(ttk.Toplevel):
         if archived:
             parts.append(f"Archived {archived} student(s) from "
                          f"{self.current_year}.")
+        if released:
+            parts.append(f"Released {released} uniform piece(s) from students "
+                         f"who didn't return.")
         if self._imports:
             parts.append(f"Imported {len(self._imports)} class list(s).")
         parts.append("Teacher Tools is now on the new year — add your "

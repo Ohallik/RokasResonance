@@ -622,3 +622,74 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
 
     return generate_loan_form(dict(checkout), dict(instrument), out_path,
                               school_name=school_name, district_name=district_name)
+
+
+def generate_uniform_chart(db, base_dir: str, output_path: str = None) -> str:
+    """Build the 'who has which garment' chart PDF: one row per current student,
+    one column per garment type, each cell showing the item number they hold
+    (blank = not yet assigned, so missing pieces jump out).  Landscape so wide
+    garment sets fit.  Returns the output path."""
+    from reportlab.lib.pagesizes import landscape
+
+    types, rows = db.get_uniform_chart()
+
+    school_name = ""
+    try:
+        from ui.settings_dialog import load_settings
+        teacher = (load_settings(base_dir).get("teacher") or {})
+        school_name = (teacher.get("school_name") or "").strip()
+    except Exception:
+        pass
+
+    if output_path is None:
+        out_dir = os.path.join(base_dir, "uniform_charts")
+        output_path = os.path.join(
+            out_dir, f"uniform_chart_{datetime.today().strftime('%Y%m%d')}.pdf")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    doc = SimpleDocTemplate(
+        output_path, pagesize=landscape(letter),
+        leftMargin=0.5 * inch, rightMargin=0.5 * inch,
+        topMargin=0.5 * inch, bottomMargin=0.5 * inch,
+    )
+    s = _styles()
+    story = []
+    title = "Uniform Assignments"
+    if school_name:
+        title += f" — {school_name}"
+    story.append(_p(f"<b>{title}</b>", s["title"]))
+    story.append(_p(datetime.today().strftime("Printed %B %d, %Y"), s["n8"]))
+    story.append(Spacer(1, 8))
+
+    header = ["Student", "Gr"] + list(types)
+    table_data = [[_p(f"<b>{h}</b>", s["n8"]) for h in header]]
+    for r in rows:
+        line = [_p(r["student"], s["n8"]), _p(r["grade"], s["n8"])]
+        for t in types:
+            line.append(_p(r["assignments"].get(t, ""), s["n8"]))
+        table_data.append(line)
+
+    # widths: student gets the slack, garment columns share the rest evenly
+    total = 10.0 * inch
+    student_w, grade_w = 2.0 * inch, 0.4 * inch
+    gt_w = max(0.6 * inch, (total - student_w - grade_w) / max(len(types), 1))
+    col_widths = [student_w, grade_w] + [gt_w] * len(types)
+
+    tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
+    style = [
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2f5496")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+    ]
+    for i in range(1, len(table_data)):
+        if i % 2 == 0:
+            style.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#eef2f9")))
+    tbl.setStyle(TableStyle(style))
+    story.append(tbl)
+
+    doc.build(story)
+    return output_path

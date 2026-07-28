@@ -19,6 +19,7 @@ class MainMenu(ttk.Frame):
         self.teacher_name = teacher_name
         self._version = version
         self._windows = {}  # key -> Toplevel; tracks open manager windows
+        self._helper_mode = False  # restricted parent-volunteer mode
         from ui.settings_dialog import load_settings
         settings = load_settings(base_dir)
         self._program_type = (settings.get("teacher") or {}).get("program_type", "band")
@@ -202,6 +203,15 @@ class MainMenu(ttk.Frame):
         import_lbl.pack(side=LEFT)
         import_lbl.bind("<Button-1>", lambda e: self._open_import_wizard())
 
+        ttk.Label(footer_inner, text="  •  ", font=("Segoe UI", fs(8)),
+                  foreground=subtle_fg()).pack(side=LEFT)
+        helper_lbl = ttk.Label(
+            footer_inner, text="Helper Mode",
+            font=("Segoe UI", fs(8), "underline"),
+            foreground=link_fg(), cursor="hand2")
+        helper_lbl.pack(side=LEFT)
+        helper_lbl.bind("<Button-1>", lambda e: self._enter_helper_mode())
+
         # Ownership / copyright notice — proprietary software, all rights reserved.
         _copy = "© 2026 Meagan Mangum. All rights reserved."
         if self._version:
@@ -224,9 +234,36 @@ class MainMenu(ttk.Frame):
         btn_area.columnconfigure(0, weight=1)
         btn_area.columnconfigure(1, weight=1)
         self._btn_area = btn_area
+        self._build_nav_buttons()
 
+    def _build_nav_buttons(self):
+        """(Re)populate the navigation grid.  In Helper Mode only the Uniforms
+        tool is offered (with student contact data hidden) so a parent volunteer
+        can run uniform check-out without reaching any sensitive data."""
+        btn_area = self._btn_area
+        for w in btn_area.winfo_children():
+            w.destroy()
         btn_pad = min(fs(5), 10)  # internal padding, capped
         cur_row = 0
+
+        if self._helper_mode:
+            ttk.Label(
+                btn_area, text="Helper Mode — uniform check-out only",
+                font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
+            ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(4, 2))
+            cur_row += 1
+            ttk.Button(
+                btn_area, text="  👕  Uniform Check-Out",
+                command=self._open_uniforms,
+                style=f"Nav.{PRIMARY}.TButton",
+            ).grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2, ipady=btn_pad)
+            cur_row += 1
+            ttk.Button(
+                btn_area, text="  🔒  Exit Helper Mode (PIN)",
+                command=self._exit_helper_mode,
+                style=f"Nav.{SECONDARY}.TButton",
+            ).grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=(10, 2), ipady=btn_pad)
+            return
 
         # ── Inventory (things: equipment + sheet music) ──
         ttk.Label(
@@ -235,17 +272,27 @@ class MainMenu(ttk.Frame):
         ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(4, 2))
         cur_row += 1
 
+        # Equipment / Sheet Music / Uniforms share one row.  A nested 3-column
+        # frame keeps the outer 2-column grid (used by every other row) intact.
+        inv_row = ttk.Frame(btn_area)
+        inv_row.grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2)
+        for _c in (0, 1, 2):
+            inv_row.columnconfigure(_c, weight=1, uniform="inv")
         ttk.Button(
-            btn_area, text="  🎺  Equipment",
+            inv_row, text="  🎺  Equipment",
             command=self._open_inventory,
             style=f"Nav.{PRIMARY}.TButton",
-        ).grid(row=cur_row, column=0, sticky="ew", padx=(0, 3), pady=2, ipady=btn_pad)
-
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
         ttk.Button(
-            btn_area, text="  🎼  Sheet Music",
+            inv_row, text="  🎼  Sheet Music",
             command=self._open_music_manager,
             style=f"Nav.{SECONDARY}.TButton",
-        ).grid(row=cur_row, column=1, sticky="ew", padx=(3, 0), pady=2, ipady=btn_pad)
+        ).grid(row=0, column=1, sticky="ew", padx=3, ipady=btn_pad)
+        ttk.Button(
+            inv_row, text="  👕  Uniforms",
+            command=self._open_uniforms,
+            style=f"Nav.{SECONDARY}.TButton",
+        ).grid(row=0, column=2, sticky="ew", padx=(3, 0), ipady=btn_pad)
         cur_row += 1
 
         # ── Students ──
@@ -517,6 +564,79 @@ class MainMenu(ttk.Frame):
         manager.pack(fill=BOTH, expand=True)
         win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("inventory"))
         self._windows["inventory"] = win
+
+    def _open_uniforms(self):
+        if self._raise_or_open("uniforms"):
+            return
+        from ui.uniform_manager import UniformManager
+        win = ttk.Toplevel(self.winfo_toplevel())
+        win.title("Uniforms & Attire — Roka's Resonance")
+        win.state("zoomed")
+        manager = UniformManager(win, self.db, self.base_dir,
+                                 on_checkouts=self._open_active_checkouts,
+                                 helper_mode=self._helper_mode)
+        manager.pack(fill=BOTH, expand=True)
+        win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("uniforms"))
+        self._windows["uniforms"] = win
+
+    # ── Helper Mode (restricted parent-volunteer access) ──────────────────────
+    def _helper_pin(self) -> str:
+        from ui.settings_dialog import load_settings
+        return ((load_settings(self.base_dir).get("security") or {})
+                .get("helper_pin") or "").strip()
+
+    def _enter_helper_mode(self):
+        """Hand the computer to a parent volunteer: hide every tool except
+        uniform check-out (with contact data suppressed).  Requires a Helper PIN
+        to be set first, since that same PIN is what locks the director back in."""
+        import tkinter.simpledialog as sd
+        pin = self._helper_pin()
+        if not pin:
+            from ttkbootstrap.dialogs import Messagebox
+            new = sd.askstring(
+                "Set a Helper PIN",
+                "Before using Helper Mode, set a PIN the volunteer will NOT know.\n"
+                "You'll enter it to switch back to full access.\n\nNew PIN:",
+                show="•", parent=self.winfo_toplevel())
+            if not new or not new.strip():
+                return
+            from ui.settings_dialog import load_settings, save_settings
+            settings = load_settings(self.base_dir)
+            settings.setdefault("security", {})["helper_pin"] = new.strip()
+            save_settings(self.base_dir, settings)
+            pin = new.strip()
+        # Close any open sensitive windows before dropping into helper mode.
+        for key in list(self._windows):
+            w = self._windows.pop(key, None)
+            if w:
+                try:
+                    w.destroy()
+                except tk.TclError:
+                    pass
+        self._helper_mode = True
+        self._build_nav_buttons()
+
+    def _exit_helper_mode(self):
+        import tkinter.simpledialog as sd
+        from ttkbootstrap.dialogs import Messagebox
+        pin = self._helper_pin()
+        entered = sd.askstring("Exit Helper Mode", "Enter the Helper PIN:",
+                               show="•", parent=self.winfo_toplevel())
+        if entered is None:
+            return
+        if entered.strip() != pin:
+            Messagebox.show_warning("Incorrect PIN.", title="Helper Mode",
+                                    parent=self.winfo_toplevel())
+            return
+        for key in list(self._windows):
+            w = self._windows.pop(key, None)
+            if w:
+                try:
+                    w.destroy()
+                except tk.TclError:
+                    pass
+        self._helper_mode = False
+        self._build_nav_buttons()
 
     def _open_budget(self):
         if self._raise_or_open("budget"):

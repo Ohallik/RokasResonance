@@ -233,6 +233,33 @@ class SettingsDialog(ttk.Toplevel):
         ttk.Label(outer, text="Leave blank to use only your own database.",
                   font=("Segoe UI", 8), foreground="#aaa").pack(anchor=W, pady=(2, 0))
 
+        ttk.Separator(outer, orient=HORIZONTAL).pack(fill=X, pady=(14, 12))
+
+        # ── Helper Mode PIN ─────────────────────────────────────────────────
+        ttk.Label(outer, text="Helper Mode PIN",
+                  font=("Segoe UI", 10, "bold")).pack(anchor=W)
+        ttk.Label(
+            outer,
+            text="Set a PIN to switch back out of Helper Mode. Helper Mode lets a "
+                 "parent volunteer check uniforms out and in without seeing any "
+                 "student contact information or other tools. Leave blank to clear it.",
+            font=("Segoe UI", 9), foreground="#888",
+            wraplength=460, justify=LEFT,
+        ).pack(anchor=W, pady=(2, 6))
+        self._helper_pin_var = tk.StringVar()
+        pin_row = ttk.Frame(outer)
+        pin_row.pack(fill=X, pady=(0, 4))
+        self._helper_pin_entry = ttk.Entry(pin_row, textvariable=self._helper_pin_var,
+                                           width=18, show="•")
+        self._helper_pin_entry.pack(side=LEFT)
+        self._helper_pin_shown = False
+
+        def _toggle_pin():
+            self._helper_pin_shown = not self._helper_pin_shown
+            self._helper_pin_entry.config(show="" if self._helper_pin_shown else "•")
+        ttk.Button(pin_row, text="Show/Hide", bootstyle=(SECONDARY, OUTLINE),
+                   command=_toggle_pin).pack(side=LEFT, padx=(6, 0))
+
     def _build_display_tab(self, parent):
         from ui.theme import DISPLAY_THEMES, THEME_DESCRIPTIONS
         outer = ttk.Frame(parent)
@@ -644,6 +671,7 @@ class SettingsDialog(ttk.Toplevel):
         self._ext_db_entry.config(state="normal")
         self._ext_db_var.set(ext_path)
         self._ext_db_entry.config(state="readonly")
+        self._helper_pin_var.set((self._settings.get("security") or {}).get("helper_pin", ""))
 
         # LLM settings
         llm = self._settings.get("llm") or {}
@@ -693,6 +721,10 @@ class SettingsDialog(ttk.Toplevel):
         self._settings["teacher"]["school_district"] = self._school_district_var.get().strip()
         self._settings["teacher"]["school_name"] = self._school_name_var.get().strip()
         self._settings["teacher"]["external_db_path"] = self._ext_db_var.get().strip()
+
+        # Helper Mode PIN lives in its own namespace so it survives round-trips.
+        self._settings.setdefault("security", {})["helper_pin"] = \
+            self._helper_pin_var.get().strip()
 
         if "llm" not in self._settings:
             self._settings["llm"] = {}
