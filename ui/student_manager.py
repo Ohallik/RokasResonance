@@ -137,10 +137,15 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         self._filter_period_var = tk.StringVar(value="All")
         self._selected_id = None
         self._checked = set()   # student ids ticked for bulk actions
+        self._repair_prompted = False
 
         self._build()
         self._populate_year_options()
         self.refresh()
+        # A roster of ID-number "students" means a class-list import went
+        # wrong (its name column was really the Student ID column).  Offer
+        # the one-click repair as soon as the window is up.
+        self.after(400, self._offer_botched_repair)
 
     def _build(self):
         # ── Toolbar ───────────────────────────────────────────────────────────
@@ -348,6 +353,39 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         # Default to current school year (not necessarily years[0])
         if not self._year_var.get() or self._year_var.get() not in years:
             self._year_var.set(cur)
+
+    def _offer_botched_repair(self):
+        """Detect and offer to undo a botched class-list import (students whose
+        'names' are ID numbers).  Runs once per window."""
+        if self._repair_prompted:
+            return
+        try:
+            bad = self.db.find_botched_import_students()
+        except Exception:
+            return
+        if len(bad) < 2:
+            return                       # one odd record isn't a botched import
+        self._repair_prompted = True
+        if Messagebox.yesno(
+                f"{len(bad)} student records look like a failed class-list "
+                "import — their names are ID numbers and they have no other "
+                "information.\n\n"
+                "Fix this now? The ID-number records are removed and, if the "
+                "import had archived your real roster, it is restored exactly "
+                "as it was.",
+                title="Fix broken import?",
+                parent=self.winfo_toplevel()) != "Yes":
+            return
+        deleted, restored_year, restored = self.db.undo_botched_import()
+        msg = f"Removed {deleted} ID-number record(s)."
+        if restored_year:
+            msg += (f"\nRestored your {restored_year} roster "
+                    f"({restored} students).")
+            self._year_var.set(restored_year)
+        Messagebox.show_info(msg, title="Import repaired",
+                             parent=self.winfo_toplevel())
+        self._populate_year_options()
+        self.refresh()
 
     def refresh(self):
         year = self._year_var.get() or None

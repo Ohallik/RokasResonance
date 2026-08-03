@@ -62,8 +62,17 @@ def read_class_csv(path):
         return []
     headers = [h.strip().lower() for h in rows[0]]
 
-    def find(*keys):
+    def _is_id_header(h):
+        """Headers that hold ID NUMBERS, never names.  'Student ID' contains
+        the word 'student', which is exactly how a district export once got a
+        whole class imported with ID numbers as their names."""
+        words = h.replace("#", " id ").split()
+        return any(w in ("id", "perm", "sis", "number", "no") for w in words)
+
+    def find(*keys, allow_id=False):
         for i, h in enumerate(headers):
+            if not allow_id and _is_id_header(h):
+                continue
             if any(k in h for k in keys):
                 return i
         return None
@@ -72,6 +81,7 @@ def read_class_csv(path):
         "first": find("first"),
         "last": find("last"),
         "name": find("student name", "name", "student"),
+        "sid": find("student id", "perm id", "id", allow_id=True),
         "instrument": find("instrument"),
     }
     has_header = (cols["first"] is not None or cols["last"] is not None
@@ -82,12 +92,13 @@ def read_class_csv(path):
         cols = {"first": 0 if len(rows[0]) > 1 else None,
                 "last": 1 if len(rows[0]) > 1 else None,
                 "name": 0 if len(rows[0]) == 1 else None,
-                "instrument": None}
+                "sid": None, "instrument": None}
         data = rows
     else:
         data = rows[1:]
 
     out = []
+    numeric_names = 0
     for row in data:
         if not any((c or "").strip() for c in row):
             continue
@@ -95,10 +106,27 @@ def read_class_csv(path):
         first, last = _split_name(row, cols)
         if not (first or last):
             continue
+        if f"{first}{last}".strip().replace("-", "").isdigit():
+            numeric_names += 1
+            continue                    # an ID number is not a student
+        sid = ""
+        if cols.get("sid") is not None:
+            sid = (row[cols["sid"]] or "").strip()
         inst = ""
         if cols.get("instrument") is not None:
             inst = (row[cols["instrument"]] or "").strip()
-        out.append({"first": first, "last": last, "instrument": inst})
+        out.append({"first": first, "last": last, "instrument": inst,
+                    "student_id": sid})
+
+    # If the "names" were mostly numbers, the file's name column was never
+    # found.  Importing that would fill the roster with ID-number students —
+    # refuse loudly instead of quietly wrecking the year.
+    if numeric_names and numeric_names >= max(1, len(out)):
+        raise ValueError(
+            "This file's student-name column couldn't be identified — the "
+            "names parsed as ID numbers. Open the file and make sure it has "
+            "a name column (e.g. 'Student Name' or 'First Name'/'Last "
+            "Name'), then try again. Nothing was imported.")
     return out
 
 
@@ -122,8 +150,17 @@ def import_class_list(db, students, school_year, ensemble, periods):
     Returning students (matched by name, any year) are rolled forward and
     reactivated; unknown names become new records.  Returns (added, updated)."""
     all_students = [dict(r) for r in db.get_all_students(include_inactive=True)]
+    by_sid = {}
+    for s in all_students:
+        sid = (s.get("student_id") or "").strip()
+        if sid and sid not in by_sid:
+            by_sid[sid] = s
 
-    def match(first, last):
+    def match(first, last, sid=""):
+        # District student ID is the strongest key — names get respelled
+        # between exports, IDs don't.
+        if sid and sid in by_sid:
+            return by_sid[sid]
         fl, ll = first.strip().lower(), last.strip().lower()
         if not fl or not ll:
             return None
@@ -141,7 +178,12 @@ def import_class_list(db, students, school_year, ensemble, periods):
     added = updated = 0
     touched_ids = []
     for stu in students:
-        existing = match(stu["first"], stu["last"])
+        # Never create a "student" whose name is an ID number — the parser
+        # refuses whole files of these, and this catches any stragglers.
+        if f"{stu['first']}{stu['last']}".strip().replace("-", "").isdigit():
+            continue
+        existing = match(stu["first"], stu["last"],
+                         (stu.get("student_id") or "").strip())
         if existing:
             rolled_forward = (existing.get("school_year") or "") != school_year
             data = dict(existing)
@@ -158,6 +200,9 @@ def import_class_list(db, students, school_year, ensemble, periods):
                 data["class_periods"] = ""
             if stu["instrument"] and not (data.get("primary_instrument") or "").strip():
                 data["primary_instrument"] = stu["instrument"]
+            if (stu.get("student_id") or "").strip() and not (
+                    data.get("student_id") or "").strip():
+                data["student_id"] = stu["student_id"].strip()
             db.update_student(existing["id"], data)
             if rolled_forward:
                 # Honors / Jr. All-State are earned fresh each year
@@ -170,6 +215,7 @@ def import_class_list(db, students, school_year, ensemble, periods):
                 "first_name": stu["first"], "last_name": stu["last"],
                 "school_year": school_year,
                 "primary_instrument": stu["instrument"],
+                "student_id": (stu.get("student_id") or "").strip(),
             })
             touched_ids.append(sid)
             added += 1

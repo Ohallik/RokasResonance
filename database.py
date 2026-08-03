@@ -1397,6 +1397,56 @@ class Database:
                 "SELECT * FROM students WHERE id=?", (student_id,)
             ).fetchone()
 
+    # ── Botched-import repair ──────────────────────────────────────────────
+    # A class-list CSV whose name column was really the Student ID column once
+    # imported a whole year of "students" named 1006424, 3007735, … while the
+    # real roster sat archived under the previous year.  The parser now refuses
+    # such files, but any database already damaged needs a way back.
+
+    @staticmethod
+    def _is_id_name(row) -> bool:
+        name = f"{row['first_name'] or ''}{row['last_name'] or ''}".strip()
+        return bool(name) and name.replace("-", "").replace(" ", "").isdigit()
+
+    def find_botched_import_students(self):
+        """Rows whose entire name is a number — the signature of the bad
+        import.  Returns the full rows so callers can show/count them."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM students").fetchall()
+        return [r for r in rows if self._is_id_name(r)]
+
+    def undo_botched_import(self):
+        """Delete ID-named students; if that leaves the newest school year
+        with no active students, re-activate the most recent year that has
+        any (the roster the bad import displaced).
+
+        Returns ``(deleted, restored_year, restored_count)`` —
+        ``restored_year`` is None when nothing needed re-activating."""
+        bad = self.find_botched_import_students()
+        with self._connect() as conn:
+            for r in bad:
+                conn.execute("DELETE FROM students WHERE id=?", (r["id"],))
+        restored_year, restored = None, 0
+        with self._connect() as conn:
+            newest = conn.execute(
+                "SELECT school_year FROM students WHERE school_year IS NOT NULL "
+                "ORDER BY school_year DESC LIMIT 1").fetchone()
+            if newest:
+                year = newest["school_year"]
+                n_active = conn.execute(
+                    "SELECT COUNT(*) FROM students WHERE school_year=? "
+                    "AND is_active=1", (year,)).fetchone()[0]
+                if n_active == 0:
+                    # The newest roster is fully archived — that's the wizard's
+                    # close-out with nothing valid imported after it.  Bring
+                    # the displaced roster back.
+                    restored_year = year
+                    cur = conn.execute(
+                        "UPDATE students SET is_active=1 WHERE school_year=?",
+                        (year,))
+                    restored = cur.rowcount
+        return len(bad), restored_year, restored
+
     def get_current_roster(self):
         """Current, active members only — for every dropdown/autocomplete in the
         app.  Uses the most recent enrolled school year (so students who left or
