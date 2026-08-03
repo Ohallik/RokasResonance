@@ -110,3 +110,148 @@ def instruments_for(program_type: str):
         # let directors zone and shuffle within a part.
         return ORCHESTRA_INSTRUMENTS + ["Other"]
     return BAND_INSTRUMENTS + ["Other"]
+
+
+def roster_ensembles(main_db, school_year=None):
+    """Every class name that actually appears on student records, in roster
+    order.  This is what the data says, as opposed to what the setup wizard
+    configured."""
+    seen = []
+    if main_db is None:
+        return seen
+    try:
+        rows = main_db.get_students_for_email(school_year=school_year)
+    except Exception:
+        return seen
+    for r in rows:
+        try:
+            raw = r["ensembles"]
+        except Exception:
+            raw = ""
+        for e in (raw or "").split(","):
+            e = e.strip()
+            if e and e not in seen:
+                seen.append(e)
+    return seen
+
+
+def selectable_ensembles(main_db, school_year=None, program_type="band",
+                         base_dir=None, include_empty=False):
+    """What a class picker should offer.
+
+    The configured class list and the names actually on student records drift
+    apart constantly and silently.  A roster imported from Synergy says "Entry
+    Band"; the default registry says "MS Band (Entry)".  Offering only the
+    registry names means every filter, export and count matches nothing — the
+    picker looks fine and quietly returns zero students, which reads as "I have
+    no flutes" rather than "these two lists don't line up".
+
+    ``include_empty=False`` (the default, for FILTERING and COUNTING) offers
+    only classes that actually have students — a class with nobody in it can
+    only ever return zero, so listing it is noise.
+    ``include_empty=True`` (for ASSIGNING and EDITING) also offers configured
+    classes that are still empty, since putting the first student into one is
+    exactly the point.
+
+    Configured order first (that's the teacher's own ordering), then whatever
+    else the roster mentions.  De-duplicated by class IDENTITY — a roster's
+    "Entry Band" and the registry's "MS Band (Entry)" are one class, offered
+    once, under the configured (canonical) spelling.
+    """
+    import class_registry as cr
+    configured = ensembles_for(program_type, base_dir)
+    found = roster_ensembles(main_db, school_year)
+    out, seen = [], set()
+
+    def add(name):
+        key = cr.class_identity(name)
+        if key not in seen:
+            seen.add(key)
+            out.append(name)
+
+    for e in configured:                     # set up AND populated → canonical
+        if any(cr.same_class(e, f) for f in found):
+            add(e)
+    for f in found:                          # populated only (roster spelling)
+        add(f)
+    if include_empty or not out:
+        # Configured-but-empty classes; also the fallback when the roster
+        # names nothing at all, so a brand-new profile still has choices.
+        for e in configured:
+            add(e)
+    return out
+
+
+def display_class(name):
+    """Short display form of one class name ("MS Band (Entry)" → "Entry")."""
+    import class_registry as cr
+    return cr.short_class_label(name)
+
+
+def class_display_map(names):
+    """{full name: display label} for a picker — short labels, unless two
+    offered classes would collide (then those keep their full names)."""
+    import class_registry as cr
+    return cr.display_map(names)
+
+
+def class_periods_for(main_db, school_year, ensemble):
+    """The class periods ``ensemble`` actually meets, read from the roster.
+
+    A period counts as a real section of this class only if it holds at least
+    half as many of the class's students as its biggest section — otherwise a
+    single student's OTHER class shows up as a phantom period.  Returns [] when
+    nothing is known, which callers treat as "whole ensemble, no sections".
+
+    Same rule the seating chart uses; kept here so the percussion sections, the
+    agendas, and the charts all agree on what "Period 1" means.
+    """
+    from collections import Counter
+    if not main_db or not ensemble:
+        return []
+    try:
+        studs = main_db.get_students_for_email(school_year=school_year,
+                                               ensemble=ensemble)
+    except Exception:
+        return []
+    counts = Counter()
+    for r in studs:
+        for p in (r["class_periods"] or "").split(","):
+            p = p.strip()
+            if p:
+                counts[p] += 1
+    if not counts:
+        return []
+    top = max(counts.values())
+    return sorted([p for p, c in counts.items() if c >= top * 0.5],
+                  key=lambda x: (len(x), x))
+
+
+# ── Score order ───────────────────────────────────────────────────────────────
+# Directors read a roster top-of-score down (piccolo → tuba → percussion), never
+# alphabetically.  Anything sorted or counted by instrument (the Student Manager
+# "Instrument" column, the numbers-per-part count) uses this order so the list
+# matches the score on the stand.
+
+SCORE_ORDER = (
+    ["Piccolo"] + BAND_INSTRUMENTS[:BAND_INSTRUMENTS.index("Percussion")]
+    + ORCHESTRA_INSTRUMENTS
+    + CHOIR_PARTS
+    + ["Drums", "Vibraphone", "Guitar", "Bass", "Voice", "Percussion"]
+)
+_SCORE_RANK = {name.lower(): i for i, name in enumerate(SCORE_ORDER)}
+
+
+def instrument_sort_key(name: str):
+    """``(rank, name)`` for one instrument, in score order.
+
+    Known instruments rank by position in the score; unrecognised ones (a
+    teacher typed "Contra Clarinet") fall in after them but before blanks, so
+    the sort stays total and nothing silently disappears."""
+    clean = (name or "").strip()
+    if not clean:
+        return (9999, "")                     # blank instruments sort last
+    rank = _SCORE_RANK.get(clean.lower())
+    if rank is None:
+        return (5000, clean.lower())          # unknown but named
+    return (rank, clean.lower())

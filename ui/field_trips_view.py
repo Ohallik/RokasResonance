@@ -16,7 +16,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
 
-from ui.theme import fs, muted_fg, subtle_fg, fit_window
+from ui.theme import fs, muted_fg, subtle_fg, fit_window, scroll_body
 import concert_tools as ct
 import field_trip_tools as ft
 
@@ -54,11 +54,6 @@ class FieldTripsView(ttk.Frame):
                    bootstyle=(INFO, OUTLINE),
                    command=self._export_roster).pack(side=RIGHT, padx=(0, 4))
 
-    def _export_roster(self):
-        from ui.roster_export_view import open_roster_export
-        open_roster_export(self, self.main_db, self.base_dir, self._student_year(),
-                           context="For a field trip: choose the class(es) going.")
-
         # ── Upcoming trips: scrollable cards, Word-doc style ──
         up_frame = tk.LabelFrame(self, text=" Upcoming Field Trips ",
                                  font=("Segoe UI", fs(10), "bold"),
@@ -77,6 +72,11 @@ class FieldTripsView(ttk.Frame):
 
         self._past_dbs = {}
         self.refresh()
+
+    def _export_roster(self):
+        from ui.roster_export_view import open_roster_export
+        open_roster_export(self, self.main_db, self.base_dir, self._student_year(),
+                           context="For a field trip: choose the class(es) going.")
 
     def _scroll_area(self, parent):
         """A vertical-scrolling inner frame (mouse wheel works on hover)."""
@@ -117,8 +117,10 @@ class FieldTripsView(ttk.Frame):
         from ui.settings_dialog import load_settings
         teacher = (load_settings(self.base_dir).get("teacher") or {})
         school = (teacher.get("school_name") or "").strip()
-        director = os.path.basename(self.base_dir.rstrip("\\/"))
-        return school, director
+        # First + last only ("Meagan Mangum") — programs and emails never get
+        # the profile folder's middle initial.  Settings can override.
+        from ui.names import director_name
+        return school, director_name(self.base_dir)
 
     def _program_type(self):
         from ui.settings_dialog import load_settings
@@ -328,7 +330,8 @@ class FieldTripsView(ttk.Frame):
 
     def _new_trip(self, template=None):
         seed = dict(template) if template else None
-        dlg = _TripDialog(self, seed=seed, program_type=self._program_type())
+        dlg = _TripDialog(self, seed=seed, program_type=self._program_type(),
+                          main_db=self.main_db, student_year=self._student_year())
         self.wait_window(dlg)
         if dlg.result:
             # A template contributes what the dialog doesn't show (extra
@@ -391,7 +394,8 @@ class FieldTripsView(ttk.Frame):
 
     def _edit_trip(self, t):
         dlg = _TripDialog(self, seed=dict(t),
-                          program_type=self._program_type(), editing=True)
+                          program_type=self._program_type(), editing=True,
+                          main_db=self.main_db, student_year=self._student_year())
         self.wait_window(dlg)
         if dlg.result:
             self.db.update_field_trip(t["id"], dlg.result)
@@ -546,7 +550,8 @@ class _PastTripDialog(ttk.Toplevel):
 # ═══════════════════════════════════════════ Trip editor ═════════════════════
 
 class _TripDialog(ttk.Toplevel):
-    def __init__(self, parent, seed=None, program_type="band", editing=False):
+    def __init__(self, parent, seed=None, program_type="band", editing=False,
+                 main_db=None, student_year=None):
         super().__init__(parent.winfo_toplevel())
         self.result = None
         seed = seed or {}
@@ -564,8 +569,7 @@ class _TripDialog(ttk.Toplevel):
         ttk.Button(btns, text="Save", bootstyle=SUCCESS,
                    command=self._save).pack(side=RIGHT, padx=4)
 
-        body = ttk.Frame(self)
-        body.pack(fill=BOTH, expand=True, padx=16, pady=4)
+        body = scroll_body(self, padx=16, pady=4)
         self._vars = {}
 
         def entry(parent, label, key, width=24, hint=""):
@@ -584,20 +588,30 @@ class _TripDialog(ttk.Toplevel):
         # Groups
         ttk.Label(body, text="Class or group(s) attending",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(8, 2))
-        from ui.ensembles import ensembles_for
-        std = ensembles_for(program_type)
+        # Offer the classes the roster really uses: this list is matched back
+        # against student records to build the attending roster.
+        from ui.ensembles import selectable_ensembles
+        # A class with no students can't attend anything, so only real
+        # ones are offered; anything unusual goes in "Other groups".
+        std = selectable_ensembles(main_db, student_year, program_type)
         chosen = set(g.strip() for g in
                      (seed.get("groups_list") or "").split(",") if g.strip())
         self._grp_vars = {}
         grid = ttk.Frame(body)
         grid.pack(anchor=W)
+        from ui.ensembles import class_display_map
+        import class_registry as cr
+        dmap = class_display_map(std)
         for i, g in enumerate(std):
-            bv = tk.BooleanVar(value=g in chosen)
+            # Tick by identity so an old trip saved as "Entry Band" still
+            # shows checked when the picker offers "MS Band (Entry)".
+            bv = tk.BooleanVar(value=any(cr.same_class(g, c) for c in chosen))
             self._grp_vars[g] = bv
-            ttk.Checkbutton(grid, text=g, variable=bv, bootstyle=PRIMARY
+            ttk.Checkbutton(grid, text=dmap[g], variable=bv, bootstyle=PRIMARY
                             ).grid(row=i // 3, column=i % 3, sticky=W,
                                    padx=(0, 14), pady=2)
-        extras = [g for g in chosen if g not in std]
+        extras = [g for g in chosen
+                  if not any(cr.same_class(g, e) for e in std)]
         self._extra_grp = tk.StringVar(value=", ".join(extras))
         ttk.Label(body, text="Other groups (comma-separated)",
                   font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W)

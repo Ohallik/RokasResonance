@@ -1296,14 +1296,21 @@ class MusicManager(ttk.Frame):
             ens = ens_var.get()
             all_rows = self.db.get_performances_by_ensemble("All")
 
-            if cohort_var.get() and ens != "All" and ens in levels:
+            # History spellings and registry labels drift ("Entry Band" vs
+            # "MS Band (Entry)") — every comparison here is by class identity.
+            from class_registry import same_class, csv_has_class
+            level_ix = next((i for i, l in enumerate(levels)
+                             if same_class(l, ens)), None)
+
+            if cohort_var.get() and ens != "All" and level_ix is not None:
                 # Progression cohort: walk this level back one step per prior year.
                 y0 = year_var.get()
-                L = levels.index(ens)
+                L = level_ix
                 chain = [(levels[L - k], _shift_sy(y0, k)) for k in range(L + 1)]
                 wanted = {(lvl, yr) for lvl, yr in chain}
                 rows = [r for r in all_rows
-                        if any((lvl in _members(r) and _sy_of(r["performance_date"]) == yr)
+                        if any((csv_has_class(r["ensemble"], lvl)
+                                and _sy_of(r["performance_date"]) == yr)
                                for lvl, yr in wanted)]
                 rows.sort(key=lambda r: r["performance_date"] or "", reverse=True)
                 desc = "  →  ".join(f"{lvl} ({yr})" for lvl, yr in chain)
@@ -1311,7 +1318,7 @@ class MusicManager(ttk.Frame):
                                  f"their progression:  {desc}")
             elif cohort_var.get() and ens != "All":
                 # Non-leveled (Jazz, Other): its own history, most recent first.
-                rows = [r for r in all_rows if ens in _members(r)]
+                rows = [r for r in all_rows if csv_has_class(r["ensemble"], ens)]
                 rows.sort(key=lambda r: r["performance_date"] or "", reverse=True)
                 note.config(text=f"Showing all {ens} performances (most recent first) — "
                                  f"check a current member hasn't already played a piece.")

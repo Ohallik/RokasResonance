@@ -38,19 +38,26 @@ class LessonPlansHub(ttk.Frame):
         header = ttk.Frame(self, bootstyle=PRIMARY)
         header.pack(fill=X)
 
+        # Buttons are packed BEFORE the title so a narrow window truncates the
+        # description rather than pushing the buttons off the right edge.
+        # New School Year lives on the main hub now — it rolls the whole
+        # program forward (rosters included), so it belongs next to the students
+        # it moves rather than inside the lesson-planning tools.
+        ttk.Button(
+            header, text="🗂 Manage Classes…", bootstyle=LIGHT,
+            command=self._open_manage_classes,
+        ).pack(side=RIGHT, padx=(0, 16), pady=8)
+        ttk.Button(
+            header, text="🔢 Numbers Per Part…", bootstyle=LIGHT,
+            command=self._open_numbers_per_part,
+        ).pack(side=RIGHT, padx=(0, 4), pady=8)
+
         ttk.Label(
             header,
             text="🧰  Teacher Tools",
             font=("Segoe UI", fs(16), "bold"),
             bootstyle=(INVERSE, PRIMARY),
         ).pack(side=LEFT, padx=16, pady=12)
-
-        ttk.Label(
-            header,
-            text="Seating charts, percussion rotations, concert planning & more",
-            font=("Segoe UI", fs(9)),
-            bootstyle=(INVERSE, PRIMARY),
-        ).pack(side=LEFT, padx=(0, 8), pady=12)
 
         # School year selector
         year_frame = ttk.Frame(header, bootstyle=PRIMARY)
@@ -69,22 +76,22 @@ class LessonPlansHub(ttk.Frame):
         self._populate_year_selector()
         self._year_combo.bind("<<ComboboxSelected>>",
                               lambda e: self._switch_school_year())
+        ttk.Label(
+            header,
+            text="Seating charts, percussion rotations, concert planning & more",
+            font=("Segoe UI", fs(9)),
+            bootstyle=(INVERSE, PRIMARY),
+        ).pack(side=LEFT, padx=(8, 8), pady=12)
 
-        ttk.Button(
-            header, text="📦 New School Year…", bootstyle=LIGHT,
-            command=self._open_year_wizard,
-        ).pack(side=RIGHT, padx=(0, 16), pady=8)
-        ttk.Button(
-            header, text="🗂 Manage Classes…", bootstyle=LIGHT,
-            command=self._open_manage_classes,
-        ).pack(side=RIGHT, padx=(0, 4), pady=8)
-
-        # ── Notebook (tools + one agenda tab per class in the registry) ────────
+        # ── Notebook ─────────────────────────────────────────────────────────
+        # Exactly five tabs, no matter how many classes the teacher runs.  A tab
+        # strip that grows a new entry per class becomes unreadable by the time
+        # someone teaches six sections, so Jazz is a toggle inside Percussion and
+        # every class's agenda lives behind one class picker inside Agendas.
         self._notebook = ttk.Notebook(self, bootstyle=PRIMARY)
         self._notebook.pack(fill=BOTH, expand=True)
         self._seating = self._percussion = self._concerts = None
-        self._field_trips = self._jazz = None
-        self._agenda_views = []
+        self._field_trips = self._agendas = None
         self._populate_notebook()
         self._notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
@@ -110,7 +117,6 @@ class LessonPlansHub(ttk.Frame):
             w = self._notebook.nametowidget(tab_id)
             self._notebook.forget(tab_id)
             w.destroy()
-        self._agenda_views = []
         classes = self._classes()
         program = self._program_type()
 
@@ -121,11 +127,15 @@ class LessonPlansHub(ttk.Frame):
 
         self._percussion = None
         # Choir/orchestra never have percussion; otherwise show the tab if any
-        # class uses a percussion rotation.
-        if program not in ("choir", "orchestra") and any(
-                k.get("percussion") for k in classes):
-            from ui.percussion_rotation_view import PercussionRotationView
-            self._percussion = PercussionRotationView(self._notebook, self.db)
+        # class uses a percussion rotation OR the teacher runs a jazz band
+        # (whose rhythm-section rotation shares this tab).
+        has_jazz = any(k.get("template") == "jazz" for k in classes)
+        if program not in ("choir", "orchestra") and (
+                has_jazz or any(k.get("percussion") for k in classes)):
+            self._percussion = _RotationsTab(
+                self._notebook, self.db, self.main_db, self._base_dir,
+                show_concert=any(k.get("percussion") for k in classes),
+                show_jazz=has_jazz)
             self._notebook.add(self._percussion, text="  🥁 Percussion  ")
 
         from ui.concerts_view import ConcertsView
@@ -138,18 +148,25 @@ class LessonPlansHub(ttk.Frame):
                                            self.main_db, self._base_dir)
         self._notebook.add(self._field_trips, text="  🚌 Field Trips  ")
 
-        self._jazz = None
-        if any(k.get("template") == "jazz" for k in classes):
-            from ui.jazz_view import JazzView
-            self._jazz = JazzView(self._notebook, self.db)
-            self._notebook.add(self._jazz, text="  🎷 Jazz  ")
+        self._agendas = _AgendasTab(self._notebook, self.db, self.main_db,
+                                    self._base_dir, classes)
+        self._notebook.add(self._agendas, text="  📋 Agendas  ")
 
-        from ui.agendas_view import AgendasView
-        for k in classes:
-            av = AgendasView(self._notebook, self.db, self.main_db,
-                             self._base_dir, klass=k)
-            self._notebook.add(av, text=f"  📋 {k['label']}  ")
-            self._agenda_views.append(av)
+    def _open_numbers_per_part(self):
+        from ui.instrumentation_view import open_instrumentation
+        open_instrumentation(self, self.main_db, self._base_dir,
+                             self._student_year())
+
+    def _student_year(self):
+        """The roster year matching the hub's selected school year (falling
+        back to the newest year that actually has students)."""
+        try:
+            years = self.main_db.get_school_years()
+        except Exception:
+            return self._current_year
+        if self._current_year in years:
+            return self._current_year
+        return years[0] if years else self._current_year
 
     def _open_manage_classes(self):
         classes = self._classes()
@@ -175,8 +192,8 @@ class LessonPlansHub(ttk.Frame):
 
     def _tabs(self):
         core = [self._seating, self._percussion, self._concerts,
-                self._field_trips, self._jazz]
-        return [t for t in core if t is not None] + list(self._agenda_views)
+                self._field_trips, self._agendas]
+        return [t for t in core if t is not None]
 
     def _on_tab_changed(self, event):
         """Refresh the active tab's data when switching to it."""
@@ -190,14 +207,21 @@ class LessonPlansHub(ttk.Frame):
     # ── School years ─────────────────────────────────────────────────────────
 
     def _populate_year_selector(self):
-        from lesson_plan_db import list_available_school_years, current_school_year
-        years = list_available_school_years(self._base_dir)
+        """Past years and the current one — never a year that hasn't started.
+
+        Previous years are here to look things up; there is no reason to plan
+        into a year the roster hasn't been rolled into yet, and doing so files
+        the work somewhere the teacher will never find it again.  The New School
+        Year wizard (on the main hub) is what opens the next year."""
+        from lesson_plan_db import (list_available_school_years,
+                                    current_school_year, past_and_current_years)
+        years = past_and_current_years(list_available_school_years(self._base_dir))
         cur = current_school_year()
         if cur not in years:
             years.insert(0, cur)
-        if self._current_year not in years:
+        if self._current_year not in years and self._current_year:
             years.insert(0, self._current_year)
-        years.sort(reverse=True)
+        years = sorted(set(years), reverse=True)
         self._year_combo.config(values=years)
         self._year_combo.set(self._current_year)
 
@@ -219,14 +243,146 @@ class LessonPlansHub(ttk.Frame):
         self._year_combo.set(year)
         self._switch_school_year()
 
-    def _open_year_wizard(self):
-        from ui.year_wizard import NewSchoolYearWizard
-        wiz = NewSchoolYearWizard(self.winfo_toplevel(), self.main_db,
-                                  self._base_dir,
-                                  current_year=self._current_year)
-        self.wait_window(wiz)
-        if wiz.new_year:
-            self.switch_to_year(wiz.new_year)
+
+# ══════════════════════════════════════════════════════════ container tabs ═══
+# Both of these exist to keep the tab strip at five entries.  Each owns a set of
+# child views, shows one at a time behind a toggle, and forwards the hub's two
+# contract points (``db`` assignment on a year switch, and ``refresh()``).
+
+class _SwitcherTab(ttk.Frame):
+    """Base for a tab that hosts several views behind a toggle bar.
+
+    Children are built LAZILY — a teacher with eight classes shouldn't pay to
+    construct eight agenda editors to look at one.
+    """
+
+    def __init__(self, parent, db):
+        super().__init__(parent)
+        self._db = db
+        self._views = {}          # key -> child view
+        self._active = None
+
+        self._bar = ttk.Frame(self, bootstyle=LIGHT)
+        self._bar.pack(fill=X)
+        self._host = ttk.Frame(self)
+        self._host.pack(fill=BOTH, expand=True)
+
+    # The hub reassigns ``tab.db`` when the school year changes; push it down.
+    @property
+    def db(self):
+        return self._db
+
+    @db.setter
+    def db(self, value):
+        self._db = value
+        for view in self._views.values():
+            view.db = value
+            # Views that cache per-year data (the mallet inventory) must drop it,
+            # or the new year would render with the old year's equipment list.
+            if hasattr(view, "_inv_cache"):
+                del view._inv_cache
+
+    def _make_view(self, key):
+        raise NotImplementedError
+
+    def _show(self, key):
+        if key is None:
+            return
+        view = self._views.get(key)
+        if view is None:
+            view = self._make_view(key)
+            if view is None:
+                return
+            self._views[key] = view
+        if self._active is not None and self._active != key:
+            prev = self._views.get(self._active)
+            if prev is not None:
+                prev.pack_forget()
+        self._active = key
+        view.pack(fill=BOTH, expand=True)
+        if hasattr(view, "refresh"):
+            view.refresh()
+
+    def refresh(self):
+        view = self._views.get(self._active)
+        if view is not None and hasattr(view, "refresh"):
+            view.refresh()
+
+    def _toggle_button(self, key, text, var):
+        ttk.Radiobutton(self._bar, text=text, value=key, variable=var,
+                        bootstyle=(PRIMARY, "toolbutton"),
+                        command=lambda k=key: self._show(k)
+                        ).pack(side=LEFT, padx=2, pady=4)
+
+
+class _RotationsTab(_SwitcherTab):
+    """Percussion: the concert-band rotation and (if the teacher runs one) the
+    jazz rhythm-section rotation, behind one toggle instead of two tabs."""
+
+    def __init__(self, parent, db, main_db, base_dir,
+                 show_concert=True, show_jazz=False):
+        super().__init__(parent, db)
+        self.main_db = main_db
+        self.base_dir = base_dir
+        options = ([("concert", "🥁 Concert Band")] if show_concert else []) + \
+                  ([("jazz", "🎷 Jazz")] if show_jazz else [])
+        first = options[0][0] if options else None
+        self._var = tk.StringVar(value=first or "")
+        if len(options) > 1:
+            ttk.Label(self._bar, text="Rotation:", font=("Segoe UI", fs(9)),
+                      foreground=muted_fg()).pack(side=LEFT, padx=(8, 4))
+            for key, text in options:
+                self._toggle_button(key, text, self._var)
+        self._show(first)
+
+    def _make_view(self, key):
+        if key == "jazz":
+            from ui.jazz_view import JazzView
+            return JazzView(self._host, self._db)
+        from ui.percussion_rotation_view import PercussionRotationView
+        return PercussionRotationView(self._host, self._db,
+                                      main_db=self.main_db,
+                                      base_dir=self.base_dir)
+
+
+class _AgendasTab(_SwitcherTab):
+    """One Agendas tab for every class the teacher runs.
+
+    Previously each class claimed its own notebook tab, which is what made the
+    strip unreadable.  The class picker here is the same information in one
+    row — and it's built from the class registry, so adding a class in Manage
+    Classes is the only place a class name is ever typed.
+    """
+
+    def __init__(self, parent, db, main_db, base_dir, classes):
+        super().__init__(parent, db)
+        self.main_db = main_db
+        self.base_dir = base_dir
+        self._classes = {k["id"]: k for k in classes}
+        first = classes[0]["id"] if classes else None
+        self._var = tk.StringVar(value=first or "")
+        ttk.Label(self._bar, text="Class:", font=("Segoe UI", fs(9)),
+                  foreground=muted_fg()).pack(side=LEFT, padx=(8, 4))
+        # Short display labels ("Entry", "Jazz") — full names stay in Manage
+        # Classes; the toggle is keyed by class id, so the label is pure display.
+        import class_registry as cr
+        dmap = cr.display_map([k["label"] for k in classes])
+        for k in classes:
+            self._toggle_button(k["id"], dmap[k["label"]], self._var)
+        if not classes:
+            ttk.Label(self._bar,
+                      text="No classes yet — add them with “Manage Classes…”.",
+                      font=("Segoe UI", fs(9)),
+                      foreground=muted_fg()).pack(side=LEFT, padx=8, pady=6)
+        self._show(first)
+
+    def _make_view(self, key):
+        klass = self._classes.get(key)
+        if klass is None:
+            return None
+        from ui.agendas_view import AgendasView
+        return AgendasView(self._host, self._db, self.main_db,
+                           self.base_dir, klass=klass)
 
 
 # ── Template display names for the Manage Classes picker ──────────────────────

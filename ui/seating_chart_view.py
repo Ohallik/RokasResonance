@@ -420,7 +420,11 @@ class SeatingChartView(ttk.Frame):
                 li = (s["last"][:1] or "").upper()
                 s["name"] = f"{s['base']} {li}." if li else s["base"]
             return
-        # 'first' — disambiguate only on collision.
+        # 'first' — disambiguate only on collision, per student: two Andrews
+        # become "Andrew K." and "Andrew S.", and only students whose last
+        # INITIALS also collide (Andrew Kim / Andrew Kam) escalate to the full
+        # last name.  A third Andrew with a unique initial keeps "Andrew S." —
+        # the escalation never spreads past the students who actually need it.
         from collections import defaultdict
         groups = defaultdict(list)
         for s in studs:
@@ -430,11 +434,10 @@ class SeatingChartView(ttk.Frame):
                 members[0]["name"] = base
                 continue
             inits = [(m["last"][:1] or "").upper() for m in members]
-            if all(inits) and len(set(inits)) == len(members):
-                for m in members:
-                    m["name"] = f"{base} {(m['last'][:1] or '').upper()}."
-            else:
-                for m in members:
+            for m, ini in zip(members, inits):
+                if ini and inits.count(ini) == 1:
+                    m["name"] = f"{base} {ini}."
+                else:
                     m["name"] = f"{base} {m['last']}".strip()
 
     def _zones_0based(self, caps):
@@ -621,6 +624,16 @@ class SeatingChartView(ttk.Frame):
 
     # ─────────────────────────────────────────────────────── group / setup ───
 
+    def _roster_ensembles(self, year):
+        """The classes this chart can be built from — the ones the ROSTER uses.
+
+        Offering only the class-registry labels means a roster imported with
+        different names ("Entry Band" vs "MS Band (Entry)") produces an empty
+        picker and a chart that can never be built.  Shared with every other
+        class picker in the app — see ui.ensembles.selectable_ensembles."""
+        from ui.ensembles import selectable_ensembles
+        return selectable_ensembles(self.main_db, year, self.program_type)
+
     def _ensemble_periods(self):
         """{ensemble: [real class periods]} for ensembles that have students.
 
@@ -632,7 +645,7 @@ class SeatingChartView(ttk.Frame):
         from collections import Counter
         year = self._student_year()
         out = {}
-        for e in ensembles_for(self.program_type):
+        for e in self._roster_ensembles(year):
             studs = self.main_db.get_students_for_email(school_year=year, ensemble=e)
             if not studs:
                 continue
@@ -653,9 +666,38 @@ class SeatingChartView(ttk.Frame):
                             key=lambda x: (len(x), x))
         return out
 
+    def _roster_diagnostic(self):
+        """Why the class picker might be empty, in the teacher's terms."""
+        year = self._student_year()
+        try:
+            all_years = self.main_db.get_school_years()
+        except Exception:
+            all_years = []
+        try:
+            n = len(self.main_db.get_students_for_email(school_year=year))
+        except Exception:
+            n = 0
+        bits = [f"Looking at the {year or 'current'} school year, "
+                f"which has {n} student{'' if n == 1 else 's'}."]
+        if not n:
+            other = [y for y in all_years if y != year]
+            if other:
+                bits.append("Your students are recorded under: "
+                            + ", ".join(other) + ".  Switch the Year at the top "
+                            "of Teacher Tools, or run New School Year on the "
+                            "main menu to bring them forward.")
+            else:
+                bits.append("Add or import students in Manage Students first.")
+        else:
+            bits.append("Those students have no class/ensemble set. Open "
+                        "Manage Students, tick the students, and use "
+                        "“🏷️ Assign” to put them in a class.")
+        return "  ".join(bits)
+
     def _edit_group(self):
         dlg = _GroupDialog(self.winfo_toplevel(), self._ensemble_periods(),
-                           self._groups(), self._cfg.get("extra_students") or [])
+                           self._groups(), self._cfg.get("extra_students") or [],
+                           diagnostic=self._roster_diagnostic())
         self.wait_window(dlg)
         if dlg.result is None:
             return
@@ -671,7 +713,8 @@ class SeatingChartView(ttk.Frame):
         if not groups and not extra:
             self._roster_lbl.config(text="No group chosen yet.\nClick “Choose group…” to begin.")
             return
-        parts = [f"{g['ensemble']}"
+        import class_registry as cr
+        parts = [f"{cr.short_class_label(g['ensemble'])}"
                  + ("" if g.get('period', 'all') in ('all', '', None) else f" · P{g['period']}")
                  for g in groups]
         txt = "; ".join(parts) if parts else "Added students"
@@ -1677,7 +1720,8 @@ class _GroupDialog(ttk.Toplevel):
     """Pick ensemble × class-period combinations (multi-select for concerts),
     plus optional add-ins from another ensemble."""
 
-    def __init__(self, parent, ensemble_periods, current, extra):
+    def __init__(self, parent, ensemble_periods, current, extra,
+                 diagnostic=""):
         super().__init__(parent)
         self.result = None
         self._ep = ensemble_periods
@@ -1706,11 +1750,19 @@ class _GroupDialog(ttk.Toplevel):
         self._all_vars = {}
         self._period_vars = {}
         if not ensemble_periods:
-            ttk.Label(body, text="No ensembles with students found. "
-                                 "Leave blank to use the whole current roster.",
-                      font=("Segoe UI", 8), foreground=muted_fg(),
-                      wraplength=340, justify=LEFT).pack(anchor=W, pady=(6, 0))
-        display = {"Jazz 1": "Jazz Band 1", "Jazz 2": "Jazz Band 2"}
+            # An empty picker used to say only "none found", which gives the
+            # teacher nothing to act on.  Say which year was searched and how
+            # many students are in it — that's what tells them whether the
+            # problem is the year, the import, or the class names.
+            ttk.Label(body, text="No classes with students found.",
+                      font=("Segoe UI", 9, "bold"), bootstyle=WARNING,
+                      wraplength=340, justify=LEFT).pack(anchor=W, pady=(8, 2))
+            if diagnostic:
+                ttk.Label(body, text=diagnostic, font=("Segoe UI", 8),
+                          foreground=muted_fg(), wraplength=340,
+                          justify=LEFT).pack(anchor=W)
+        import class_registry as cr
+        display = cr.display_map(list(ensemble_periods))
         for e, periods in ensemble_periods.items():
             disp = display.get(e, e)
             self._period_vars[e] = {}

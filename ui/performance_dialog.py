@@ -112,9 +112,14 @@ class PerformanceDialog(ttk.Toplevel):
         # Ensemble(s): tick known ones, put anything else in "Other"
         parts = [p.strip() for p in (row["ensemble"] or "").split(",") if p.strip()]
         extras = []
+        from class_registry import same_class
         for p in parts:
-            if p in self._ens_vars:
-                self._ens_vars[p].set(True)
+            # Tick by class identity so "Entry Band" finds the "MS Band
+            # (Entry)" box; only genuinely unknown groups land in "Other".
+            hit = next((opt for opt in self._ens_vars if same_class(opt, p)),
+                       None)
+            if hit is not None:
+                self._ens_vars[hit].set(True)
             else:
                 extras.append(p)
         self._ens_other.set(", ".join(extras))

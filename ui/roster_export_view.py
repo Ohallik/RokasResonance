@@ -32,8 +32,11 @@ class RosterExportDialog(ttk.Toplevel):
         self.grab_set()
         self.lift()
 
-        from ui.ensembles import ensembles_for
-        self._ensembles = ensembles_for(self._program_type())
+        # Classes the ROSTER actually uses — filtering by a configured name the
+        # student records don't carry would silently export nobody.
+        from ui.ensembles import selectable_ensembles
+        self._ensembles = selectable_ensembles(db, school_year,
+                                               self._program_type(), self.base_dir)
 
         head = ("Send students to another director — a handoff file with their "
                 "instruments and guardian contacts (they'll import it as incoming)."
@@ -55,9 +58,11 @@ class RosterExportDialog(ttk.Toplevel):
                         command=self._toggle_all).pack(anchor=W, pady=2)
         self._vars = {}
         self._checks = []
+        from ui.ensembles import class_display_map
+        dmap = class_display_map(self._ensembles)
         for e in self._ensembles:
             v = tk.BooleanVar(value=False)
-            cb = ttk.Checkbutton(box, text=e, variable=v)
+            cb = ttk.Checkbutton(box, text=dmap[e], variable=v)
             cb.pack(anchor=W, padx=(20, 0))
             cb.configure(state="disabled")   # disabled while "All" is on
             self._vars[e] = v

@@ -8,7 +8,8 @@ import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from PIL import Image, ImageTk
-from ui.theme import fs, muted_fg, subtle_fg, link_fg
+from ui.theme import (fs, muted_fg, subtle_fg, link_fg, register_nav_styles,
+                      nav_color, best_fg)
 
 class MainMenu(ttk.Frame):
     def __init__(self, parent, db, base_dir: str, app_dir: str = None, teacher_name: str = "", version: str = ""):
@@ -16,7 +17,10 @@ class MainMenu(ttk.Frame):
         self.db = db
         self.base_dir = base_dir
         self.app_dir = app_dir or base_dir
-        self.teacher_name = teacher_name
+        # The profile FOLDER may carry a middle initial ("Meagan R. Mangum");
+        # everything shown on screen uses first + last only.
+        from ui.names import display_person
+        self.teacher_name = display_person(teacher_name)
         self._version = version
         self._windows = {}  # key -> Toplevel; tracks open manager windows
         self._helper_mode = False  # restricted parent-volunteer mode
@@ -32,6 +36,7 @@ class MainMenu(ttk.Frame):
         self._refresh_after_id = None
         self._build()
         self._schedule_refresh()
+        self.after(1200, self._check_year_rollover)
         if self._version:
             self.after(2000, self._start_update_check)  # slight delay so UI loads first
 
@@ -141,8 +146,9 @@ class MainMenu(ttk.Frame):
         music_stats.pack()
         self._stat_music = self._make_stat(music_stats, "—", "Pieces of Music", 0)
 
-        # ── Update Banner (hidden until an update is found) ───────────────────
-        self._update_banner = None  # created on demand
+        # ── Banners (hidden until needed) ─────────────────────────────────────
+        self._update_banner = None    # an app update is available
+        self._rollover_banner = None  # the school year has moved on
 
         # ── Footer ────────────────────────────────────────────────────────────
         # Pack footer BEFORE btn_area so it reserves bottom space first.
@@ -221,13 +227,11 @@ class MainMenu(ttk.Frame):
 
         # ── Main Navigation Grid ─────────────────────────────────────────────
         # Two-column layout for compact, accessible navigation.
-        import tkinter.ttk as _ttkbase
-        _s = _ttkbase.Style()
+        # Each destination gets its own hue (see ui.theme.register_nav_styles) so
+        # the hub reads as a map rather than a stack of identical blue bars.
         _btn_font = ("Segoe UI", min(fs(11), 20), "bold")
         _btn_font_sm = ("Segoe UI", min(fs(10), 18), "bold")
-        for _base in ("primary", "warning", "info", "secondary"):
-            _s.configure(f"Nav.{_base}.TButton", font=_btn_font)
-            _s.configure(f"NavSm.{_base}.TButton", font=_btn_font_sm)
+        register_nav_styles(_btn_font, _btn_font_sm)
 
         btn_area = ttk.Frame(self)
         btn_area.pack(fill=X, padx=30, pady=(8, 4))
@@ -235,6 +239,19 @@ class MainMenu(ttk.Frame):
         btn_area.columnconfigure(1, weight=1)
         self._btn_area = btn_area
         self._build_nav_buttons()
+
+    @staticmethod
+    def _nav_button(parent, text, command, hue, small=False):
+        """A navigation button in one of the palette hues.
+
+        The style has to be applied AFTER construction: ttkbootstrap's Button
+        re-derives ``style`` from its own bootstyle vocabulary at build time and
+        silently drops any name it doesn't recognise (which is how every button
+        ends up default blue).  Configuring afterwards sticks.
+        """
+        btn = ttk.Button(parent, text=text, command=command)
+        btn.configure(style=f"{'NavSm' if small else 'Nav'}.{hue}.TButton")
+        return btn
 
     def _build_nav_buttons(self):
         """(Re)populate the navigation grid.  In Helper Mode only the Uniforms
@@ -252,16 +269,12 @@ class MainMenu(ttk.Frame):
                 font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
             ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(4, 2))
             cur_row += 1
-            ttk.Button(
-                btn_area, text="  👕  Uniform Check-Out",
-                command=self._open_uniforms,
-                style=f"Nav.{PRIMARY}.TButton",
+            self._nav_button(
+                btn_area, "  👕  Uniform Check-Out", self._open_uniforms, "amber"
             ).grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2, ipady=btn_pad)
             cur_row += 1
-            ttk.Button(
-                btn_area, text="  🔒  Exit Helper Mode (PIN)",
-                command=self._exit_helper_mode,
-                style=f"Nav.{SECONDARY}.TButton",
+            self._nav_button(
+                btn_area, "  🔒  Exit Helper Mode (PIN)", self._exit_helper_mode, "gray"
             ).grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=(10, 2), ipady=btn_pad)
             return
 
@@ -278,20 +291,14 @@ class MainMenu(ttk.Frame):
         inv_row.grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2)
         for _c in (0, 1, 2):
             inv_row.columnconfigure(_c, weight=1, uniform="inv")
-        ttk.Button(
-            inv_row, text="  🎺  Equipment",
-            command=self._open_inventory,
-            style=f"Nav.{PRIMARY}.TButton",
+        self._nav_button(
+            inv_row, "  🎺  Equipment", self._open_inventory, "red"
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
-        ttk.Button(
-            inv_row, text="  🎼  Sheet Music",
-            command=self._open_music_manager,
-            style=f"Nav.{SECONDARY}.TButton",
+        self._nav_button(
+            inv_row, "  🎼  Sheet Music", self._open_music_manager, "orange"
         ).grid(row=0, column=1, sticky="ew", padx=3, ipady=btn_pad)
-        ttk.Button(
-            inv_row, text="  👕  Uniforms",
-            command=self._open_uniforms,
-            style=f"Nav.{SECONDARY}.TButton",
+        self._nav_button(
+            inv_row, "  👕  Uniforms", self._open_uniforms, "amber"
         ).grid(row=0, column=2, sticky="ew", padx=(3, 0), ipady=btn_pad)
         cur_row += 1
 
@@ -302,11 +309,19 @@ class MainMenu(ttk.Frame):
         ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(8, 2))
         cur_row += 1
 
-        ttk.Button(
-            btn_area, text="  🎓  Manage Students — View and edit student records",
-            command=self._open_students,
-            style=f"Nav.{INFO}.TButton",
-        ).grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2, ipady=btn_pad)
+        stu_row = ttk.Frame(btn_area)
+        stu_row.grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2)
+        stu_row.columnconfigure(0, weight=3, uniform="stu")
+        stu_row.columnconfigure(1, weight=2, uniform="stu")
+        self._nav_button(
+            stu_row, "  🎓  Manage Students", self._open_students, "green"
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
+        # Rolling the roster forward is a whole-program action, not a lesson-
+        # planning one — it belongs beside the students it moves, in the hub,
+        # where a new teacher will actually find it before anything depends on it.
+        self._nav_button(
+            stu_row, "  📦  New School Year…", self._open_year_wizard, "purple"
+        ).grid(row=0, column=1, sticky="ew", padx=(3, 0), ipady=btn_pad)
         cur_row += 1
 
         # ── Teacher Prep (budget + lesson planning) ──
@@ -316,16 +331,12 @@ class MainMenu(ttk.Frame):
         ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(8, 2))
         cur_row += 1
 
-        ttk.Button(
-            btn_area, text="  💵  Budget",
-            command=self._open_budget,
-            style=f"Nav.{SUCCESS}.TButton",
+        self._nav_button(
+            btn_area, "  💵  Budget", self._open_budget, "teal"
         ).grid(row=cur_row, column=0, sticky="ew", padx=(0, 3), pady=2, ipady=btn_pad)
 
-        ttk.Button(
-            btn_area, text="  🧰  Teacher Tools",
-            command=self._open_lesson_plans,
-            style=f"Nav.{PRIMARY}.TButton",
+        self._nav_button(
+            btn_area, "  🧰  Teacher Tools", self._open_lesson_plans, "blue"
         ).grid(row=cur_row, column=1, sticky="ew", padx=(3, 0), pady=2, ipady=btn_pad)
 
     def _make_stat(self, parent, value: str, label: str, col: int):
@@ -666,6 +677,99 @@ class MainMenu(ttk.Frame):
         self._windows["students"] = win
         from ui.theme import fit_window
         fit_window(win, 1000, 650)
+
+    # ── School-year rollover ──────────────────────────────────────────────────
+
+    def _check_year_rollover(self):
+        """Offer the New School Year wizard when the calendar has moved on but
+        the data hasn't.
+
+        Without this, the app quietly keeps showing last year: rosters, seating
+        charts, and rotations all look empty or wrong for the new year, and the
+        natural "fix" — nudging a year selector forward — files everything under
+        a year nothing else knows about.  Asking once, up front, is the only
+        moment where rolling forward is cheap."""
+        from lesson_plan_db import current_school_year, year_start
+        cur = current_school_year()
+        try:
+            years = self.db.get_school_years()
+        except Exception:
+            return
+        if not years:
+            return                      # brand-new profile — onboarding covers it
+        newest = max(years, key=year_start)
+        if year_start(newest) >= year_start(cur):
+            return                      # already rolled forward
+
+        from ui.settings_dialog import load_settings
+        settings = load_settings(self.base_dir) or {}
+        if (settings.get("teacher") or {}).get("year_prompt_dismissed") == cur:
+            self._show_rollover_banner(cur, newest)
+            return
+
+        from ttkbootstrap.dialogs import Messagebox
+        answer = Messagebox.yesno(
+            f"Your student records are still from {newest}, but the "
+            f"{cur} school year has started.\n\n"
+            "The New School Year wizard archives last year's roster, brings "
+            "returning students forward, and imports this year's class lists — "
+            "so seating charts, percussion rotations, and agendas all line up "
+            "with the students actually in the room.\n\n"
+            "Run it now?",
+            title="Start the new school year?", parent=self.winfo_toplevel())
+        if answer == "Yes":
+            self._open_year_wizard()
+            return
+        # Don't nag on every launch — but keep it visible on the hub.
+        settings.setdefault("teacher", {})["year_prompt_dismissed"] = cur
+        try:
+            from ui.settings_dialog import save_settings
+            save_settings(self.base_dir, settings)
+        except Exception:
+            pass
+        self._show_rollover_banner(cur, newest)
+
+    def _show_rollover_banner(self, cur, newest):
+        if getattr(self, "_rollover_banner", None):
+            return
+        banner = ttk.Frame(self, bootstyle=INFO)
+        banner.pack(fill=X, before=self._btn_area)
+        ttk.Label(
+            banner,
+            text=f"📦  Your roster is still {newest} — the {cur} year has started.",
+            font=("Segoe UI", fs(9), "bold"),
+            bootstyle=(INVERSE, INFO),
+        ).pack(side=LEFT, padx=(16, 8), pady=6)
+        ttk.Button(banner, text="Start New School Year…", bootstyle=INFO,
+                   command=self._open_year_wizard).pack(side=LEFT, pady=4)
+        ttk.Button(banner, text="✕", bootstyle=(OUTLINE, INFO), width=3,
+                   command=banner.pack_forget).pack(side=RIGHT, padx=8, pady=4)
+        self._rollover_banner = banner
+
+    def _open_year_wizard(self):
+        """Roll the whole program into the next school year.  Lives here (not
+        buried in Teacher Tools) because everything else — rosters, seating
+        charts, percussion sections — depends on it having been run."""
+        from ui.year_wizard import NewSchoolYearWizard
+        from lesson_plan_db import current_school_year
+        try:
+            years = self.db.get_school_years()
+        except Exception:
+            years = []
+        current = years[0] if years else current_school_year()
+        wiz = NewSchoolYearWizard(self.winfo_toplevel(), self.db, self.base_dir,
+                                  current_year=current)
+        self.winfo_toplevel().wait_window(wiz)
+        # Any open Teacher Tools / Student windows are now showing last year.
+        if getattr(wiz, "new_year", None):
+            for key in ("lesson_plans", "students"):
+                win = self._windows.pop(key, None)
+                if win is not None:
+                    try:
+                        win.destroy()
+                    except tk.TclError:
+                        pass
+        self._refresh_stats()
 
     def _open_music_manager(self):
         if self._raise_or_open("music"):

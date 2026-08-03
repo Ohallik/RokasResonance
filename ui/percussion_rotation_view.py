@@ -18,6 +18,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 
 import percussion_rotation as pr
+from ui.names import display_first_of
 from ui.theme import muted_fg, fs
 
 CLASS_TYPE_LABELS = {
@@ -42,9 +43,17 @@ STATION_COLORS = {
 }
 
 
+# Pastels handed out to stations the teacher invented (Congas, Cajón, Timpani
+# split off from Aux…).  Keyed by name so a station keeps its colour from day to
+# day and grid to grid — the board only works if the colours are stable.
+CUSTOM_COLORS = ["#d7e8f7", "#e4f1d9", "#fbe4d5", "#e8dff5", "#fdf2cc",
+                 "#d8f0ea", "#f7dce8", "#e9e4d6"]
+
+
 def _color_for_station(station: str) -> str:
     """Background colour for a station: fixed stations by name, mallet
-    instruments by stick family (yarn = orange, rubber/plastic = white)."""
+    instruments by stick family (yarn = orange, rubber/plastic = white), and a
+    stable pastel for anything the teacher defined themselves."""
     if station in STATION_COLORS:
         return STATION_COLORS[station]
     fam = pr.mallet_family(station)
@@ -52,7 +61,12 @@ def _color_for_station(station: str) -> str:
         return YARN_COLOR
     if fam == pr.RUBBER_MALLETS:
         return RUBBER_COLOR
-    return "#ffffff"
+    if not station:
+        return "#ffffff"
+    # Deterministic per name (not per position), so adding a station never
+    # recolours the ones already on the board.
+    idx = sum(ord(c) for c in station) % len(CUSTOM_COLORS)
+    return CUSTOM_COLORS[idx]
 
 
 def _station_tag(station: str) -> str:
@@ -60,7 +74,8 @@ def _station_tag(station: str) -> str:
 
 
 def _configure_station_tags(tree: ttk.Treeview):
-    colors = set(STATION_COLORS.values()) | {YARN_COLOR, RUBBER_COLOR, "#ffffff"}
+    colors = (set(STATION_COLORS.values()) | set(CUSTOM_COLORS)
+              | {YARN_COLOR, RUBBER_COLOR, "#ffffff"})
     for c in colors:
         tree.tag_configure("bg_" + c.lstrip("#"), background=c)
 
@@ -125,9 +140,15 @@ def _icon_for_station(widget, station):
 
 
 class PercussionRotationView(ttk.Frame):
-    def __init__(self, parent, db):
+    def __init__(self, parent, db, main_db=None, base_dir=None):
         super().__init__(parent)
         self.db = db
+        # The student database, when the caller has one: it already knows who
+        # plays percussion and which class period they're in, so the roster can
+        # be filled from it instead of retyped.
+        self.main_db = main_db
+        self.base_dir = base_dir or os.path.dirname(
+            os.path.abspath(getattr(db, "db_path", "") or "."))
         self._selected_group_id = None
         self._build()
         self.refresh()
@@ -143,12 +164,15 @@ class PercussionRotationView(ttk.Frame):
                    command=self._edit_group).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="🗑️ Delete", bootstyle=DANGER,
                    command=self._delete_group).pack(side=LEFT, padx=2, pady=6)
+        ttk.Button(toolbar, text="🎛 Rotation Stations…", bootstyle=(INFO, OUTLINE),
+                   command=self._edit_stations).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="🎵 Mallet Equipment…", bootstyle=(INFO, OUTLINE),
                    command=self._edit_equipment).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="🔄 Refresh", bootstyle=(SECONDARY, OUTLINE),
                    command=self.refresh).pack(side=LEFT, padx=6, pady=6)
         ttk.Label(toolbar,
-                  text="Enter each class period's percussionists → automatic daily rotation",
+                  text="Pull each class period's percussionists from your student "
+                       "list → automatic daily rotation",
                   font=("Segoe UI", fs(9)), foreground=muted_fg()).pack(side=LEFT, padx=10)
 
         paned = ttk.Panedwindow(self, orient=HORIZONTAL)
@@ -271,7 +295,11 @@ class PercussionRotationView(ttk.Frame):
         roster_frame.pack(fill=BOTH, expand=True)
         rbar = ttk.Frame(roster_frame)
         rbar.pack(fill=X, pady=(0, 4))
-        ttk.Button(rbar, text="➕ Add Players", bootstyle=SUCCESS,
+        # From the student list FIRST — typing names in by hand is the fallback,
+        # not the default path.
+        ttk.Button(rbar, text="🎓 From Student List…", bootstyle=SUCCESS,
+                   command=self._add_from_students).pack(side=LEFT, padx=2)
+        ttk.Button(rbar, text="➕ Type Names…", bootstyle=(SUCCESS, OUTLINE),
                    command=self._add_players).pack(side=LEFT, padx=2)
         ttk.Button(rbar, text="🗑 Remove", bootstyle=(DANGER, OUTLINE),
                    command=self._remove_player).pack(side=LEFT, padx=2)
@@ -352,6 +380,39 @@ class PercussionRotationView(ttk.Frame):
             except Exception:
                 continue
         return None
+
+    def _stations(self, g=None):
+        """The section's own rotation stations, or None for the built-in ring."""
+        import json
+        g = g or self._current_group()
+        if not g:
+            return None
+        try:
+            raw = g["stations"]
+        except (KeyError, IndexError):
+            return None
+        if not raw:
+            return None
+        try:
+            return pr.norm_stations(json.loads(raw))
+        except Exception:
+            return None
+
+    def _edit_stations(self):
+        g = self._current_group()
+        if not g:
+            Messagebox.show_warning("Select a class period first.",
+                                    title="No Section", parent=self)
+            return
+        import json
+        dlg = _StationsDialog(self.winfo_toplevel(), g["name"], g["class_type"],
+                              self._stations(g))
+        self.wait_window(dlg)
+        if not dlg.saved:
+            return
+        val = json.dumps(dlg.stations) if dlg.stations else None
+        self.db.update_percussion_group(g["id"], {"stations": val})
+        self._render()
 
     def _edit_equipment(self):
         dlg = _MalletEquipmentDialog(self.winfo_toplevel(), self.db,
@@ -458,13 +519,14 @@ class PercussionRotationView(ttk.Frame):
             self._day_var.set(str(cur))
 
         # Composition summary
+        stations = self._stations(g)
         if n_full:
-            parts = [f"{c}× {label}" for label, c in pr.station_summary(n_full, g["class_type"])]
+            comp = pr.station_summary(n_full, g["class_type"], stations)
+            parts = [f"{c}× {label}" for label, c in comp]
             summary = f"{n_full} in full rotation → " + ",  ".join(parts) + " each day."
             if n_mallet_only:
                 summary += f"   ({n_mallet_only} on mallets-only, earning their rotation.)"
-            mallet_load = (dict(pr.station_summary(n_full, g["class_type"]))
-                           .get(pr.MALLETS, 0) + n_mallet_only)
+            mallet_load = dict(comp).get(pr.MALLETS, 0) + n_mallet_only
         elif non_lim:
             summary = f"All {len(non_lim)} players on mallets-only (earning their rotation)."
             mallet_load = len(non_lim)
@@ -501,7 +563,7 @@ class PercussionRotationView(ttk.Frame):
         assignments = pr.day_assignments(
             payload, day, g["class_type"],
             mallet_subrotation=bool(g["mallet_subrotation"]), mode=mode,
-            inventory=self._inventory())
+            inventory=self._inventory(), stations=stations)
         self._board.delete(*self._board.get_children())
         for name, station in assignments:
             icon = _icon_for_station(self._board, station)
@@ -538,7 +600,9 @@ class PercussionRotationView(ttk.Frame):
         payload, _ = self._students_payload(g)
         return pr.cycle_length(payload,
                                mallet_subrotation=bool(g["mallet_subrotation"]),
-                               inventory=self._inventory())
+                               inventory=self._inventory(),
+                               stations=self._stations(g),
+                               class_type=g["class_type"])
 
     def _on_day_edited(self):
         g = self._current_group()
@@ -561,17 +625,40 @@ class PercussionRotationView(ttk.Frame):
     # ─────────────────────────────────────────────────────────── group CRUD ───
 
     def _add_group(self):
-        dlg = _GroupDialog(self.winfo_toplevel(), self.db, self._school_year())
+        dlg = _GroupDialog(self.winfo_toplevel(), self.db, self._school_year(),
+                           main_db=self.main_db, base_dir=self.base_dir,
+                           student_year=self._student_year())
         self.wait_window(dlg)
         if dlg.saved_id:
             self._selected_group_id = dlg.saved_id
         self.refresh()
+        # A brand-new section is empty, and the students who belong in it are
+        # already on the roster — go straight there rather than making the
+        # teacher find the button.
+        if dlg.saved_id and self._has_roster_percussionists():
+            self._add_from_students()
+
+    def _has_roster_percussionists(self):
+        """Whether the roster has anyone to offer — so a new section doesn't
+        open an empty picker at a teacher who hasn't imported students yet."""
+        if self.main_db is None:
+            return False
+        try:
+            rows = self.main_db.get_students_for_email(
+                school_year=self._student_year())
+        except Exception:
+            return False
+        return any(_FromStudentsDialog._is_percussion(r["primary_instrument"])
+                   or _FromStudentsDialog._is_percussion(r["secondary_instrument"])
+                   for r in rows)
 
     def _edit_group(self):
         g = self._current_group()
         if not g:
             return
-        dlg = _GroupDialog(self.winfo_toplevel(), self.db, self._school_year(), group=g)
+        dlg = _GroupDialog(self.winfo_toplevel(), self.db, self._school_year(),
+                           group=g, main_db=self.main_db, base_dir=self.base_dir,
+                           student_year=self._student_year())
         self.wait_window(dlg)
         self.refresh()
 
@@ -606,6 +693,46 @@ class PercussionRotationView(ttk.Frame):
             self.db.add_percussion_student(g["id"], name, full_rotation=full)
         self._render()
         self.refresh()
+
+    def _add_from_students(self):
+        """Fill the rotation straight from the student records — no retyping,
+        no spelling drift between the roster and the board."""
+        g = self._current_group()
+        if not g:
+            Messagebox.show_warning("Select or create a class period first.",
+                                    title="No Section", parent=self)
+            return
+        if self.main_db is None:
+            Messagebox.show_info(
+                "The student list isn't available from here. Use “Type Names…” "
+                "instead, or open Percussion from Teacher Tools.",
+                title="No Student List", parent=self)
+            return
+        existing = [r["name"] for r in self.db.get_percussion_students(g["id"])]
+        dlg = _FromStudentsDialog(self.winfo_toplevel(), self.main_db,
+                                  self.base_dir, self._student_year(), existing)
+        self.wait_window(dlg)
+        if not dlg.names:
+            return
+        is_entry = g["class_type"] == pr.ENTRY
+        full = 0 if (is_entry and not dlg.start_full) else 1
+        for name in dlg.names:
+            self.db.add_percussion_student(g["id"], name, full_rotation=full)
+        self._render()
+        self.refresh()
+
+    def _student_year(self):
+        """The roster year matching this tools year, else the newest roster."""
+        if self.main_db is None:
+            return None
+        try:
+            years = self.main_db.get_school_years()
+        except Exception:
+            return None
+        year = self._school_year()
+        if year and year in years:
+            return year
+        return years[0] if years else None
 
     def _selected_player_id(self):
         sel = self._roster.selection()
@@ -683,7 +810,8 @@ class PercussionRotationView(ttk.Frame):
             return
         dlg = _LimitStationsDialog(self.winfo_toplevel(), r["name"],
                                    g["class_type"], self._mallet_instrument_names(),
-                                   self._parse_allowed(r))
+                                   self._parse_allowed(r),
+                                   stations=self._stations(g))
         self.wait_window(dlg)
         if not dlg.saved:
             return
@@ -789,7 +917,8 @@ class PercussionRotationView(ttk.Frame):
             Messagebox.show_info("Add players first.", title="No Players", parent=self)
             return
         _FullGridDialog(self.winfo_toplevel(), g, payload, 1,
-                        inventory=self._inventory())
+                        inventory=self._inventory(),
+                        stations=self._stations(g))
 
 
 # ══════════════════════════════════════════════════════════════ dialogs ══════
@@ -925,10 +1054,375 @@ class _MalletEquipmentDialog(ttk.Toplevel):
         self.destroy()
 
 
+class _StationsDialog(ttk.Toplevel):
+    """What this section actually rotates through.
+
+    The built-in ring assumes a room with a kit, a bass drum, and timpani.
+    Plenty of rooms don't have all of that, and plenty of teachers want
+    something else in the ring (congas, a second timpani seat, a composition
+    station).  Each row is a station and how many days out of the cycle it's
+    worth relative to the others, so "twice as much snare as drum set" is one
+    number, not a spreadsheet.
+    """
+
+    def __init__(self, parent, section_name, class_type, current=None):
+        super().__init__(parent)
+        self.saved = False
+        self.stations = None
+        self._class_type = class_type
+        self.title(f"Rotation Stations — {section_name}")
+        self.grab_set()
+        self.lift()
+
+        hdr = ttk.Frame(self, bootstyle=INFO)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text="🎛  What this section rotates through",
+                  font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, INFO)).pack(pady=10, padx=16, anchor=W)
+
+        btn = ttk.Frame(self)
+        btn.pack(fill=X, side=BOTTOM, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Save", bootstyle=SUCCESS,
+                   command=self._save).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="↺ Use Built-in Rotation",
+                   bootstyle=(SECONDARY, OUTLINE),
+                   command=self._use_builtin).pack(side=LEFT, padx=4)
+
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
+        ttk.Label(body, text="One row per station. “Share” is how much of the "
+                             "rotation that station is worth — a station with "
+                             "share 4 comes up twice as often as one with "
+                             "share 2.",
+                  font=("Segoe UI", 9), wraplength=430, justify=LEFT).pack(anchor=W)
+        for bullet in [
+                "Delete a row to drop that station entirely (no drum set? "
+                "remove it and nobody is ever assigned to it).",
+                "Add your own — Congas, Cajón, Timpani on its own, "
+                "Composition station.",
+                "Every listed station gets at least one player whenever the "
+                "section is big enough.",
+                "Mallet players still get specific instruments from your "
+                "Mallet Equipment list."]:
+            ttk.Label(body, text="  •  " + bullet, font=("Segoe UI", 8),
+                      foreground=muted_fg(), wraplength=420,
+                      justify=LEFT).pack(anchor=W)
+
+        cols = ttk.Frame(body)
+        cols.pack(fill=X, pady=(10, 2))
+        ttk.Label(cols, text="Station", font=("Segoe UI", 9, "bold"),
+                  width=30).pack(side=LEFT)
+        ttk.Label(cols, text="Share", font=("Segoe UI", 9, "bold")).pack(side=LEFT)
+
+        self._rows_frame = ttk.Frame(body)
+        self._rows_frame.pack(fill=X)
+        self._rows = []
+
+        self._pct_lbl = ttk.Label(body, text="", font=("Segoe UI", 9),
+                                  foreground=muted_fg(), wraplength=430,
+                                  justify=LEFT)
+
+        add = ttk.Frame(body)
+        add.pack(fill=X, pady=(6, 0))
+        ttk.Button(add, text="➕ Add Station", bootstyle=(SUCCESS, OUTLINE),
+                   command=lambda: self._add_row("", 1)).pack(side=LEFT)
+        self._pct_lbl.pack(anchor=W, pady=(10, 0))
+
+        for s in (current or pr.default_stations(class_type)):
+            self._add_row(s["name"], s["share"])
+
+        from ui.theme import fit_window
+        fit_window(self, 480, 560)
+
+    def _add_row(self, name, share):
+        row = ttk.Frame(self._rows_frame)
+        row.pack(fill=X, pady=2)
+        nv = tk.StringVar(value=name)
+        sv = tk.StringVar(value=str(share))
+        ttk.Entry(row, textvariable=nv, width=30).pack(side=LEFT)
+        ttk.Spinbox(row, from_=1, to=20, width=4, textvariable=sv,
+                    command=self._update_preview).pack(side=LEFT, padx=(8, 0))
+        entry = (row, nv, sv)
+
+        def remove():
+            row.destroy()
+            self._rows.remove(entry)
+            self._update_preview()
+        ttk.Button(row, text="✕", width=3, bootstyle=(DANGER, OUTLINE, LINK),
+                   command=remove).pack(side=LEFT, padx=(8, 0))
+        self._rows.append(entry)
+        nv.trace_add("write", lambda *_: self._update_preview())
+        sv.trace_add("write", lambda *_: self._update_preview())
+        self._update_preview()
+
+    def _collect(self):
+        items = []
+        for _row, nv, sv in self._rows:
+            name = nv.get().strip()
+            try:
+                share = max(1, int(sv.get()))
+            except (TypeError, ValueError):
+                share = 1
+            if name:
+                items.append({"name": name, "share": share})
+        return items
+
+    def _update_preview(self):
+        items = self._collect()
+        total = sum(i["share"] for i in items)
+        if not items or not total:
+            self._pct_lbl.config(text="Add at least one station.")
+            return
+        parts = [f"{i['name']} {round(100 * i['share'] / total)}%" for i in items]
+        self._pct_lbl.config(
+            text="Roughly:  " + " · ".join(parts) + "  of each player's days.")
+
+    def _use_builtin(self):
+        for row, _n, _s in list(self._rows):
+            row.destroy()
+        self._rows = []
+        for s in pr.default_stations(self._class_type):
+            self._add_row(s["name"], s["share"])
+
+    def _save(self):
+        items = self._collect()
+        if not items:
+            Messagebox.show_warning("Keep at least one station (or use the "
+                                    "built-in rotation).",
+                                    title="Nothing Listed", parent=self)
+            return
+        # Saving the built-in list unchanged stores nothing, so the section keeps
+        # following the built-in rotation if it ever improves.
+        if items == pr.default_stations(self._class_type):
+            self.stations = None
+        else:
+            self.stations = items
+        self.saved = True
+        self.destroy()
+
+
+class _FromStudentsDialog(ttk.Toplevel):
+    """Pick this section's percussionists out of the student records.
+
+    Everything shown here is already in the student database — instrument and
+    class period are set once, in the Student Manager, and read from there.  A
+    name typed into a rotation by hand is a name that can be spelled two ways
+    and never matches the roster again, so this is the default way in.
+    """
+
+    def __init__(self, parent, main_db, base_dir, school_year, existing_names):
+        super().__init__(parent)
+        self.main_db = main_db
+        self.base_dir = base_dir
+        self.names = []
+        self.start_full = False
+        self._existing = {n.strip().lower() for n in existing_names}
+        self.title("Add Percussionists from Student List")
+        self.grab_set()
+        self.lift()
+
+        self._year = school_year or self._newest_year()
+
+        hdr = ttk.Frame(self, bootstyle=SUCCESS)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text="🎓  Percussionists in your student list",
+                  font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, SUCCESS)).pack(pady=10, padx=16, anchor=W)
+
+        btn = ttk.Frame(self)
+        btn.pack(fill=X, side=BOTTOM, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Add Selected", bootstyle=SUCCESS,
+                   command=self._save).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Select All", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: self._set_all(True)).pack(side=LEFT, padx=4)
+        ttk.Button(btn, text="Clear", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: self._set_all(False)).pack(side=LEFT, padx=2)
+
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
+
+        filt = ttk.Frame(body)
+        filt.pack(fill=X, pady=(0, 6))
+        ttk.Label(filt, text="Class:", font=("Segoe UI", 9, "bold")).pack(side=LEFT)
+        from ui.ensembles import selectable_ensembles, PERIOD_OPTIONS
+        self._ens_var = tk.StringVar(value="All")
+        ttk.Combobox(filt, textvariable=self._ens_var, state="readonly", width=22,
+                     values=["All"] + selectable_ensembles(
+                         main_db, self._year, self._program_type(), base_dir)
+                     ).pack(side=LEFT, padx=(4, 12))
+        ttk.Label(filt, text="Period:", font=("Segoe UI", 9, "bold")).pack(side=LEFT)
+        self._per_var = tk.StringVar(value="All")
+        ttk.Combobox(filt, textvariable=self._per_var, state="readonly", width=5,
+                     values=["All"] + PERIOD_OPTIONS).pack(side=LEFT, padx=(4, 0))
+        self._ens_var.trace_add("write", lambda *_: self._reload())
+        self._per_var.trace_add("write", lambda *_: self._reload())
+
+        ttk.Label(body, text="Students whose instrument is a percussion "
+                             "instrument. Tick the ones in this class period.",
+                  font=("Segoe UI", 9), foreground=muted_fg(),
+                  wraplength=430, justify=LEFT).pack(anchor=W)
+
+        wrap = ttk.Frame(body)
+        wrap.pack(fill=BOTH, expand=True, pady=(6, 4))
+        sb = ttk.Scrollbar(wrap, orient=VERTICAL)
+        self._tree = ttk.Treeview(wrap, columns=("pick", "Name", "Instrument",
+                                                 "Grade", "Periods"),
+                                  show="headings", yscrollcommand=sb.set,
+                                  selectmode="none", bootstyle=SUCCESS, height=12)
+        sb.config(command=self._tree.yview)
+        for col, w, stretch in (("pick", 34, False), ("Name", 180, True),
+                                ("Instrument", 110, False), ("Grade", 50, False),
+                                ("Periods", 70, False)):
+            self._tree.heading(col, text=("" if col == "pick" else col), anchor=W)
+            self._tree.column(col, width=w, stretch=stretch,
+                              anchor=(CENTER if col == "pick" else W))
+        sb.pack(side=RIGHT, fill=Y)
+        self._tree.pack(fill=BOTH, expand=True)
+        self._tree.bind("<Button-1>", self._on_click)
+
+        self._note = ttk.Label(body, text="", font=("Segoe UI", 8),
+                               foreground=muted_fg(), wraplength=430,
+                               justify=LEFT)
+        self._note.pack(anchor=W)
+
+        self._full = tk.BooleanVar(value=False)
+        ttk.Checkbutton(body, text="Start these players in the full rotation "
+                                   "(they've already passed 5 assessments)",
+                        variable=self._full, bootstyle=INFO).pack(anchor=W,
+                                                                  pady=(6, 0))
+
+        self._picked = set()
+        self._rows = []
+        self._reload()
+
+        from ui.theme import fit_window
+        fit_window(self, 560, 600)
+
+    # ── data ─────────────────────────────────────────────────────────────────
+
+    def _program_type(self):
+        try:
+            from ui.settings_dialog import load_settings
+            return (load_settings(self.base_dir).get("teacher") or {}).get(
+                "program_type", "band")
+        except Exception:
+            return "band"
+
+    def _newest_year(self):
+        try:
+            years = self.main_db.get_school_years()
+            return years[0] if years else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _is_percussion(instrument):
+        """Percussion covers more than the word "Percussion" — a roster may say
+        Snare, Mallets, Drums or Timpani depending on who typed it."""
+        low = (instrument or "").lower()
+        return any(k in low for k in (
+            "percussion", "drum", "snare", "mallet", "timpani", "timp",
+            "marimba", "xylophone", "vibraphone", "bells", "glock", "cymbal",
+            "aux"))
+
+    def _reload(self):
+        ens = self._ens_var.get()
+        per = self._per_var.get()
+        try:
+            rows = self.main_db.get_students_for_email(
+                school_year=self._year,
+                ensemble=None if ens == "All" else ens,
+                period=None if per == "All" else per)
+        except Exception:
+            rows = []
+        self._rows = []
+        already = 0
+        for r in rows:
+            prim = (r["primary_instrument"] or "").strip()
+            sec = (r["secondary_instrument"] or "").strip()
+            if not (self._is_percussion(prim) or self._is_percussion(sec)):
+                continue
+            # First name (honouring a preferred name) is what goes on the
+            # rotation board, matching how she writes it on the whiteboard.
+            name = (display_first_of(r) or "").strip()
+            if not name:
+                name = f"{r['first_name'] or ''} {r['last_name'] or ''}".strip()
+            if not name:
+                continue
+            if name.strip().lower() in self._existing:
+                already += 1
+                continue
+            self._rows.append({
+                "name": name,
+                "instrument": prim or sec,
+                "grade": r["grade"] or "",
+                "periods": r["class_periods"] or "",
+            })
+        self._picked = set(range(len(self._rows)))   # everything on by default
+        self._render()
+        bits = []
+        if not self._rows:
+            bits.append("No percussionists found for this filter. Check the "
+                        "students' instrument in the Student Manager, or use "
+                        "“Type Names…”.")
+        if already:
+            bits.append(f"{already} already in this rotation (hidden).")
+        if self._year:
+            bits.append(f"Roster year: {self._year}.")
+        self._note.config(text="  ".join(bits))
+
+    def _render(self):
+        self._tree.delete(*self._tree.get_children())
+        for i, r in enumerate(self._rows):
+            self._tree.insert("", "end", iid=str(i), values=(
+                "☑" if i in self._picked else "☐",
+                r["name"], r["instrument"], r["grade"], r["periods"]))
+
+    def _on_click(self, event):
+        if self._tree.identify("region", event.x, event.y) != "cell":
+            return
+        iid = self._tree.identify_row(event.y)
+        if not iid:
+            return
+        i = int(iid)
+        self._picked.symmetric_difference_update({i})
+        self._tree.set(iid, "pick", "☑" if i in self._picked else "☐")
+
+    def _set_all(self, on):
+        self._picked = set(range(len(self._rows))) if on else set()
+        self._render()
+
+    def _save(self):
+        self.names = [self._rows[i]["name"] for i in sorted(self._picked)]
+        self.start_full = self._full.get()
+        if not self.names:
+            Messagebox.show_warning("Tick at least one student.",
+                                    title="Nobody selected", parent=self)
+            return
+        self.destroy()
+
+
 class _GroupDialog(ttk.Toplevel):
-    def __init__(self, parent, db, school_year, group=None):
+    """One class period's percussion section.
+
+    Which class it is and which period it meets are both PICKED, not typed:
+    the class list comes from the teacher's registry (Manage Classes) and the
+    periods come from the roster.  The section's name and its rotation type are
+    then derived from that choice, so a section can't end up named something the
+    agenda tab won't recognise.
+    """
+
+    def __init__(self, parent, db, school_year, group=None,
+                 main_db=None, base_dir=None, student_year=None):
         super().__init__(parent)
         self.db = db
+        self.main_db = main_db
+        self.base_dir = base_dir
+        self.student_year = student_year
         self.school_year = school_year
         self.group = group
         self.saved_id = None
@@ -938,7 +1432,38 @@ class _GroupDialog(ttk.Toplevel):
         self.lift()
         self._build()
         from ui.theme import fit_window
-        fit_window(self, 420, 340)
+        fit_window(self, 460, 420)
+
+    # ── class registry ───────────────────────────────────────────────────────
+
+    def _classes(self):
+        """The teacher's percussion-bearing classes, as (key, label, class_type)."""
+        try:
+            import class_registry as cr
+            from ui.settings_dialog import load_settings
+            program = (load_settings(self.base_dir).get("teacher") or {}).get(
+                "program_type", "band") if self.base_dir else "band"
+            out = []
+            for k in cr.load_classes(self.base_dir, program):
+                cfg = cr.class_config(k)
+                if not cfg["percussion"]:
+                    continue
+                ct = pr.ENTRY if cfg["class_type"] == "entry" else pr.INT_ADV
+                out.append((cfg["id"], cfg["label"], ct))
+            if out:
+                return out
+        except Exception:
+            pass
+        # No registry available — fall back to the two rotation types so the
+        # dialog still works.
+        return [("entry", "Entry Band", pr.ENTRY),
+                ("advanced", "Intermediate / Advanced Band", pr.INT_ADV)]
+
+    def _periods_for(self, key):
+        from ui.ensembles import class_periods_for, PERIOD_OPTIONS
+        label = dict((k, l) for k, l, _ in self._classes()).get(key, "")
+        found = class_periods_for(self.main_db, self.student_year, label)
+        return found or list(PERIOD_OPTIONS)
 
     def _build(self):
         hdr = ttk.Frame(self, bootstyle=PRIMARY)
@@ -946,28 +1471,56 @@ class _GroupDialog(ttk.Toplevel):
         ttk.Label(hdr, text="🥁  Percussion Section", font=("Segoe UI", 13, "bold"),
                   bootstyle=(INVERSE, PRIMARY)).pack(pady=12, padx=16, anchor=W)
 
+        btn = ttk.Frame(self)
+        btn.pack(fill=X, side=BOTTOM, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Save", bootstyle=SUCCESS,
+                   command=self._save).pack(side=RIGHT, padx=4)
+
         body = ttk.Frame(self)
         body.pack(fill=BOTH, expand=True, padx=16, pady=10)
 
-        ttk.Label(body, text="Section name (e.g. “Period 1 – Entry Band”) *",
+        self._class_rows = self._classes()
+        # The combo shows short display labels; identity stays the class KEY.
+        import class_registry as cr
+        dmap = cr.display_map([l for _k, l, _t in self._class_rows])
+        labels = [dmap[l] for _k, l, _t in self._class_rows]
+        self._label_to_key = {dmap[l]: k for k, l, _t in self._class_rows}
+        self._key_to_type = {k: t for k, _l, t in self._class_rows}
+
+        ttk.Label(body, text="Which class? *",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W)
-        self._name = tk.StringVar(value=(self.group["name"] if self.group else ""))
-        ttk.Entry(body, textvariable=self._name, width=40).pack(fill=X, pady=(2, 8))
+        cur_key = None
+        if self.group:
+            try:
+                cur_key = self.group["class_key"]
+            except (KeyError, IndexError):
+                cur_key = None
+        cur_label = next((dmap[l] for k, l, _t in self._class_rows
+                          if k == cur_key), labels[0] if labels else "")
+        self._class_var = tk.StringVar(value=cur_label)
+        ttk.Combobox(body, textvariable=self._class_var, state="readonly",
+                     values=labels, width=34).pack(anchor=W, fill=X, pady=(2, 2))
+        ttk.Label(body, text="From your class list — add or rename classes with "
+                             "“Manage Classes…”. The rotation type (Entry vs "
+                             "Intermediate/Advanced) comes from the class.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=390, justify=LEFT).pack(anchor=W, pady=(0, 8))
 
-        ttk.Label(body, text="Class type *", font=("Segoe UI", 9, "bold")).pack(anchor=W)
-        self._type = tk.StringVar(
-            value=CLASS_TYPE_LABELS.get(self.group["class_type"] if self.group else pr.ENTRY,
-                                        CLASS_TYPE_LABELS[pr.ENTRY]))
-        ttk.Combobox(body, textvariable=self._type, state="readonly",
-                     values=list(CLASS_TYPE_LABELS.values()), width=30).pack(anchor=W, pady=(2, 4))
-        ttk.Label(body,
-                  text="Entry: Mallets / SD / Timp-aux / BD-SD, players earn their rotation.\n"
-                       "Intermediate / Advanced: adds a Drum set seat.",
-                  font=("Segoe UI", 8), foreground=muted_fg(), justify=LEFT).pack(anchor=W, pady=(0, 8))
-
-        ttk.Label(body, text="Period (optional)", font=("Segoe UI", 9, "bold")).pack(anchor=W)
-        self._period = tk.StringVar(value=(self.group["period"] if self.group else ""))
-        ttk.Entry(body, textvariable=self._period, width=12).pack(anchor=W, pady=(2, 8))
+        ttk.Label(body, text="Which class period? *",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W)
+        self._period = tk.StringVar(
+            value=(self.group["period"] if self.group else ""))
+        self._period_combo = ttk.Combobox(body, textvariable=self._period,
+                                          width=10)
+        self._period_combo.pack(anchor=W, pady=(2, 2))
+        self._period_hint = ttk.Label(body, text="", font=("Segoe UI", 8),
+                                      foreground=muted_fg(), wraplength=390,
+                                      justify=LEFT)
+        self._period_hint.pack(anchor=W, pady=(0, 8))
+        self._class_var.trace_add("write", lambda *_: self._sync_periods())
+        self._sync_periods()
 
         self._sub = tk.BooleanVar(
             value=bool(self.group["mallet_subrotation"]) if self.group else True)
@@ -981,22 +1534,52 @@ class _GroupDialog(ttk.Toplevel):
                   font=("Segoe UI", 8), foreground=muted_fg(), justify=LEFT,
                   wraplength=360).pack(anchor=W)
 
-        btn = ttk.Frame(self)
-        btn.pack(fill=X, padx=16, pady=12)
-        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
-                   command=self.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(btn, text="Save", bootstyle=SUCCESS, command=self._save).pack(side=RIGHT, padx=4)
+    def _sync_periods(self):
+        """Offer the periods this class actually meets, straight from the
+        roster, and default to one the teacher hasn't used yet."""
+        key = self._label_to_key.get(self._class_var.get())
+        periods = self._periods_for(key) if key else []
+        self._period_combo.config(values=periods)
+        from ui.ensembles import PERIOD_OPTIONS
+        if periods and periods != list(PERIOD_OPTIONS):
+            self._period_hint.config(
+                text=f"Your roster shows this class in period(s) "
+                     f"{', '.join(periods)}.")
+        else:
+            self._period_hint.config(
+                text="No class periods on the roster yet — pick one, or set "
+                     "class periods in Manage Students.")
+        if not self._period.get() and periods:
+            taken = set()
+            try:
+                for g in self.db.get_percussion_groups(self.school_year):
+                    if (g["class_key"] if "class_key" in g.keys() else None) == key:
+                        taken.add(str(g["period"] or ""))
+            except Exception:
+                taken = set()
+            free = [p for p in periods if p not in taken]
+            self._period.set(free[0] if free else periods[0])
 
     def _save(self):
-        name = self._name.get().strip()
-        if not name:
-            Messagebox.show_warning("Enter a section name.", title="Required", parent=self)
+        key = self._label_to_key.get(self._class_var.get())
+        if not key:
+            Messagebox.show_warning("Choose a class.", title="Required", parent=self)
             return
+        period = self._period.get().strip()
+        if not period:
+            Messagebox.show_warning("Choose the class period this section meets.",
+                                    title="Required", parent=self)
+            return
+        # The name is DERIVED, never typed — "Period 1 — MS Band (Entry)".  It's
+        # only a display label now; everything that used to be parsed out of it
+        # (which class, which rotation type) is stored explicitly.
+        label = self._class_var.get()
         data = {
             "school_year": self.school_year,
-            "name": name,
-            "class_type": LABEL_TO_CLASS_TYPE.get(self._type.get(), pr.ENTRY),
-            "period": self._period.get().strip(),
+            "name": f"Period {period} — {label}",
+            "class_key": key,
+            "class_type": self._key_to_type.get(key, pr.ENTRY),
+            "period": period,
             "mallet_subrotation": 1 if self._sub.get() else 0,
         }
         if self.group:
@@ -1123,7 +1706,8 @@ class _LimitStationsDialog(ttk.Toplevel):
                      (pr.TIMP_AUX, "Timpani / Auxiliary")],
     }
 
-    def __init__(self, parent, name, class_type, mallet_instruments, current):
+    def __init__(self, parent, name, class_type, mallet_instruments, current,
+                 stations=None):
         super().__init__(parent)
         self.saved = False
         self.allowed = None
@@ -1159,7 +1743,13 @@ class _LimitStationsDialog(ttk.Toplevel):
 
         rot_box = ttk.Labelframe(body, text=" Rotation stations ", padding=8)
         rot_box.pack(fill=X, pady=(0, 8))
-        for value, label in self._ROTATION.get(class_type, self._ROTATION[pr.ENTRY]):
+        # Offer the section's OWN stations when it defines them, so a limit can
+        # never point at a station this class doesn't actually rotate through.
+        if stations:
+            offered = [(s["name"], s["name"]) for s in stations]
+        else:
+            offered = self._ROTATION.get(class_type, self._ROTATION[pr.ENTRY])
+        for value, label in offered:
             var = tk.BooleanVar(value=value in current)
             ttk.Checkbutton(rot_box, text=label, variable=var,
                             bootstyle=WARNING).pack(anchor=W, pady=1)
@@ -1207,7 +1797,8 @@ class _LimitStationsDialog(ttk.Toplevel):
 
 
 class _FullGridDialog(ttk.Toplevel):
-    def __init__(self, parent, group, payload, start_day, inventory=None):
+    def __init__(self, parent, group, payload, start_day, inventory=None,
+                 stations=None):
         super().__init__(parent)
         self.title(f"Full Rotation Grid — {group['name']}")
         self.grab_set()
@@ -1216,7 +1807,7 @@ class _FullGridDialog(ttk.Toplevel):
         day_numbers, rows = pr.full_grid(
             payload, group["class_type"],
             mallet_subrotation=bool(group["mallet_subrotation"]),
-            start_day=start_day, inventory=inventory)
+            start_day=start_day, inventory=inventory, stations=stations)
 
         hdr = ttk.Frame(self, bootstyle=PRIMARY)
         hdr.pack(fill=X)

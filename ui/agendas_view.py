@@ -566,7 +566,16 @@ class AgendasView(ttk.Frame):
     def _pieces(self, concert):
         rows = self.db.get_concert_pieces(concert["id"])
         kw = self._cfg["ensemble"]
-        matched = [r for r in rows if kw in (r["ensemble"] or "").lower()]
+        import class_registry as cr
+
+        def mine(r):
+            name = r["ensemble"] or ""
+            # Keyword substring covers the built-in classes; identity covers
+            # custom classes whose keyword is a slug ("chamber_winds") that
+            # never appears in the printed ensemble name.
+            return kw in name.lower() or cr.same_class(name, self._cfg["label"])
+
+        matched = [r for r in rows if mine(r)]
         use = matched if matched else rows
         return [r["title"] for r in use if r["title"]]
 
@@ -1273,27 +1282,54 @@ class AgendasView(ttk.Frame):
     # ─────────────────────────────────────────────────────── percussion data ──
 
     def _perc_groups(self):
-        """This ensemble's percussion sections.  Entry filters on the ENTRY
-        class type; Intermediate & Advanced share the INT_ADV type, so those are
-        split by the group keyword in the section NAME ("int" vs "adv").  For
-        Intermediate we also tolerate un-"int"-named sections (any INT_ADV group
-        that isn't an Advanced one); Advanced requires an explicit "adv" name so
-        it never grabs the Intermediate sections."""
+        """This class's percussion sections — one per class period.
+
+        A section now records WHICH class it belongs to (``class_key``, from the
+        class registry), so this is an exact match.  Sections created before that
+        link existed fall back to the old heuristic: filter by rotation type,
+        then split Intermediate from Advanced by the keyword in the section name
+        (Advanced requires an explicit "adv" so it never steals Intermediate's).
+        """
         ct = self._cfg["class_type"]
         # No percussion for this class (jazz, choir/orchestra, a non-perc club).
         if ct is None or not self._percussion:
             return []
-        groups = [g for g in self.db.get_percussion_groups(self._year())
-                  if g["class_type"] == ct]
+        all_groups = list(self.db.get_percussion_groups(self._year()))
+
+        def key_of(g):
+            try:
+                return g["class_key"]
+            except (KeyError, IndexError):
+                return None
+
+        linked = [g for g in all_groups if key_of(g) == self._store_id]
+        unlinked = [g for g in all_groups if not key_of(g)]
+        if linked and not unlinked:
+            return self._by_period(linked)
+
+        # Legacy sections (no class link) still have to land somewhere sensible.
+        groups = [g for g in unlinked if g["class_type"] == ct]
         if self._template == "band_entry":
-            return groups
-        kw = self._cfg["ensemble"]
-        named = [g for g in groups if kw in (g["name"] or "").lower()]
-        if named:
-            return named
-        if self._template == "band_intermediate":
-            return [g for g in groups if "adv" not in (g["name"] or "").lower()]
-        return named            # Advanced: only explicitly "adv"-named sections
+            legacy = groups
+        else:
+            kw = self._cfg["ensemble"]
+            named = [g for g in groups if kw in (g["name"] or "").lower()]
+            if named:
+                legacy = named
+            elif self._template == "band_intermediate":
+                legacy = [g for g in groups
+                          if "adv" not in (g["name"] or "").lower()]
+            else:
+                legacy = named   # Advanced: only explicitly "adv"-named sections
+        return self._by_period(linked + legacy)
+
+    @staticmethod
+    def _by_period(groups):
+        """Sections in class-period order, so the toggle reads P1, P2, P6, P7."""
+        def key(g):
+            p = str(g["period"] or "").strip()
+            return (0, int(p), "") if p.isdigit() else (1, 0, p or (g["name"] or ""))
+        return sorted(groups, key=key)
 
     # ── P1/P2 (or P6/P7) section: a section IS its percussion group.  The toolbar
     #    toggle picks which section's rotation + Missing lists to show; the
@@ -1344,8 +1380,20 @@ class AgendasView(ttk.Frame):
     def _linked_perc_group(self):
         return self._section_group()
 
+    @staticmethod
+    def _section_button_label(g):
+        """"P1" when the section knows its period, else its full name.  The
+        toggle sits in a crowded toolbar — "P1 | P2" is readable at a glance
+        where "Period 1 — MS Band (Entry)" is not."""
+        p = str(g["period"] or "").strip()
+        return f"P{p}" if p else (g["name"] or "Section")
+
     def _render_section_toggle(self):
-        """Populate the toolbar section toggle (only when 2+ sections)."""
+        """Populate the toolbar section toggle (only when 2+ sections).
+
+        The lesson plan itself is shared across a class's sections — planned
+        once — so this switches only what genuinely differs period to period:
+        the percussion rotation and the Missing lists."""
         for w in self._section_bar.winfo_children():
             w.destroy()
         groups = self._perc_groups()
@@ -1357,11 +1405,16 @@ class AgendasView(ttk.Frame):
         self._section_var = tk.StringVar(
             value=str(active["id"]) if active else "")
         for g in groups:
-            ttk.Radiobutton(self._section_bar, text=g["name"],
+            ttk.Radiobutton(self._section_bar,
+                            text=self._section_button_label(g),
                             value=str(g["id"]), variable=self._section_var,
                             bootstyle=(INFO, "toolbutton"),
                             command=lambda gid=g["id"]: self._set_section(gid)
                             ).pack(side=LEFT, padx=1)
+        ttk.Label(self._section_bar,
+                  text="(same plan, each period's own rotation)",
+                  font=("Segoe UI", fs(8)),
+                  foreground=muted_fg()).pack(side=LEFT, padx=(6, 0))
 
     # ── per-section "Missing" name lists ─────────────────────────────────────
     # Typed by hand (no per-student pass tracking yet) but stored SEPARATELY per
@@ -1463,14 +1516,42 @@ class AgendasView(ttk.Frame):
                 pass
         return None
 
-    def _rotation_day(self, payload):
+    @staticmethod
+    def _perc_stations(group):
+        """A section's own rotation stations (set in Percussion → Rotation
+        Stations…), or None for the built-in ring.  The agenda has to read the
+        same list the Percussion tab does, or the board on the screen and the
+        board in the planner would disagree."""
+        try:
+            raw = group["stations"]
+        except (KeyError, IndexError, TypeError):
+            return None
+        if not raw:
+            return None
+        try:
+            return pr.norm_stations(json.loads(raw))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _perc_subrotation(group):
+        try:
+            return bool(group["mallet_subrotation"])
+        except (KeyError, IndexError, TypeError):
+            return True
+
+    def _rotation_day(self, payload, group=None):
         cal = self._calendar()
         if cal:
             idx = scal.school_day_index(cal, self._date)
         else:
             start, _end = self._year_bounds()
             idx = spine._school_days_between(start, self._date)
-        cycle = pr.cycle_length(payload, inventory=self._perc_inventory())
+        cycle = pr.cycle_length(
+            payload, mallet_subrotation=self._perc_subrotation(group),
+            inventory=self._perc_inventory(),
+            stations=self._perc_stations(group),
+            class_type=(group["class_type"] if group else None))
         if cycle <= 0:
             return 1, 1
         return ((idx - 1) % cycle) + 1, cycle
@@ -1479,9 +1560,11 @@ class AgendasView(ttk.Frame):
         payload = self._perc_payload(group)
         if not payload:
             return [], 0, 0
-        day, cycle = self._rotation_day(payload)
+        day, cycle = self._rotation_day(payload, group)
         asg = pr.day_assignments(payload, day, group["class_type"],
-                                 inventory=self._perc_inventory())
+                                 mallet_subrotation=self._perc_subrotation(group),
+                                 inventory=self._perc_inventory(),
+                                 stations=self._perc_stations(group))
         return asg, day, cycle
 
     # ────────────────────────────────────────────────────────────── present ───

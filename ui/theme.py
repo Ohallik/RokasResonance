@@ -150,10 +150,129 @@ def file_selected_fg() -> str:
 
 # ── Startup application ───────────────────────────────────────────────────────
 
+def usable_screen(win):
+    """(width, height) of the screen area a window can actually occupy.
+
+    ``winfo_screenheight`` reports the whole panel including the taskbar and
+    the window's own title bar, so sizing to it puts the bottom of a dialog —
+    which is exactly where Save lives — underneath the taskbar.  On Windows we
+    ask for the real work area; everywhere else we subtract a conservative
+    allowance."""
+    sw = win.winfo_screenwidth()
+    sh = win.winfo_screenheight()
+    try:
+        import ctypes
+        import ctypes.wintypes
+        rect = ctypes.wintypes.RECT()
+        # SPI_GETWORKAREA = 0x0030 — the desktop minus the taskbar.
+        if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0,
+                                                      ctypes.byref(rect), 0):
+            work_w = rect.right - rect.left
+            work_h = rect.bottom - rect.top
+            if work_w > 200 and work_h > 200:
+                # Leave room for the title bar + a little breathing space.
+                return work_w - 16, work_h - 48
+    except Exception:
+        pass
+    return sw - 16, sh - 96
+
+
+def _reserve_button_bar(win):
+    """Give a dialog's button row priority over its body in the packer.
+
+    Tk's packer hands out space in packing order, so a button bar packed LAST
+    is the first thing to vanish when a dialog is taller than the screen —
+    which is how a teacher on a small district laptop ends up clicking ✕ on a
+    form that had a Save button they never saw.  Re-packing the bar at the
+    bottom *before* the body makes it non-negotiable: the body shrinks (or
+    scrolls) instead, and Save is always on screen.
+
+    Best-effort and silent — any dialog that isn't laid out this way is left
+    exactly as it was."""
+    try:
+        import tkinter as tk
+        kids = [k for k in win.winfo_children() if k.winfo_manager() == "pack"]
+        if len(kids) < 2:
+            return None
+        bar = kids[-1]
+        if not isinstance(bar, (tk.Frame,)) and "frame" not in bar.winfo_class().lower():
+            return None
+        # A button bar holds buttons and nothing the user types into, and at
+        # least one of them closes the dialog.  Requiring that last part keeps
+        # this from grabbing an "Add row" toolbar that merely happens to be the
+        # last thing packed and dragging it to the bottom of the window.
+        actions = {"save", "ok", "cancel", "close", "apply", "done", "add",
+                   "export", "export…", "export...", "finish", "continue"}
+        buttons, others, has_action = 0, 0, False
+        for w in bar.winfo_children():
+            cls = w.winfo_class().lower()
+            if "button" in cls and "checkbutton" not in cls and "radiobutton" not in cls:
+                buttons += 1
+                try:
+                    label = str(w.cget("text")).strip().lower()
+                except Exception:
+                    label = ""
+                if label.strip("…. ") in {a.strip("…. ") for a in actions}:
+                    has_action = True
+            elif cls not in ("tframe", "frame", "tlabel", "label", "tseparator"):
+                others += 1
+        if buttons < 1 or others or not has_action:
+            return None
+        bar.pack_configure(side="bottom", fill="x", before=kids[0])
+        return bar
+    except Exception:
+        return None
+
+
+def scroll_body(parent, **pack_kw):
+    """A vertically scrolling frame to put a long form inside.
+
+    Returns the inner frame — pack/grid children into it exactly as if it were
+    an ordinary Frame.  Tall dialogs (a field trip, a concert) run past the
+    bottom of a small laptop screen; with the body scrolling, every field stays
+    reachable instead of being silently cut off.  The mouse wheel works while
+    the pointer is over the area.
+    """
+    import tkinter as tk
+    import ttkbootstrap as ttk
+
+    outer = ttk.Frame(parent)
+    outer.pack(**({"fill": "both", "expand": True} | pack_kw))
+    canvas = tk.Canvas(outer, highlightthickness=0, borderwidth=0)
+    sb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+    inner = ttk.Frame(canvas)
+    win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    def _on_inner(_e=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        # Only show the scrollbar when the content actually overflows, so
+        # short dialogs look exactly as they did before.
+        needed = inner.winfo_reqheight() > canvas.winfo_height()
+        if needed and not sb.winfo_ismapped():
+            sb.pack(side="right", fill="y")
+        elif not needed and sb.winfo_ismapped():
+            sb.pack_forget()
+
+    inner.bind("<Configure>", _on_inner)
+    canvas.bind("<Configure>",
+                lambda e: (canvas.itemconfigure(win_id, width=e.width), _on_inner()))
+    canvas.configure(yscrollcommand=sb.set)
+    canvas.pack(side="left", fill="both", expand=True)
+
+    def _wheel(e):
+        if inner.winfo_reqheight() > canvas.winfo_height():
+            canvas.yview_scroll(-1 * (e.delta // 120), "units")
+
+    canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
+    canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+    return inner
+
+
 def fit_window(win, min_w: int = 200, min_h: int = 200, margin: int = 80):
-    """Size a Toplevel to fit its content, then center it on screen.
-    Uses the larger of the measured required size and min_w/min_h, capped at
-    screen size minus margin. Call this AFTER all widgets have been added.
+    """Size a Toplevel to fit its content, then center it in the usable screen
+    area.  Uses the larger of the measured required size and min_w/min_h,
+    capped so the whole dialog — including its Save/Cancel row — stays on
+    screen.  Call this AFTER all widgets have been added.
 
     Scales minimum sizes by the font scale so dialogs grow with text size.
     """
@@ -163,15 +282,119 @@ def fit_window(win, min_w: int = 200, min_h: int = 200, margin: int = 80):
     min_h = round(min_h * scale_factor)
 
     win.withdraw()
+    bar = _reserve_button_bar(win)
     win.update_idletasks()
     sw = win.winfo_screenwidth()
     sh = win.winfo_screenheight()
-    w = min(max(min_w, win.winfo_reqwidth()), sw - margin)
-    h = min(max(min_h, win.winfo_reqheight()), sh - margin)
-    x = (sw - w) // 2
-    y = max(0, (sh - h) // 2)
+    avail_w, avail_h = usable_screen(win)
+    avail_w = min(avail_w, sw)
+    avail_h = min(avail_h, sh)
+    w = min(max(min_w, win.winfo_reqwidth()), avail_w)
+    h = min(max(min_h, win.winfo_reqheight()), avail_h)
+
+    # Never let the user drag the window smaller than "button row + a usable
+    # sliver of the form" — resizing is not supposed to be able to hide Save.
+    bar_h = 0
+    if bar is not None:
+        try:
+            bar_h = bar.winfo_reqheight()
+        except Exception:
+            bar_h = 0
+    try:
+        win.minsize(min(320, w), min(bar_h + round(120 * scale_factor), h))
+    except Exception:
+        pass
+
+    x = max(0, (sw - w) // 2)
+    y = max(0, (avail_h - h) // 2)
     win.geometry(f"{w}x{h}+{x}+{y}")
     win.deiconify()
+
+
+# ── Navigation button palette ─────────────────────────────────────────────────
+# The hub's big navigation buttons are the app's map: a teacher should be able
+# to find "Uniforms" by its colour before they've read the word.  All-blue-and-
+# gray buttons make every destination look the same, so each tool gets its own
+# hue, laid out roughly in rainbow order down the page.
+#
+# Hues only — READABILITY still decides the text colour: ``best_fg`` picks black
+# or white per swatch, whichever clears WCAG by more, and every pair below is
+# verified 4.5:1 or better in both light and dark themes.
+
+_NAV_LIGHT = {
+    "red":    "#b3261e",
+    "orange": "#b0530b",
+    "amber":  "#f0a500",
+    "green":  "#16704a",
+    "teal":   "#0f6b73",
+    "blue":   "#1c5fb0",
+    "purple": "#6b3fa0",
+    "gray":   "#5a6270",
+}
+# Dark mode wants the same hues carried by LIGHTER fills (a dark button on a
+# dark background disappears), with dark text on top.
+_NAV_DARK = {
+    "red":    "#ef7a72",
+    "orange": "#eb9455",
+    "amber":  "#f5bf45",
+    "green":  "#5cc999",
+    "teal":   "#57c1c9",
+    "blue":   "#7fb0ec",
+    "purple": "#b394e8",
+    "gray":   "#a8b0bd",
+}
+
+
+def best_fg(bg: str) -> str:
+    """Black or white on ``bg`` — whichever is more readable.  Never guesses:
+    the higher measured contrast ratio wins, so a palette tweak can't quietly
+    make a button's label unreadable."""
+    return ("#ffffff" if contrast_ratio("#ffffff", bg) >= contrast_ratio("#111111", bg)
+            else "#111111")
+
+
+def nav_color(name: str) -> str:
+    """The hex fill for a named navigation hue in the active theme."""
+    table = _NAV_DARK if is_dark() else _NAV_LIGHT
+    return table.get(name, table["blue"])
+
+
+def _shift(hexcolor: str, factor: float) -> str:
+    h = hexcolor.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    r, g, b = (max(0, min(255, int(v * factor))) for v in (r, g, b))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def register_nav_styles(font=None, small_font=None):
+    """Create ``Nav.<hue>.TButton`` / ``NavSm.<hue>.TButton`` styles for every
+    palette hue and return the list of hue names.  Safe to call again after a
+    theme change — the styles are simply reconfigured."""
+    import tkinter.ttk as _ttk
+    style = _ttk.Style()
+    names = []
+    for name in (_NAV_DARK if is_dark() else _NAV_LIGHT):
+        bg = nav_color(name)
+        fg = best_fg(bg)
+        hover = _shift(bg, 1.14 if is_dark() else 0.86)
+        press = _shift(bg, 1.24 if is_dark() else 0.76)
+        for prefix, f in (("Nav", font), ("NavSm", small_font)):
+            sname = f"{prefix}.{name}.TButton"
+            kw = {"background": bg, "foreground": fg, "focuscolor": bg,
+                  "bordercolor": bg, "lightcolor": bg, "darkcolor": bg,
+                  "relief": "flat", "anchor": "w"}
+            if f:
+                kw["font"] = f
+            style.configure(sname, **kw)
+            style.map(
+                sname,
+                background=[("pressed", press), ("active", hover),
+                            ("disabled", _shift(bg, 1.35 if not is_dark() else 0.7))],
+                foreground=[("pressed", fg), ("active", fg),
+                            ("disabled", "#f0f0f0" if not is_dark() else "#404040")],
+            )
+        names.append(name)
+    return names
 
 
 def _rel_luminance(hexcolor: str) -> float:

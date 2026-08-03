@@ -63,12 +63,6 @@ class ConcertsView(ttk.Frame):
                    bootstyle=(INFO, OUTLINE),
                    command=self._export_roster).pack(side=RIGHT, padx=(0, 4))
 
-    def _export_roster(self):
-        from ui.roster_export_view import open_roster_export
-        open_roster_export(self, self.main_db, self.base_dir, self._student_year(),
-                           context="For an in-school performance: choose the "
-                                   "class(es) performing.")
-
         # ── Upcoming concerts: scrollable cards, checklist on each ──
         up_frame = tk.LabelFrame(self, text=" Upcoming Concerts ",
                                  font=("Segoe UI", fs(10), "bold"),
@@ -89,6 +83,12 @@ class ConcertsView(ttk.Frame):
         # Pop a notification shortly after the tab is built if any reminder
         # stage has come due (2 weeks / 1 week / 2 days before a concert).
         self.after(800, self._notify_due)
+
+    def _export_roster(self):
+        from ui.roster_export_view import open_roster_export
+        open_roster_export(self, self.main_db, self.base_dir, self._student_year(),
+                           context="For an in-school performance: choose the "
+                                   "class(es) performing.")
 
     def _scroll_area(self, parent):
         """A vertical-scrolling inner frame (mouse wheel works on hover)."""
@@ -183,8 +183,10 @@ class ConcertsView(ttk.Frame):
         from ui.settings_dialog import load_settings
         teacher = (load_settings(self.base_dir).get("teacher") or {})
         school = (teacher.get("school_name") or "").strip()
-        director = os.path.basename(self.base_dir.rstrip("\\/"))
-        return school, director
+        # First + last only ("Meagan Mangum") — programs and emails never get
+        # the profile folder's middle initial.  Settings can override.
+        from ui.names import director_name
+        return school, director_name(self.base_dir)
 
     def _program_type(self):
         from ui.settings_dialog import load_settings
@@ -430,7 +432,8 @@ class ConcertsView(ttk.Frame):
         }
         if template:
             seed.update(template)
-        dlg = _ConcertDialog(self, seed=seed, program_type=self._program_type())
+        dlg = _ConcertDialog(self, seed=seed, program_type=self._program_type(),
+                             main_db=self.main_db, student_year=self._student_year())
         self.wait_window(dlg)
         if dlg.result:
             # A template contributes what the dialog doesn't show (e.g.
@@ -443,7 +446,8 @@ class ConcertsView(ttk.Frame):
 
     def _edit_concert(self, c):
         dlg = _ConcertDialog(self, seed=dict(c),
-                             program_type=self._program_type(), editing=True)
+                             program_type=self._program_type(), editing=True,
+                             main_db=self.main_db, student_year=self._student_year())
         self.wait_window(dlg)
         if dlg.result:
             self.db.update_concert(c["id"], dlg.result)
@@ -817,7 +821,8 @@ class _PastConcertDialog(ttk.Toplevel):
 class _ConcertDialog(ttk.Toplevel):
     """Everything about one concert, in three small tabs."""
 
-    def __init__(self, parent, seed=None, program_type="band", editing=False):
+    def __init__(self, parent, seed=None, program_type="band", editing=False,
+                 main_db=None, student_year=None):
         super().__init__(parent.winfo_toplevel())
         self.result = None
         seed = seed or {}
@@ -905,18 +910,28 @@ class _ConcertDialog(ttk.Toplevel):
         # Ensembles: standard ones as checkboxes + free-text extras
         ttk.Label(basics, text="Ensembles performing",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 2))
-        from ui.ensembles import ensembles_for
-        std = ensembles_for(program_type)
+        # Offer the classes the roster really uses: this list is matched back
+        # against student records to build the performing roster.
+        from ui.ensembles import selectable_ensembles
+        # A class with no students can't attend anything, so only real
+        # ones are offered; anything unusual goes in "Other groups".
+        std = selectable_ensembles(main_db, student_year, program_type)
         chosen = set(ct.ensembles_list(seed))
         self._ens_vars = {}
         grid = ttk.Frame(basics); grid.pack(anchor=W)
+        from ui.ensembles import class_display_map
+        import class_registry as cr
+        dmap = class_display_map(std)
         for i, e in enumerate(std):
-            bv = tk.BooleanVar(value=e in chosen)
+            # Tick by identity so an old concert saved as "Entry Band" still
+            # shows checked when the picker offers "MS Band (Entry)".
+            bv = tk.BooleanVar(value=any(cr.same_class(e, c) for c in chosen))
             self._ens_vars[e] = bv
-            ttk.Checkbutton(grid, text=e, variable=bv, bootstyle=PRIMARY
+            ttk.Checkbutton(grid, text=dmap[e], variable=bv, bootstyle=PRIMARY
                             ).grid(row=i // 3, column=i % 3, sticky=W,
                                    padx=(0, 14), pady=2)
-        extras = [e for e in chosen if e not in std]
+        extras = [e for e in chosen
+                  if not any(cr.same_class(e, s2) for s2 in std)]
         ttk.Label(basics, text="Other groups (comma-separated — e.g. "
                                "Heavy Metal, 5th Grade Bands, Adv Orchestra)",
                   font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W, pady=(4, 0))

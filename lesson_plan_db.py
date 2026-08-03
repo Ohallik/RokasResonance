@@ -183,6 +183,8 @@ class LessonPlanDatabase:
                     period TEXT,
                     current_day INTEGER DEFAULT 1,
                     mallet_subrotation INTEGER DEFAULT 1,
+                    stations TEXT,
+                    class_key TEXT,
                     class_id INTEGER,
                     notes TEXT,
                     is_active INTEGER DEFAULT 1,
@@ -426,6 +428,23 @@ class LessonPlanDatabase:
             # For students who can only play certain equipment (accessibility).
             try:
                 conn.execute("ALTER TABLE percussion_students ADD COLUMN allowed_stations TEXT")
+                conn.commit()
+            except Exception:
+                pass
+            # Migration: a section may define its OWN rotation stations (JSON
+            # list of {"name", "share"}).  NULL = the built-in 40/40/20 ring —
+            # so every existing section keeps the rotation it already had.
+            try:
+                conn.execute("ALTER TABLE percussion_groups ADD COLUMN stations TEXT")
+                conn.commit()
+            except Exception:
+                pass
+            # Migration: an explicit link from a percussion section to the class
+            # in the teacher's registry (class_registry id, e.g. "entry").  This
+            # replaces guessing the class from words in the section NAME, which
+            # broke the moment anyone renamed a section.
+            try:
+                conn.execute("ALTER TABLE percussion_groups ADD COLUMN class_key TEXT")
                 conn.commit()
             except Exception:
                 pass
@@ -1045,7 +1064,8 @@ class LessonPlanDatabase:
 
     def add_percussion_group(self, data):
         cols = ["school_year", "name", "class_type", "period", "current_day",
-                "mallet_subrotation", "class_id", "notes"]
+                "mallet_subrotation", "stations", "class_key", "class_id",
+                "notes"]
         values = [data.get(c) for c in cols]
         placeholders = ",".join(["?"] * len(cols))
         with self._connect() as conn:
@@ -1057,8 +1077,9 @@ class LessonPlanDatabase:
 
     def update_percussion_group(self, group_id, data):
         cols = [c for c in ["school_year", "name", "class_type", "period",
-                            "current_day", "mallet_subrotation", "class_id",
-                            "notes", "is_active"] if c in data]
+                            "current_day", "mallet_subrotation", "stations",
+                            "class_key", "class_id", "notes",
+                            "is_active"] if c in data]
         if not cols:
             return
         set_clause = ", ".join(f"{c}=?" for c in cols)
@@ -1681,6 +1702,33 @@ def current_school_year() -> str:
     if today.month >= 8:
         return f"{today.year}-{today.year + 1}"
     return f"{today.year - 1}-{today.year}"
+
+
+def year_start(school_year: str) -> int:
+    """The starting calendar year of a '2026-2027' label, or -1 if unparseable."""
+    try:
+        return int(str(school_year).split("-")[0])
+    except (ValueError, AttributeError, IndexError):
+        return -1
+
+
+def is_future_year(school_year: str) -> bool:
+    """True if this label is a school year that hasn't started yet.
+
+    Looking BACK at last year is normal — you reuse a concert, check who played
+    what.  Working FORWARD is not: a teacher who nudges the year selector ahead
+    and starts entering agendas and rotations is filing this year's work under a
+    year that doesn't exist yet, and none of it shows up where they expect it.
+    Selectors therefore stop at the current year, and rolling forward happens
+    only through the New School Year wizard.
+    """
+    start = year_start(school_year)
+    return start > 0 and start > year_start(current_school_year())
+
+
+def past_and_current_years(years) -> list:
+    """``years`` with any not-yet-started school year filtered out."""
+    return [y for y in years if not is_future_year(y)]
 
 
 def get_lesson_plan_db_path(base_dir: str, school_year: str) -> str:

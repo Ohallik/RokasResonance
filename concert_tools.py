@@ -64,8 +64,10 @@ def _order_index(section: str, jazz: bool) -> int:
 
 
 def _member_of(student, ensemble: str) -> bool:
-    groups = [e.strip().lower() for e in (student.get("ensembles") or "").split(",")]
-    return (ensemble or "").strip().lower() in groups
+    """Class membership by IDENTITY, not spelling — an old trip saved with
+    "Entry Band" still matches students imported as "MS Band (Entry)"."""
+    from class_registry import csv_has_class
+    return csv_has_class(student.get("ensembles"), ensemble)
 
 
 def _display_name(student) -> str:

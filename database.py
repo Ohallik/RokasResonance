@@ -1549,19 +1549,37 @@ class Database:
     # ─── Bulk ensemble / period / instrument assignment ─────────────────────────
 
     @staticmethod
-    def _csv_merge(existing: str, values, replace: bool) -> str:
+    def _csv_merge(existing: str, values, replace: bool,
+                   by_class: bool = False) -> str:
         """Merge/replace a comma-separated multi-value field, order-preserving,
-        de-duplicated.  `values` is a list of strings to set or add."""
+        de-duplicated.  `values` is a list of strings to set or add.
+
+        With ``by_class`` (the ensembles field), duplicates are detected by
+        class IDENTITY: adding "MS Band (Entry)" to a student who already has
+        "Entry Band" replaces the old spelling instead of stacking a second
+        copy of the same class — so stored data converges on whatever spelling
+        the class pickers offer."""
         wanted = [str(v).strip() for v in values if str(v).strip()]
+
+        def _dup(items, v):
+            if by_class:
+                from class_registry import same_class
+                return any(same_class(v, i) for i in items)
+            return v in items
+
         if replace:
             out = []
             for v in wanted:
-                if v not in out:
+                if not _dup(out, v):
                     out.append(v)
             return ",".join(out)
         out = [p.strip() for p in (existing or "").split(",") if p.strip()]
         for v in wanted:
-            if v not in out:
+            if by_class:
+                from class_registry import same_class
+                # The NEW spelling wins: swap out any same-class variant.
+                out = [i for i in out if not same_class(v, i)]
+            if not _dup(out, v):
                 out.append(v)
         return ",".join(out)
 
@@ -1576,7 +1594,8 @@ class Database:
                     f"SELECT {field} FROM students WHERE id=?", (sid,)
                 ).fetchone()
                 current = row[field] if row else ""
-                merged = self._csv_merge(current, values, replace)
+                merged = self._csv_merge(current, values, replace,
+                                         by_class=(field == "ensembles"))
                 conn.execute(
                     f"UPDATE students SET {field}=? WHERE id=?", (merged, sid)
                 )
@@ -1670,9 +1689,15 @@ class Database:
         def _has(csv_val, target):
             return target in [p.strip() for p in (csv_val or "").split(",") if p.strip()]
 
+        # Class membership is compared by IDENTITY, not spelling: an imported
+        # roster's "Entry Band", the registry's "MS Band (Entry)" and a filter's
+        # "Entry" are the same class.  Every ensemble filter in the app funnels
+        # through here, so this one line is what keeps them all agreeing.
+        from class_registry import csv_has_class
+
         out = []
         for r in rows:
-            if ensemble and not _has(r["ensembles"], ensemble):
+            if ensemble and not csv_has_class(r["ensembles"], ensemble):
                 continue
             if period and not _has(r["class_periods"], str(period)):
                 continue

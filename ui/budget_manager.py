@@ -707,10 +707,12 @@ class _FieldTripDialog(ttk.Toplevel):
         tagged = self._tagged_ensembles()
         if not tagged:
             return []
+        from class_registry import csv_has_class
         out = []
         for s in self.db.get_current_roster():
-            ens = [x.strip() for x in ((s.get("ensembles") or "").split(",")) if x.strip()]
-            if any(t in ens for t in tagged):
+            # Identity match — the fee tag and the roster may spell the same
+            # class differently ("Entry Band" vs "MS Band (Entry)").
+            if any(csv_has_class(s.get("ensembles"), t) for t in tagged):
                 out.append(s)
         return out
 
@@ -1116,9 +1118,10 @@ class _FeesDialog(ttk.Toplevel):
             return
         amt = self._fee_amount()
         added = 0
+        from class_registry import csv_has_class
         for s in self.db.get_all_students(school_year=self.school_year):
-            names = [x.strip() for x in self.db_sval(s, "ensembles").split(",") if x.strip()]
-            if chosen in names:
+            # Identity match, not spelling match — see class_registry.
+            if csv_has_class(self.db_sval(s, "ensembles"), chosen):
                 self.db.ensure_student_fee(s["id"], fee, self.school_year, amt)
                 added += 1
         Messagebox.show_info(f"Added/kept “{fee}” for {added} student(s) in {chosen}.",

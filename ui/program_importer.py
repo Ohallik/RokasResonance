@@ -426,6 +426,9 @@ class ProgramImportDialog(ttk.Toplevel):
         known = self._known_ensembles()
         if low in known:
             return False
+        from class_registry import same_class
+        if any(same_class(e, k) for k in known):
+            return False        # same class, different spelling — still ours
         own = [v.lower() for v in school_name_variants(self._school)]
         # Mentions a school ("… High School …", "BHS …") that isn't ours
         if ((_SCHOOL_WORD_RE.search(e) or _SCHOOL_ABBREV_RE.search(e))

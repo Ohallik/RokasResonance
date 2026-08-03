@@ -94,18 +94,130 @@ ALL_SNARE_LABEL = "SD / Pad"
 MIN_RING = 5
 
 
-def allocate_seats(n, class_type):
+# ── Custom station lists ──────────────────────────────────────────────────────
+# The built-in 40/40/20 allocation below is one (good) opinion about what a
+# middle-school percussion section should rotate through.  It is not everyone's:
+# a teacher with no kit doesn't want a Drum set seat, another wants Congas in
+# the ring, a third splits Timpani away from Auxiliary.  A section may therefore
+# carry its OWN station list — an ordered list of ``{"name", "share"}`` where
+# ``share`` is how many days out of the total each station is worth relative to
+# the others.  Seats are then handed out in proportion to those shares.
+#
+# ``stations=None`` keeps the built-in behavior exactly, so nothing changes for
+# a teacher who never opens the editor.
+
+
+def default_stations(class_type):
+    """The built-in rotation expressed as an editable station list — the
+    starting point the station editor shows.  Shares reproduce the built-in
+    40% mallets / 40% snare-family / 20% timp-aux split."""
+    if class_type == INT_ADV:
+        return [{"name": MALLETS, "share": 4},
+                {"name": SD, "share": 2},
+                {"name": DRUM_SET, "share": 1},
+                {"name": BD_SD, "share": 1},
+                {"name": TIMP_AUX, "share": 2}]
+    return [{"name": MALLETS, "share": 4},
+            {"name": SD, "share": 3},
+            {"name": BD_SD, "share": 1},
+            {"name": TIMP_AUX, "share": 2}]
+
+
+def norm_stations(stations):
+    """Sanitize a custom station list into ``[{"name", "share"}, ...]``, or
+    None if there's nothing usable (which means "use the built-in rotation")."""
+    if not stations:
+        return None
+    out = []
+    for item in stations:
+        if isinstance(item, dict):
+            name, share = item.get("name"), item.get("share", 1)
+        else:
+            try:
+                name, share = item
+            except (TypeError, ValueError):
+                continue
+        name = str(name or "").strip()
+        try:
+            share = int(share)
+        except (TypeError, ValueError):
+            share = 1
+        if name and share > 0:
+            out.append({"name": name, "share": share})
+    return out or None
+
+
+def station_names(class_type, stations=None):
+    """Every station this section can place a player on — used by the
+    per-student rotation-limit picker so it offers the teacher's OWN stations
+    rather than the built-in ones."""
+    st = norm_stations(stations) or default_stations(class_type)
+    return [s["name"] for s in st]
+
+
+def _custom_seats(n, stations):
+    """Hand ``n`` seats out across a custom station list in proportion to each
+    station's share (largest-remainder, so the totals always add to n).
+
+    Every listed station gets at least one seat while there are players to
+    spare — a station nobody ever reaches isn't a rotation.  When the section
+    is smaller than the station list, the highest-share stations win the seats.
+    """
+    total_share = sum(s["share"] for s in stations)
+    if n <= 0 or total_share <= 0:
+        return []
+
+    if n < len(stations):
+        # Too few players for every station: keep the biggest shares, stable on
+        # ties by the teacher's own ordering.
+        ranked = sorted(range(len(stations)),
+                        key=lambda i: (-stations[i]["share"], i))[:n]
+        return [stations[i]["name"] for i in sorted(ranked)]
+
+    # Proportional allocation by largest remainder, so the shares are honoured
+    # as closely as whole players allow.
+    exact = [n * s["share"] / total_share for s in stations]
+    counts = [int(e) for e in exact]
+    order = sorted(range(len(stations)),
+                   key=lambda i: (-(exact[i] - counts[i]), i))
+    for i in order[:n - sum(counts)]:
+        counts[i] += 1
+
+    # Then make sure nobody listed a station that never comes up: borrow a seat
+    # from whichever station currently has the most (it can spare one).
+    for i, c in enumerate(counts):
+        if c:
+            continue
+        donor = max(range(len(counts)), key=lambda j: (counts[j], -j))
+        if counts[donor] <= 1:
+            break                      # nothing left to borrow — n is too small
+        counts[donor] -= 1
+        counts[i] = 1
+
+    seats = []
+    for st, c in zip(stations, counts):
+        seats += [st["name"]] * c
+    return seats
+
+
+def allocate_seats(n, class_type, stations=None):
     """Return a flat list of ``n`` station labels (the multiset of seats) for a
     section of ``n`` full-rotation players.
 
-    Targets ~40% mallets, ~40% snare-family, ~20% timp/aux, with specialty
-    seats phased in as the section grows.  Reproduces the teacher's real grids:
+    With a custom ``stations`` list, seats are proportional to each station's
+    share.  Otherwise the built-in allocation targets ~40% mallets, ~40%
+    snare-family, ~20% timp/aux, with specialty seats phased in as the section
+    grows.  Reproduces the teacher's real grids:
 
         Entry, n=11   -> 5 Mallets, 3 SD, 1 BD/SD, 2 Timp/aux
         Int/Adv, n=7  -> 3 Mallets, 1 SD, 1 Drum set, 1 BD/SD, 1 Timp/aux
     """
     if n <= 0:
         return []
+
+    custom = norm_stations(stations)
+    if custom:
+        return _custom_seats(n, custom)
 
     # Timp/aux: ~20%, but don't pull a player from a tiny section.
     timp = 0 if n < 3 else max(1, round(0.20 * n))
@@ -251,18 +363,22 @@ def _limited_station(student, day, index):
     return allowed[(day - 1 + index) % len(allowed)]
 
 
-def build_ring(n, class_type):
+def build_ring(n, class_type, stations=None):
     """Return the evenly-spread ring of seats for ``n`` full-rotation players.
 
     The ring never shrinks below MIN_RING seats: with 1-4 earned players the
     extra seats are simply unmanned each day, and the players advance through
-    the full 40/40/20 pattern over the days instead."""
+    the full 40/40/20 pattern over the days instead.  With a custom station
+    list the ring is at least long enough to visit every station."""
     if n <= 0:
         return []
-    return _interleave(allocate_seats(max(n, MIN_RING), class_type))
+    custom = norm_stations(stations)
+    floor = max(MIN_RING, len(custom)) if custom else MIN_RING
+    return _interleave(allocate_seats(max(n, floor), class_type, stations))
 
 
-def cycle_length(students, mallet_subrotation=True, inventory=None):
+def cycle_length(students, mallet_subrotation=True, inventory=None,
+                 stations=None, class_type=None):
     """Days in one full rotation round for this mix of players.
 
     Two things have to complete within one cycle, and the length is the
@@ -287,9 +403,11 @@ def cycle_length(students, mallet_subrotation=True, inventory=None):
     full_count = sum(1 for s in rest if not s.get("mallets_only"))
     mo_count = sum(1 for s in rest if s.get("mallets_only"))
     inv = _reduce_inventory(inventory, _reserved_instruments(limited))
+    custom = norm_stations(stations)
+    ring_floor = max(MIN_RING, len(custom)) if custom else MIN_RING
     lengths = []
     if full_count:
-        lengths.append(max(full_count, MIN_RING))
+        lengths.append(max(full_count, ring_floor))
     if mo_count:
         lengths.append(len(_mallet_slot_walk(mo_count, inv))
                        if mallet_subrotation else 1)
@@ -326,24 +444,32 @@ def _mallets_only_station(j, mo_count, day, inventory, mallet_subrotation):
     return slots[(day - 1 + j) % len(slots)]
 
 
-def station_summary(n, class_type):
+def station_summary(n, class_type, stations=None):
     """Return an ordered list of ``(station, count)`` for a section of ``n``.
 
     Handy for showing the teacher "this rotation is 5 Mallets / 3 SD / ..." and
-    the resulting percentages.
+    the resulting percentages.  Custom stations are reported in the teacher's
+    own order; the built-in ones keep their board order.
     """
-    seats = allocate_seats(n, class_type)
+    seats = allocate_seats(n, class_type, stations)
+    custom = norm_stations(stations)
+    order = ([s["name"] for s in custom] if custom
+             else [MALLETS, SD, BD_SD, DRUM_SET, TIMP_AUX])
     out = []
-    for label in [MALLETS, SD, BD_SD, DRUM_SET, TIMP_AUX]:
+    for label in order:
         c = seats.count(label)
         if c:
             out.append((label, c))
+    # Anything the ordering didn't mention still gets reported.
+    for label in seats:
+        if label not in order and not any(label == o for o, _ in out):
+            out.append((label, seats.count(label)))
     return out
 
 
 def day_assignments(students, day, class_type,
                     mallet_subrotation=True, mode=MODE_NORMAL,
-                    inventory=None):
+                    inventory=None, stations=None):
     """Compute the station for every player on rotation ``day`` (1-based).
 
     ``students`` is an ordered list of dicts with at least:
@@ -401,7 +527,7 @@ def day_assignments(students, day, class_type,
             station_by_id[id(s)] = ALL_SNARE_LABEL
     else:
         full = [s for s in rest if not s.get("mallets_only")]
-        ring = build_ring(len(full), class_type)
+        ring = build_ring(len(full), class_type, stations)
         rlen = len(ring)
         # Full-rotation players take ring seats by position; a Mallets seat
         # stays generic "Mallets" (free choice of any open mallet instrument).
@@ -415,18 +541,20 @@ def day_assignments(students, day, class_type,
 
 
 def full_grid(students, class_type, days=None,
-              mallet_subrotation=True, start_day=1, inventory=None):
+              mallet_subrotation=True, start_day=1, inventory=None,
+              stations=None):
     """Return a printable grid: ``(day_numbers, rows)``.
 
     ``rows`` is a list of ``(name, [station_day1, station_day2, ...])`` for one
     full cycle (or ``days`` columns if given), starting at ``start_day``.
     """
     if days is None:
-        days = cycle_length(students, mallet_subrotation, inventory)
+        days = cycle_length(students, mallet_subrotation, inventory, stations,
+                            class_type)
     day_numbers = [start_day + k for k in range(days)]
 
     per_day = [day_assignments(students, d, class_type, mallet_subrotation,
-                               inventory=inventory)
+                               inventory=inventory, stations=stations)
                for d in day_numbers]
     rows = []
     for idx, s in enumerate(students):

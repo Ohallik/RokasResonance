@@ -29,6 +29,14 @@ def _next_school_year() -> str:
     return f"{today.year}-{today.year + 1}"
 
 
+def _year_start(school_year: str) -> int:
+    """Starting calendar year of a '2026-2027' label (-1 if unparseable)."""
+    try:
+        return int(str(school_year).split("-")[0])
+    except (ValueError, AttributeError, IndexError):
+        return -1
+
+
 GRADE_OPTIONS = ["5", "6", "7", "8", "9", "10", "11", "12", "Other"]
 GENDER_OPTIONS = ["", "Male", "Female", "Non-binary", "Prefer not to say"]
 RELATION_OPTIONS = ["", "Parent", "Guardian", "Grandparent", "Step-parent", "Other"]
@@ -39,7 +47,7 @@ RELATION_OPTIONS = ["", "Parent", "Guardian", "Grandparent", "Step-parent", "Oth
 from ui.ensembles import (
     BAND_ENSEMBLES, ORCHESTRA_ENSEMBLES, CHOIR_ENSEMBLES, PERIOD_OPTIONS,
     BAND_INSTRUMENTS, ORCHESTRA_INSTRUMENTS, CHOIR_PARTS,
-    ensembles_for, instruments_for,
+    ensembles_for, instruments_for, instrument_sort_key, selectable_ensembles,
 )
 
 
@@ -70,7 +78,54 @@ HS_TRANSFER_FIELDS = [
 ]
 
 
-class StudentManager(ttk.Frame):
+class _ClassOptionsMixin:
+    """Supplies ``_class_options()`` — the class names a picker should offer.
+
+    Always the teacher's configured classes PLUS whatever classes the roster
+    actually uses.  Anything that filters, assigns or counts students has to
+    work off names that exist in the data; offering only the configured names
+    is how a filter ends up matching nothing and a Save ends up erasing a
+    student's class.  See ui.ensembles.selectable_ensembles.
+    """
+
+    def _class_year(self):
+        for attr in ("_year_var", "school_year", "default_year"):
+            val = getattr(self, attr, None)
+            if val is None:
+                continue
+            val = val.get() if hasattr(val, "get") else val
+            if val:
+                return val
+        return None
+
+    # Dialogs that ASSIGN a class (edit a student, bulk assign, import) set this
+    # so configured-but-empty classes stay on offer — you have to be able to put
+    # the first student into a new class.  Filters leave it False.
+    _class_options_include_empty = False
+
+    def _class_options(self):
+        try:
+            return selectable_ensembles(
+                self.db, self._class_year(),
+                getattr(self, "program_type", "band"),
+                include_empty=self._class_options_include_empty)
+        except Exception:
+            return list(ensembles_for(getattr(self, "program_type", "band")))
+
+    def _class_display_options(self):
+        """Short display labels for FILTER widgets only ("Entry", "Jazz 1").
+
+        Safe there because every filter matches by class identity, so the
+        short label finds the class no matter how the records spell it.  Never
+        use these for a widget that WRITES the value to a record — assignment
+        widgets store the full canonical name."""
+        from ui.ensembles import class_display_map
+        opts = self._class_options()
+        dmap = class_display_map(opts)
+        return [dmap[o] for o in opts]
+
+
+class StudentManager(_ClassOptionsMixin, ttk.Frame):
     def __init__(self, parent, db, program_type: str = "band"):
         super().__init__(parent)
         self.db = db
@@ -135,7 +190,7 @@ class StudentManager(ttk.Frame):
         self._ensemble_filter_combo = ttk.Combobox(
             filter_bar, textvariable=self._filter_ensemble_var,
             state="readonly", width=18,
-            values=["All"] + ensembles_for(self.program_type),
+            values=["All"] + self._class_display_options(),
         )
         self._ensemble_filter_combo.pack(side=LEFT)
         self._filter_ensemble_var.trace_add("write", lambda *_: self._apply_filter())
@@ -279,16 +334,19 @@ class StudentManager(ttk.Frame):
     # ─────────────────────────────────────────────────────────── Data Loading ─
 
     def _populate_year_options(self):
-        years = self.db.get_school_years()
+        """Only years that have started.  Previous years stay available for
+        reference, but a teacher must not be able to select next year and start
+        filing this year's students under it — rolling forward is the New School
+        Year wizard's job, and it moves everything together."""
         cur = _current_school_year()
-        nxt = _next_school_year()
-        # Ensure both current and next year are always available
-        for y in (nxt, cur):
-            if y not in years:
-                years.insert(0, y)
+        cur_start = _year_start(cur)
+        years = [y for y in self.db.get_school_years() if _year_start(y) <= cur_start]
+        if cur not in years:
+            years.insert(0, cur)
+        years = sorted(set(years), key=_year_start, reverse=True)
         self._years_combo["values"] = years
         # Default to current school year (not necessarily years[0])
-        if not self._year_var.get():
+        if not self._year_var.get() or self._year_var.get() not in years:
             self._year_var.set(cur)
 
     def refresh(self):
@@ -365,7 +423,9 @@ class StudentManager(ttk.Frame):
                 if search not in haystack:
                     continue
             if ens_filter and ens_filter != "All":
-                if ens_filter not in _csv_to_list(self._sval(s, "ensembles")):
+                # Identity match ("Entry" ≡ "Entry Band" ≡ "MS Band (Entry)")
+                import class_registry as cr
+                if not cr.csv_has_class(self._sval(s, "ensembles"), ens_filter):
                     continue
             if per_filter and per_filter != "All":
                 if per_filter not in _csv_to_list(self._sval(s, "class_periods")):
@@ -386,10 +446,10 @@ class StudentManager(ttk.Frame):
     def _populate_tree(self, students):
         col_key_map = {
             "Name": "_sort_name",
-            "Grade": "grade",
+            "Grade": "_sort_grade",
             "Ensembles": "ensembles",
             "Period": "class_periods",
-            "Instrument": "primary_instrument",
+            "Instrument": "_sort_instrument",
             "Parent": "parent1_name",
             "Active Instruments": "_active_count",
         }
@@ -406,13 +466,33 @@ class StudentManager(ttk.Frame):
             active_checkouts[s["id"]] = count
 
         def sort_key(s):
-            if key == "_sort_name":
-                return (s["last_name"] or "").lower()
+            """Always returns a comparable tuple.  Sorting has to stay total:
+            a blank instrument/parent/grade must not make the comparison mix
+            numbers with strings (which used to raise TypeError mid-sort and
+            leave the list unsorted)."""
             if key == "_active_count":
-                return active_checkouts.get(s["id"], 0)
-            return (s[key] or "").lower() if isinstance(s[key], str) else (s[key] or 0)
+                return (0, "", active_checkouts.get(s["id"], 0))
+            if key == "_sort_name":
+                return (0, f"{(s['last_name'] or '').lower()}"
+                           f" {(s['first_name'] or '').lower()}", 0)
+            if key == "_sort_instrument":
+                # Score order (flute → tuba → percussion), not alphabetical:
+                # that's how a director reads a roster.  Blanks sort last.
+                inst = self._sval(s, "primary_instrument") or ""
+                rank, name = instrument_sort_key(inst)
+                return (rank, name, 0)
+            if key == "_sort_grade":
+                raw = str(self._sval(s, "grade") or "").strip()
+                # Numeric grades sort numerically; "Other"/blank sort after.
+                return ((int(raw), "", 0) if raw.isdigit()
+                        else (9999, raw.lower(), 0))
+            val = self._sval(s, key)
+            if val is None or val == "":
+                return (1, "", 0)              # blanks last, ascending
+            return (0, str(val).lower(), 0)
 
         students = sorted(students, key=sort_key, reverse=not self._sort_asc)
+        self._update_sort_indicator()
 
         # Configure inactive tag with current theme color
         self.tree.tag_configure("inactive", foreground=subtle_fg())
@@ -437,7 +517,10 @@ class StudentManager(ttk.Frame):
             else:
                 tags = ()
                 name_display = full_name
-            ensembles = self._sval(s, "ensembles") or ""
+            # Ensembles show their short display form ("Entry, Jazz 2") — the
+            # full canonical names stay on the record and in the detail pane.
+            import class_registry as cr
+            ensembles = cr.display_csv(self._sval(s, "ensembles"))
             periods = self._sval(s, "class_periods") or ""
             prim = self._sval(s, "primary_instrument") or ""
             sec = self._sval(s, "secondary_instrument") or ""
@@ -453,6 +536,17 @@ class StudentManager(ttk.Frame):
                 active_str,
             ))
         self._update_sel_count()
+
+    def _update_sort_indicator(self):
+        """Mark the sorted column with ▲/▼ so it's obvious the header is a
+        sort button (and which way it's pointing)."""
+        for col in self.tree["columns"]:
+            if col == "check":
+                continue
+            arrow = ""
+            if col == self._sort_col:
+                arrow = "  ▲" if self._sort_asc else "  ▼"
+            self.tree.heading(col, text=f"{col}{arrow}")
 
     def _sort_by(self, col):
         if self._sort_col == col:
@@ -545,8 +639,18 @@ class StudentManager(ttk.Frame):
         finally:
             menu.grab_release()
 
+    def _open_numbers_per_part(self):
+        from ui.instrumentation_view import open_instrumentation
+        import os
+        base_dir = os.path.dirname(os.path.abspath(self.db.db_path))
+        open_instrumentation(self, self.db, base_dir,
+                             self._year_var.get() or None)
+
     def _open_export_menu(self):
         menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="🔢  Numbers per part — how many copies to print…",
+                         command=self._open_numbers_per_part)
+        menu.add_separator()
         menu.add_command(label="📊  Student list (Excel)…", command=self._export_students)
         menu.add_command(label="🎓  Outgoing students for HS directors (CSV)…",
                          command=self._export_for_hs)
@@ -1198,8 +1302,10 @@ def _parse_student_csvs(paths: list) -> dict:
 
 # ── Import progress dialog ────────────────────────────────────────────────────
 
-class _StudentImportDialog(ttk.Toplevel):
+class _StudentImportDialog(_ClassOptionsMixin, ttk.Toplevel):
     """Shows import progress and results for a CSV roster import."""
+
+    _class_options_include_empty = True     # assigns a class, so offer empties
 
     def __init__(self, parent, db, paths: list, school_year: str, program_type="band"):
         super().__init__(parent)
@@ -1244,7 +1350,7 @@ class _StudentImportDialog(ttk.Toplevel):
         row.pack(fill=X)
         ttk.Label(row, text="Ensemble:", font=("Segoe UI", 8)).pack(side=LEFT)
         ttk.Combobox(row, textvariable=self._ensemble_var, state="readonly", width=20,
-                     values=["— none —"] + ensembles_for(self.program_type)).pack(
+                     values=["— none —"] + self._class_options()).pack(
             side=LEFT, padx=(4, 12))
         ttk.Label(row, text="Class Period:", font=("Segoe UI", 8)).pack(side=LEFT)
         ttk.Combobox(row, textvariable=self._period_var, state="readonly", width=8,
@@ -1402,7 +1508,11 @@ class _StudentImportDialog(ttk.Toplevel):
             self._close_btn.config(state="normal")
 
 
-class StudentDialog(ttk.Toplevel):
+class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
+    """Add / edit one student."""
+
+    _class_options_include_empty = True     # assigns a class, so offer empties
+
     def __init__(self, parent, db, student_id=None, default_year=None, program_type="band"):
         super().__init__(parent)
         self.db = db
@@ -1417,6 +1527,7 @@ class StudentDialog(ttk.Toplevel):
 
         self._vars = {}
         self._multi_vars = {}   # key -> {option: BooleanVar} for checkbox groups
+        self._multi_grids = {}  # key -> (grid frame, columns) so options can grow
         self._build()
         if student_id:
             self._load(student_id)
@@ -1496,15 +1607,55 @@ class StudentDialog(ttk.Toplevel):
         return var
 
     def _checkbox_group(self, parent, key, options, columns=4):
-        """A horizontal set of checkboxes; values collected into a comma string."""
+        """A horizontal set of checkboxes; values collected into a comma string.
+
+        The grid is remembered so ``_ensure_option`` can add a box later for a
+        value the student already has — see ``_load``."""
         holder = self._multi_vars.setdefault(key, {})
         grid = ttk.Frame(parent)
         grid.pack(fill=X, padx=16, pady=(2, 0))
-        for i, opt in enumerate(options):
-            var = tk.BooleanVar(value=False)
-            holder[opt] = var
-            ttk.Checkbutton(grid, text=opt, variable=var, bootstyle=PRIMARY).grid(
-                row=i // columns, column=i % columns, sticky=W, padx=6, pady=2)
+        self._multi_grids[key] = (grid, columns)
+        for opt in options:
+            self._ensure_option(key, opt)
+
+    def _ensure_option(self, key, opt, value=False):
+        """Add a checkbox for ``opt`` if the group doesn't already have one.
+
+        Save rebuilds these fields from the ticked boxes alone, so an option
+        that isn't on screen is an option that gets ERASED the moment the
+        teacher opens a student and clicks Save.  Any value a student actually
+        holds therefore gets a box, whether or not it matches the configured
+        class list — the record decides what's offered, not the other way round.
+
+        For the ensembles group, "already have one" means BY CLASS IDENTITY:
+        a student holding "Entry Band" ticks the offered "MS Band (Entry)" box
+        rather than growing a duplicate.  The box then saves the canonical
+        spelling, so records converge on the configured names as they're
+        edited.  Checkbox labels show the short form ("Entry"); the stored
+        value is always the full canonical name.
+        """
+        import class_registry as cr
+        holder = self._multi_vars.setdefault(key, {})
+        is_class = key == "ensembles"
+        if is_class:
+            for existing, var in holder.items():
+                if cr.same_class(existing, opt):
+                    if value:
+                        var.set(True)
+                    return
+        elif opt in holder:
+            if value:
+                holder[opt].set(True)
+            return
+        grid, columns = self._multi_grids.get(key, (None, 4))
+        if grid is None:
+            return
+        var = tk.BooleanVar(value=value)
+        holder[opt] = var
+        i = len(holder) - 1
+        text = cr.short_class_label(opt) if is_class else opt
+        ttk.Checkbutton(grid, text=text, variable=var, bootstyle=PRIMARY).grid(
+            row=i // columns, column=i % columns, sticky=W, padx=6, pady=2)
 
     def _build_form(self, parent):
         self._section(parent, "Basic Information")
@@ -1532,8 +1683,7 @@ class StudentDialog(ttk.Toplevel):
         self._section(parent, "Ensembles & Class Periods")
         ttk.Label(parent, text="Ensemble(s):", font=("Segoe UI", 8),
                   foreground=muted_fg()).pack(anchor=W, padx=16)
-        self._checkbox_group(parent, "ensembles",
-                             ensembles_for(self.program_type), columns=3)
+        self._checkbox_group(parent, "ensembles", self._class_options(), columns=3)
         ttk.Label(parent, text="Class Period(s):", font=("Segoe UI", 8),
                   foreground=muted_fg()).pack(anchor=W, padx=16, pady=(6, 0))
         self._checkbox_group(parent, "class_periods", PERIOD_OPTIONS, columns=7)
@@ -1615,11 +1765,19 @@ class StudentDialog(ttk.Toplevel):
         for key, var in self._vars.items():
             val = student[key] if key in student.keys() else None
             var.set("" if val is None else str(val))
-        # Multi-value checkbox groups
-        for key, holder in self._multi_vars.items():
+        # Multi-value checkbox groups.  Held values tick their box by class
+        # IDENTITY ("Entry Band" ticks the "MS Band (Entry)" box); anything
+        # that matches no option at all still gets its own box (ticked) rather
+        # than being dropped on the next Save.
+        import class_registry as cr
+        for key in list(self._multi_vars):
             current = _csv_to_list(student[key] if key in student.keys() else "")
-            for opt, var in holder.items():
-                var.set(opt in current)
+            is_class = key == "ensembles"
+            for opt, var in self._multi_vars[key].items():
+                var.set(any(cr.same_class(opt, c) for c in current)
+                        if is_class else (opt in current))
+            for opt in current:
+                self._ensure_option(key, opt, value=True)
         notes = student["notes"] or ""
         self._notes_text.delete("1.0", "end")
         self._notes_text.insert("1.0", notes)
@@ -1673,9 +1831,11 @@ class StudentDialog(ttk.Toplevel):
 
 # ── Bulk ensemble / period assignment dialog ──────────────────────────────────
 
-class _BulkAssignDialog(ttk.Toplevel):
+class _BulkAssignDialog(_ClassOptionsMixin, ttk.Toplevel):
     """Assign ensemble(s), class period(s), and/or instruments to many students
     at once."""
+
+    _class_options_include_empty = True     # assigns a class, so offer empties
 
     def __init__(self, parent, db, student_ids, program_type):
         super().__init__(parent)
@@ -1728,10 +1888,16 @@ class _BulkAssignDialog(ttk.Toplevel):
         ttk.Label(body, text="Ensemble(s):", font=("Segoe UI", 9, "bold")).pack(anchor=W)
         ens_grid = ttk.Frame(body)
         ens_grid.pack(fill=X, pady=(2, 8))
-        for i, opt in enumerate(ensembles_for(self.program_type)):
+        # Short labels on screen; the full canonical name is what gets written
+        # to the records (identity-aware merge swaps out old spellings).
+        from ui.ensembles import class_display_map
+        opts = self._class_options()
+        dmap = class_display_map(opts)
+        for i, opt in enumerate(opts):
             v = tk.BooleanVar(value=False)
             self._ens_vars[opt] = v
-            ttk.Checkbutton(ens_grid, text=opt, variable=v, bootstyle=PRIMARY).grid(
+            ttk.Checkbutton(ens_grid, text=dmap[opt], variable=v,
+                            bootstyle=PRIMARY).grid(
                 row=i // 3, column=i % 3, sticky=W, padx=6, pady=2)
 
         ttk.Label(body, text="Class Period(s):", font=("Segoe UI", 9, "bold")).pack(anchor=W)
@@ -1806,7 +1972,7 @@ class _BulkAssignDialog(ttk.Toplevel):
 
 # ── Email-list generator dialog ───────────────────────────────────────────────
 
-class _EmailListDialog(ttk.Toplevel):
+class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
     """Build a copy/paste-ready email list filtered by ensemble / period /
     instrument, for students, parents, or everyone."""
 
@@ -1852,7 +2018,7 @@ class _EmailListDialog(ttk.Toplevel):
         ttk.Label(body, text="Ensemble:", font=("Segoe UI", 9, "bold")).grid(
             row=1, column=0, sticky=W, pady=4)
         ttk.Combobox(body, textvariable=self._ens_var, state="readonly", width=20,
-                     values=["All"] + ensembles_for(self.program_type)).grid(
+                     values=["All"] + self._class_display_options()).grid(
             row=1, column=1, sticky=W, padx=4)
         self._ens_var.trace_add("write", lambda *_: self._generate())
 

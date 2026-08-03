@@ -147,6 +147,15 @@ def import_class_list(db, students, school_year, ensemble, periods):
             data = dict(existing)
             data["school_year"] = school_year
             data["is_active"] = 1
+            if rolled_forward:
+                # A new year means fresh class assignments: without this, a
+                # student promoted from Entry to Intermediate kept last year's
+                # "Entry" tag AND gained "Intermediate" — showing up in both
+                # classes' rosters, seating charts and counts.  The class-list
+                # imports (this one and any later ones the same night) re-add
+                # every class the student actually belongs to this year.
+                data["ensembles"] = ""
+                data["class_periods"] = ""
             if stu["instrument"] and not (data.get("primary_instrument") or "").strip():
                 data["primary_instrument"] = stu["instrument"]
             db.update_student(existing["id"], data)

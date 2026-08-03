@@ -20,7 +20,8 @@ def filter_students(students, ensembles):
     """Return roster rows (dicts: name, grade, student_id) for students in any of
     ``ensembles`` (a set/list of class labels).  ``ensembles`` empty/None means
     every student who is in at least one ensemble.  Sorted by last, first."""
-    want = {e.strip() for e in (ensembles or []) if e and e.strip()}
+    want = [e.strip() for e in (ensembles or []) if e and e.strip()]
+    from class_registry import csv_has_class
     rows = []
     for s in students:
         if not (s.get("is_active", 1) in (1, None) or s.get("is_active") == 1):
@@ -29,11 +30,15 @@ def filter_students(students, ensembles):
                 continue
         mine = _ensembles_of(s)
         if want:
-            if not (set(mine) & want):
+            # Identity match, not string match — see class_registry.same_class.
+            if not any(csv_has_class(",".join(mine), w) for w in want):
                 continue
         elif not mine:
             continue
-        first = (s.get("first_name") or "").strip()
+        # First + last only, like everywhere else — a stored "Khoi Nguyen Tran"
+        # first name prints as "Tran, Khoi", and a preferred name wins.
+        from ui.names import display_first
+        first = display_first(s.get("first_name"), s.get("preferred_name"))
         last = (s.get("last_name") or "").strip()
         name = f"{last}, {first}".strip(", ").strip() or (first or last)
         rows.append({"name": name,
@@ -50,14 +55,16 @@ def filter_full(students, ensembles):
     """Full student dicts (all columns) for students in any of ``ensembles``
     (empty/None = every active student in at least one ensemble).  Used for the
     handoff export, which needs instruments + contacts, not just name/grade/id."""
-    want = {e.strip() for e in (ensembles or []) if e and e.strip()}
+    want = [e.strip() for e in (ensembles or []) if e and e.strip()]
+    from class_registry import csv_has_class
     out = []
     for s in students:
         if s.get("is_active") == 0:
             continue
         mine = _ensembles_of(s)
         if want:
-            if not (set(mine) & want):
+            # Identity match, not string match — see class_registry.same_class.
+            if not any(csv_has_class(",".join(mine), w) for w in want):
                 continue
         elif not mine:
             continue

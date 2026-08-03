@@ -207,6 +207,17 @@ class SettingsDialog(ttk.Toplevel):
             ttk.Entry(outer, textvariable=var, width=40).pack(
                 anchor=W, pady=(2, 10))
 
+        ttk.Label(outer, text="Your Name (programs & emails)",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W)
+        ttk.Label(outer, text="Printed as the director on concert programs and "
+                              "signed on family emails. Leave blank to use "
+                              "your profile name, first and last only.",
+                  font=("Segoe UI", 8), foreground="#888",
+                  wraplength=420, justify=LEFT).pack(anchor=W)
+        self._display_name_var = tk.StringVar()
+        ttk.Entry(outer, textvariable=self._display_name_var, width=40).pack(
+            anchor=W, pady=(2, 10))
+
         ttk.Separator(outer, orient=HORIZONTAL).pack(fill=X, pady=(4, 12))
 
         ttk.Label(outer, text="External Database",
@@ -667,6 +678,7 @@ class SettingsDialog(ttk.Toplevel):
         self._program_type_var.set(teacher.get("program_type", "band"))
         self._school_district_var.set(teacher.get("school_district", ""))
         self._school_name_var.set(teacher.get("school_name", ""))
+        self._display_name_var.set(teacher.get("display_name", ""))
         ext_path = teacher.get("external_db_path", "")
         self._ext_db_entry.config(state="normal")
         self._ext_db_var.set(ext_path)
@@ -720,6 +732,7 @@ class SettingsDialog(ttk.Toplevel):
         self._settings["teacher"]["program_type"] = self._program_type_var.get()
         self._settings["teacher"]["school_district"] = self._school_district_var.get().strip()
         self._settings["teacher"]["school_name"] = self._school_name_var.get().strip()
+        self._settings["teacher"]["display_name"] = self._display_name_var.get().strip()
         self._settings["teacher"]["external_db_path"] = self._ext_db_var.get().strip()
 
         # Helper Mode PIN lives in its own namespace so it survives round-trips.

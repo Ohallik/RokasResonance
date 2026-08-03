@@ -205,6 +205,157 @@ def new_class_id(existing, label):
     return f"{base}_{n}"
 
 
+# ── Class-name identity ───────────────────────────────────────────────────────
+# THE fix for the app's most persistent bug family: the same class spelled
+# differently in different places.  A Synergy import says "Entry Band", the
+# default registry says "MS Band (Entry)", a filter shows "Entry" — and any
+# code that compares those strings for equality silently matches nothing.
+#
+# These functions reduce a class name to what it MEANS — its level (entry /
+# intermediate / advanced / jazz N), its program word (band / choir / …) — and
+# every membership test in the app compares identities, never raw strings.
+# Names that don't parse to a known level ("Heavy Metal Ensemble") fall back to
+# whole-string identity, so unrelated groups can never falsely merge.
+#
+# This module is UI-free on purpose: database.py, concert_tools.py and
+# roster_export.py all import it.
+
+import re as _re
+
+# Words that say WHICH LEVEL a class is.  Keys are what people type.
+_LEVEL_ALIASES = {
+    "entry": "entry", "beginning": "entry", "beginner": "entry",
+    "intermediate": "intermediate", "interm": "intermediate",
+    "int": "intermediate",
+    "advanced": "advanced", "adv": "advanced",
+}
+# Words that say WHICH PROGRAM.  Kept in the identity so an itinerant teacher's
+# "Entry Band" and "Entry Choir" stay distinct.
+_PROGRAM_WORDS = {"band", "orchestra", "choir", "chorus", "strings", "guitar"}
+# Words that carry no identity at all and are ignored.
+_NOISE_WORDS = {"ms", "hs", "middle", "high", "school", "the", "ensemble"}
+
+
+def _name_words(name):
+    return [w for w in _re.split(r"[^a-z0-9]+", (name or "").lower()) if w]
+
+
+def parse_class_name(name):
+    """``(kind, program, residue)`` for a class name.
+
+    ``kind`` is the level identity ("entry", "advanced", "jazz 1", …) or None
+    when the name doesn't reduce cleanly; ``program`` is the program word or
+    None; ``residue`` is the normalized full string, used as the identity when
+    ``kind`` is None.  Any unexpected extra word disables reduction — better to
+    treat "Advanced Band Percussion" as its own thing than to quietly merge it
+    into Advanced Band."""
+    words = _name_words(name)
+    level = program = None
+    jazz = False
+    nums, residue = [], []
+    for w in words:
+        if w in _NOISE_WORDS:
+            continue
+        if w.isdigit():
+            nums.append(w)
+        elif w == "jazz":
+            jazz = True
+        elif w in _LEVEL_ALIASES and level is None:
+            level = _LEVEL_ALIASES[w]
+        elif w in _PROGRAM_WORDS and program is None:
+            program = w
+        else:
+            residue.append(w)
+    if residue or (not jazz and not level):
+        # No clean reduction: identity is the name itself.  Only purely
+        # cosmetic words drop out here ("The", "Ensemble") — "MS"/"HS" stay
+        # significant, because a 6-12 teacher's "MS Percussion" and
+        # "HS Percussion" are different classes.
+        raw = [w for w in words if w not in ("the", "ensemble")]
+        return (None, None, " ".join(raw))
+    kind = ("jazz" if jazz else level) + (f" {nums[0]}" if nums else "")
+    return (kind, program, "")
+
+
+def same_class(a, b) -> bool:
+    """Do these two names refer to the same class?
+
+    "Entry Band" == "MS Band (Entry)" == "Entry"; a missing program word is a
+    wildcard (so the short display label still matches), but two DIFFERENT
+    program words never match.  Unparseable names match only themselves."""
+    if not a or not b:
+        return False
+    ka, pa, ra = parse_class_name(a)
+    kb, pb, rb = parse_class_name(b)
+    if ka and kb:
+        return ka == kb and (not pa or not pb or pa == pb)
+    if ka or kb:
+        return False
+    return ra == rb
+
+
+def class_identity(name) -> str:
+    """A stable key for de-duplicating lists of class names.  Two names that
+    ``same_class`` (with their program words present) get the same key."""
+    kind, program, residue = parse_class_name(name)
+    if kind:
+        return f"{kind}|{program or ''}"
+    return f"raw|{residue}"
+
+
+def csv_has_class(csv_val, target) -> bool:
+    """Is ``target`` one of the classes in a comma-separated field (a student's
+    ``ensembles``), compared by identity rather than spelling?"""
+    return any(same_class(part.strip(), target)
+               for part in (csv_val or "").split(",") if part.strip())
+
+
+def canonical_class_name(name, offered):
+    """The name from ``offered`` (the configured class list) that means the
+    same as ``name`` — or ``name`` unchanged if none does.  Write paths use
+    this so stored data converges on the configured spelling."""
+    for o in offered or []:
+        if same_class(o, name):
+            return o
+    return name
+
+
+def short_class_label(name) -> str:
+    """The compact display form: "MS Band (Entry)" → "Entry"; "Jazz Band 2" →
+    "Jazz 2"; anything that doesn't reduce keeps its own name."""
+    kind, _program, _residue = parse_class_name(name)
+    if not kind:
+        return (name or "").strip()
+    parts = kind.split()
+    label = "Jazz" if parts[0] == "jazz" else parts[0].capitalize()
+    return label + (f" {parts[1]}" if len(parts) > 1 else "")
+
+
+def display_map(names):
+    """{full name: display label} for a picker.  Uses the short label unless
+    two offered classes would collapse to the same one (an itinerant teacher's
+    "Entry Band" + "Entry Choir") — those keep their full names so the picker
+    stays unambiguous."""
+    by_short = {}
+    for n in names:
+        by_short.setdefault(short_class_label(n), []).append(n)
+    out = {}
+    for short, ns in by_short.items():
+        if len(ns) == 1:
+            out[ns[0]] = short
+        else:
+            for n in ns:
+                out[n] = n
+    return out
+
+
+def display_csv(csv_val) -> str:
+    """A student's ensembles CSV shortened for display: "Entry Band,Jazz 2" →
+    "Entry, Jazz 2"."""
+    parts = [p.strip() for p in (csv_val or "").split(",") if p.strip()]
+    return ", ".join(short_class_label(p) for p in parts)
+
+
 # ── Flattened config for the agenda view ──────────────────────────────────────
 
 def class_config(klass):
