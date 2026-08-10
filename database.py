@@ -1510,6 +1510,20 @@ class Database:
             return None
         return ("name", first[0], last)
 
+    # Two students really can share a name.  When the only evidence they are
+    # the same person is that name, any hard disagreement means they are not.
+    _DISTINGUISHING_FIELDS = ("student_id", "birth_date", "grade", "address",
+                              "student_email", "parent1_email", "parent1_name")
+
+    @classmethod
+    def _members_conflict(cls, members):
+        for f in cls._DISTINGUISHING_FIELDS:
+            seen = {str(m[f] or "").strip().lower()
+                    for m in members if str(m[f] or "").strip()}
+            if len(seen) > 1:
+                return True
+        return False
+
     def find_duplicate_students(self, school_year=None):
         """Groups of rows that describe one student.  Each group is ordered
         best-first: the record with the most real data is the keeper."""
@@ -1534,6 +1548,11 @@ class Database:
         out = []
         for key, members in groups.items():
             if len(members) < 2:
+                continue
+            # A shared district ID is proof.  A shared name is only a guess, so
+            # two same-named students with different birthdays, grades, homes or
+            # guardians are left alone rather than silently fused into one.
+            if key[0] == "name" and self._members_conflict(members):
                 continue
             members.sort(key=lambda r: (-score(r), r["id"]))
             out.append(members)
@@ -1597,6 +1616,44 @@ class Database:
                     conn.execute("DELETE FROM students WHERE id=?", (e["id"],))
                     removed += 1
         return (len(groups), removed)
+
+    # Everything a district roster export can tell us about a student that the
+    # teacher would otherwise type in by hand.  Deliberately excludes ensembles,
+    # class_periods and instruments: those are the teacher's to set, and the
+    # import labels them separately.
+    _ROSTER_FILL_FIELDS = (
+        "student_id", "grade", "gender", "birth_date", "address", "city",
+        "state", "zip_code", "phone", "student_email",
+        "parent1_name", "parent1_relation", "parent1_phone", "parent1_email",
+        "parent2_name", "parent2_relation", "parent2_phone", "parent2_email",
+    )
+
+    def fill_student_blanks(self, student_id: int, data: dict) -> int:
+        """Copy roster values into the fields this student has left empty, and
+        only those.  Anything the teacher already entered is never overwritten.
+
+        Returns how many fields were filled.  Writes only the changed columns,
+        so unlike update_student this can safely take a partial dict."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM students WHERE id=?", (student_id,)).fetchone()
+            if row is None:
+                return 0
+            updates = {}
+            for f in self._ROSTER_FILL_FIELDS:
+                if f not in data:
+                    continue
+                incoming = str(data.get(f) or "").strip()
+                if incoming and not str(row[f] or "").strip():
+                    updates[f] = incoming
+            if not updates:
+                return 0
+            conn.execute(
+                "UPDATE students SET "
+                + ", ".join(f"{c}=?" for c in updates)
+                + " WHERE id=?",
+                list(updates.values()) + [student_id])
+            return len(updates)
 
     def get_current_roster(self):
         """Current, active members only — for every dropdown/autocomplete in the

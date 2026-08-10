@@ -403,12 +403,20 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             return
         self._dup_prompted = True
         extra = sum(len(g) - 1 for g in groups)
+        names = [f"  • {(g[0]['first_name'] or '').strip()} "
+                 f"{(g[0]['last_name'] or '').strip()}  (×{len(g)})"
+                 for g in groups]
+        shown = "\n".join(names[:15])
+        if len(names) > 15:
+            shown += f"\n  … and {len(names) - 15} more"
         if Messagebox.yesno(
                 f"{len(groups)} student(s) appear more than once, for a total "
-                f"of {extra} duplicate record(s).\n\n"
-                "Merge them now? Each student is reduced to one record that "
-                "keeps their contact information and all of their classes; "
-                "instruments, fees and check-outs move with them.",
+                f"of {extra} duplicate record(s):\n\n{shown}\n\n"
+                "Merge them? Each becomes one record that keeps their contact "
+                "information and all of their classes; instruments, fees and "
+                "check-outs move with them.\n\n"
+                "This cannot be undone, so back up first if any of these names "
+                "are actually two different students.",
                 title="Merge duplicate students?",
                 parent=self.winfo_toplevel()) != "Yes":
             return
@@ -1514,6 +1522,8 @@ class _StudentImportDialog(_ClassOptionsMixin, ttk.Toplevel):
             # ── Import with deduplication ─────────────────────────────────
             imported = 0
             skipped  = 0
+            enriched = 0
+            fields_filled = 0
 
             for data in students.values():
                 data["school_year"] = self.school_year
@@ -1537,7 +1547,17 @@ class _StudentImportDialog(_ClassOptionsMixin, ttk.Toplevel):
                     )
 
                 if existing:
-                    skipped += 1
+                    # The student is already on the roster, but that record may
+                    # have come from a class list, which carries names and
+                    # nothing else.  Fill in the contact details it never had —
+                    # skipping the row outright is why beginners ended up with
+                    # no address or parent information.
+                    n = self.db.fill_student_blanks(existing["id"], data)
+                    if n:
+                        enriched += 1
+                        fields_filled += n
+                    else:
+                        skipped += 1
                     label_ids.append(existing["id"])
                 else:
                     new_id = self.db.add_student(data)
@@ -1571,10 +1591,14 @@ class _StudentImportDialog(_ClassOptionsMixin, ttk.Toplevel):
             # ── Summary ───────────────────────────────────────────────────
             self._log_msg("─" * 42)
             self._log_msg(f"Import complete!")
-            self._log_msg(f"  Imported : {imported} student(s)")
+            self._log_msg(f"  Imported : {imported} new student(s)")
             self._log_msg(
-                f"  Skipped  : {skipped} "
-                f"(already in system for {self.school_year})"
+                f"  Updated  : {enriched} existing student(s) "
+                f"({fields_filled} blank field(s) filled in)"
+            )
+            self._log_msg(
+                f"  Unchanged: {skipped} "
+                f"(already on file for {self.school_year})"
             )
 
         except Exception as e:
