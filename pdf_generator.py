@@ -5,6 +5,7 @@ Matches the Charms single-page layout.
 
 import math
 import os
+import re
 from datetime import datetime
 
 from reportlab.lib.pagesizes import letter
@@ -85,21 +86,65 @@ INSTRUMENT_ACCESSORIES = {
     "Miscellaneous Electronic - Other":     ["Case/Bag", "Power Adapter", "Cable"],
     "Violin":                               ["Case", "Bow", "Shoulder Rest"],
     "Viola":                                ["Case", "Bow", "Shoulder Rest"],
-    "Cello":                                ["Case", "Bow"],
+    "Cello":                                ["Case", "Bow", "Rock Stop"],
     "Bass":                                 ["Case", "Bow"],
     "String Bass":                          ["Case", "Bow"],
+    "Double Bass":                          ["Case", "Bow"],
+    "Upright Bass":                         ["Case", "Bow"],
+    "Harp":                                 ["Cover", "Tuning Key"],
 }
 
 
-def _get_accessories(description: str) -> list:
+# School strings are inventoried by size — "Violin 3/4", "Cello - 1/2".  The
+# size says nothing about the accessory kit, so it is stripped before matching.
+_SIZE_RE = re.compile(r"\b\d+\s*/\s*\d+\b|\bfull[\s-]*size\b", re.I)
+
+# Bowed strings, spelled the ways a district inventory spells them.  "Bass"
+# alone is ambiguous (bass drum, bass clarinet, bass guitar), so it is matched
+# as an exact description by the table above rather than by keyword here.
+_BOWED_STRINGS = ("violin", "viola", "cello", "string bass", "double bass",
+                  "upright bass", "contrabass")
+
+# Held under the chin, so they need something between chin and collarbone.
+_CHIN_HELD = ("violin", "viola")
+
+
+def _get_accessories(description: str, program_type: str = "band") -> list:
     """Return the accessory list for the given instrument description."""
-    if description in INSTRUMENT_ACCESSORIES:
-        return INSTRUMENT_ACCESSORIES[description]
+    desc = (description or "").strip()
+    if desc in INSTRUMENT_ACCESSORIES:
+        return INSTRUMENT_ACCESSORIES[desc]
+
+    # "Violin 3/4" and "Cello - 1/2" take the same kit as the full-size entry.
+    sized = " ".join(_SIZE_RE.sub("", desc).replace(" - ", " ").split()).strip(" -")
+    if sized in INSTRUMENT_ACCESSORIES:
+        return INSTRUMENT_ACCESSORIES[sized]
+
     # Prefix fallback: "Trombone" → matches "Trombone - Bass" etc.
-    base = description.split(" - ")[0]
+    base = desc.split(" - ")[0]
     for key, val in INSTRUMENT_ACCESSORIES.items():
         if key.startswith(base + " ") or key == base:
             return val
+
+    # Nothing matched.  A mouthpiece is the right guess only for something you
+    # blow into, so decide from the instrument family instead of assuming one.
+    low = sized.lower() or desc.lower()
+    if any(w in low for w in _BOWED_STRINGS):
+        acc = ["Case", "Bow"]
+        if any(w in low for w in _CHIN_HELD):
+            acc.append("Shoulder Rest")
+        return acc
+    try:
+        from cuttime_import import instrument_family
+        family = instrument_family(desc)
+    except Exception:
+        family = None
+    if family in ("Strings", "Keyboard", "Electronics", "Percussion"):
+        return ["Case"]
+    # Last resort.  Nothing in an orchestra has a mouthpiece, so don't print a
+    # line the teacher would have to cross out on every form.
+    if (program_type or "").lower() == "orchestra":
+        return ["Case", "Bow"]
     return ["Case", "Mouthpiece"]
 
 
@@ -349,7 +394,8 @@ def _sig_line(label, s):
 # ── Main entry points ─────────────────────────────────────────────────────────
 
 def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: str,
-                       school_name: str = None, district_name: str = None) -> str:
+                       school_name: str = None, district_name: str = None,
+                       program_type: str = "band") -> str:
     """
     Generate a Bellevue School District Equipment Loan Form PDF matching
     the Charms single-page layout.
@@ -437,7 +483,7 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
                 and not any("bag" in a.lower() for a in accessories):
             accessories = ["Stick Bag"] + accessories
     else:
-        accessories = _get_accessories(description)
+        accessories = _get_accessories(description, program_type)
 
     # ── Title ─────────────────────────────────────────────────────────────
     story.append(_p(f"{district_name} Equipment Loan Form", s["title"]))
@@ -603,11 +649,13 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
     # prints exactly what the teacher entered (fixes the old hard-coded
     # "Chinook Middle School Band" that broke non-band accounts).
     school_name = district_name = None
+    program_type = "band"
     try:
         from ui.settings_dialog import load_settings
         teacher = (load_settings(base_dir).get("teacher") or {})
         school_name = teacher.get("school_name")
         district_name = teacher.get("school_district")
+        program_type = teacher.get("program_type") or "band"
     except Exception:
         pass
 
@@ -621,7 +669,8 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
     out_path  = os.path.join(out_dir, filename)
 
     return generate_loan_form(dict(checkout), dict(instrument), out_path,
-                              school_name=school_name, district_name=district_name)
+                              school_name=school_name, district_name=district_name,
+                              program_type=program_type)
 
 
 def generate_uniform_chart(db, base_dir: str, output_path: str = None) -> str:

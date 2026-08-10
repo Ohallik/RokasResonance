@@ -15,6 +15,7 @@ otherwise a clean double-arrow facsimile is drawn.
 import io
 import math
 import os
+import time
 
 # Supersample factor for crisp, anti-aliased text (rendered big, scaled down).
 _SS = 3
@@ -196,28 +197,79 @@ def render_board(day_number, rows, color_for, section_name="",
     return img
 
 
-def copy_image_to_clipboard(img):
-    """Put a PIL image on the Windows clipboard as a DIB. Returns True on success."""
+def _copy_via_win32(img):
+    """Put a PIL image on the clipboard as a DIB via pywin32."""
     try:
         import win32clipboard
     except Exception:
         return False
+
     output = io.BytesIO()
     img.convert("RGB").save(output, "BMP")
     data = output.getvalue()[14:]     # strip 14-byte BMP file header -> DIB
     output.close()
-    try:
-        win32clipboard.OpenClipboard()
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
-        win32clipboard.CloseClipboard()
-        return True
-    except Exception:
+
+    # Windows lets only one process hold the clipboard at a time, and Office,
+    # Teams and clipboard managers all grab it for a moment as you switch
+    # windows.  A single failed OpenClipboard is usually just that collision,
+    # so retry briefly before giving up.
+    for attempt in range(10):
         try:
-            win32clipboard.CloseClipboard()
+            win32clipboard.OpenClipboard()
         except Exception:
-            pass
+            time.sleep(0.1)
+            continue
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+            return True
+        except Exception:
+            return False
+        finally:
+            try:
+                win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+    return False
+
+
+def _copy_via_powershell(img):
+    """Fallback for machines where pywin32 is missing or blocked: hand the
+    image to .NET's clipboard through PowerShell."""
+    import subprocess
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    try:
+        img.convert("RGB").save(path, "PNG")
+        script = (
+            "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; "
+            f"$i = [System.Drawing.Image]::FromFile('{path}'); "
+            "[System.Windows.Forms.Clipboard]::SetImage($i); "
+            "$i.Dispose()"
+        )
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-STA",
+             "-Command", script],
+            capture_output=True, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return proc.returncode == 0
+    except Exception:
         return False
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def copy_image_to_clipboard(img):
+    """Put a PIL image on the Windows clipboard. Returns True on success."""
+    if img is None:
+        return False
+    return _copy_via_win32(img) or _copy_via_powershell(img)
 
 
 def copy_board(day_number, rows, color_for, section_name="", icon_path=None, font_pt=14):

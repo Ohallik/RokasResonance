@@ -101,6 +101,8 @@ class SeatingChartView(ttk.Frame):
             side=LEFT, padx=12, pady=8)
         ttk.Button(bar, text="📋 Copy Image", bootstyle=INFO,
                    command=self._copy_image).pack(side=RIGHT, padx=10, pady=6)
+        ttk.Button(bar, text="💾 Save Image…", bootstyle=(INFO, OUTLINE),
+                   command=self._save_image).pack(side=RIGHT, padx=2, pady=6)
 
         body = ttk.Panedwindow(self, orient=HORIZONTAL)
         body.pack(fill=BOTH, expand=True)
@@ -854,13 +856,44 @@ class SeatingChartView(ttk.Frame):
 
     def _copy_image(self):
         if self._image is None:
+            Messagebox.show_warning(
+                "There's no chart to copy yet — generate a seating chart first.",
+                title="Nothing to Copy", parent=self)
             return
         ok = sr.copy_image_to_clipboard(self._image)
         if ok:
             Messagebox.show_info("Seating chart copied — paste into PowerPoint, Word, or OneNote.",
                                  title="Copied", parent=self)
         else:
-            Messagebox.show_warning("Could not copy the image.", title="Copy Failed", parent=self)
+            Messagebox.show_warning(
+                "Could not copy the image — another program is holding the "
+                "clipboard.\n\nClose any clipboard manager and try again, or "
+                "use “Save Image…” to write the chart to a file instead.",
+                title="Copy Failed", parent=self)
+
+    def _save_image(self):
+        if self._image is None:
+            Messagebox.show_warning(
+                "There's no chart to save yet — generate a seating chart first.",
+                title="Nothing to Save", parent=self)
+            return
+        from tkinter import filedialog
+        name = (self._chart_var.get() or "seating_chart").strip()
+        safe = "".join(c for c in name if c.isalnum() or c in " _-").strip()
+        path = filedialog.asksaveasfilename(
+            parent=self, defaultextension=".png",
+            initialfile=f"{safe or 'seating_chart'}.png",
+            filetypes=[("PNG image", "*.png"), ("All files", "*.*")],
+            title="Save Seating Chart")
+        if not path:
+            return
+        try:
+            self._image.save(path)
+        except Exception as e:
+            Messagebox.show_error(f"Could not save the image:\n{e}",
+                                  title="Save Failed", parent=self)
+            return
+        Messagebox.show_info(f"Saved to:\n{path}", title="Saved", parent=self)
 
     # ─────────────────────────────────────────────── conflicts & pins dlgs ────
 

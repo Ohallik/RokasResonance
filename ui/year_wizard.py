@@ -198,6 +198,11 @@ def import_class_list(db, students, school_year, ensemble, periods):
                 # every class the student actually belongs to this year.
                 data["ensembles"] = ""
                 data["class_periods"] = ""
+                # A new year is also a new grade level.  Only numeric grades
+                # advance; "Other" and blank are left as the teacher set them.
+                grade = str(data.get("grade") or "").strip()
+                if grade.isdigit():
+                    data["grade"] = str(int(grade) + 1)
             if stu["instrument"] and not (data.get("primary_instrument") or "").strip():
                 data["primary_instrument"] = stu["instrument"]
             if (stu.get("student_id") or "").strip() and not (
@@ -211,14 +216,28 @@ def import_class_list(db, students, school_year, ensemble, periods):
             touched_ids.append(existing["id"])
             updated += 1
         else:
-            sid = db.add_student({
+            rec = {
                 "first_name": stu["first"], "last_name": stu["last"],
                 "school_year": school_year,
                 "primary_instrument": stu["instrument"],
                 "student_id": (stu.get("student_id") or "").strip(),
-            })
-            touched_ids.append(sid)
+            }
+            new_id = db.add_student(rec)
+            # Register the new student against the SAME lists match() reads, so
+            # a later row for the same person updates this record instead of
+            # creating another.  Class lists name a student once per section or
+            # meeting day, so beginners routinely appear two or three times in
+            # one file — without this, each repeat became its own record.
+            rec["id"] = new_id
+            rec.setdefault("preferred_name", "")
+            all_students.append(rec)
+            if rec["student_id"]:
+                by_sid.setdefault(rec["student_id"], rec)
+            touched_ids.append(new_id)
             added += 1
+    # The same student can be touched more than once per file; assign each of
+    # them to the ensemble/periods only once.
+    touched_ids = list(dict.fromkeys(touched_ids))
     if touched_ids:
         if ensemble:
             db.bulk_set_student_multi(touched_ids, "ensembles", [ensemble])

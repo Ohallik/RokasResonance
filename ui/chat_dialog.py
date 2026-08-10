@@ -388,7 +388,7 @@ def _build_music_summary(db, mode: str = "band") -> str:
 def _build_combined_summary(db, band_db=None, mode: str = "band") -> str:
     """Build a full context summary covering instruments, students, and sheet music.
 
-    db       — the music database (choir_music.db for choir, rokas_resonance.db for band)
+    db       — the music database (the profile DB, whatever the program type)
     band_db  — the main band DB for instrument/student data; only used when mode="choir"
     mode     — "band" or "choir"
     """

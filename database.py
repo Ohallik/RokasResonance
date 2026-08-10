@@ -41,6 +41,44 @@ def strip_school_prefix(ensemble: str, school_name: str) -> str:
     return e
 
 
+# Rosters spell an instrument every way a human would: "Violin", "violin",
+# "Violin 1", "1st Violin", "Violin II".  Filters have to see through all of
+# that, or a section quietly comes back empty.
+_INSTR_PART_SUFFIX = re.compile(r"\s*(?:#\s*)?([1-4]|i{1,3}|iv)$", re.IGNORECASE)
+_INSTR_PART_PREFIX = re.compile(r"^([1-4])(?:st|nd|rd|th)\s+", re.IGNORECASE)
+_ROMAN_PARTS = {"i": "1", "ii": "2", "iii": "3", "iv": "4"}
+
+
+def split_instrument(name: str):
+    """Split an instrument into (base, part), e.g. "1st Violin" -> ("violin", "1").
+    Part is "" when the name doesn't name a chair/division."""
+    s = " ".join((name or "").strip().lower().split())
+    if not s:
+        return "", ""
+    part = ""
+    m = _INSTR_PART_PREFIX.match(s)
+    if m:
+        part = m.group(1)
+        s = s[m.end():].strip()
+    m = _INSTR_PART_SUFFIX.search(s)
+    if m:
+        tok = m.group(1).lower()
+        part = _ROMAN_PARTS.get(tok, tok)
+        s = s[:m.start()].strip()
+    return s, part
+
+
+def instrument_matches(wanted: str, stored: str) -> bool:
+    """Does a student's instrument satisfy an instrument filter?  Asking for
+    "Violin" includes Violin 1 and Violin 2; asking for "Violin 1" does not
+    include the seconds."""
+    wb, wp = split_instrument(wanted)
+    sb, sp = split_instrument(stored)
+    if not wb or not sb or wb != sb:
+        return False
+    return not wp or wp == sp
+
+
 def _dict_factory(cursor, row):
     """Row factory that returns dicts supporting both d["col"] and d[0] access."""
     fields = [description[0] for description in cursor.description]
@@ -1447,6 +1485,119 @@ class Database:
                     restored = cur.rowcount
         return len(bad), restored_year, restored
 
+    # ── Duplicate students ────────────────────────────────────────────────
+    # A class list names a student once per section or meeting day.  An older
+    # import created a record for every one of those rows, so beginners could
+    # end up with two or three copies, all of them missing the contact details
+    # that only ever arrive with the district roster.
+
+    # Fields whose emptiness makes a record the weaker copy.
+    _IDENTITY_FIELDS = ("student_id", "grade", "address", "phone",
+                        "student_email", "parent1_name", "parent1_email",
+                        "parent1_phone", "parent2_name", "parent2_email",
+                        "parent2_phone", "birth_date", "primary_instrument")
+
+    @staticmethod
+    def _dup_key(row):
+        """Two rows are the same person if they share a district ID, or failing
+        that a last name plus a first name that agrees to the first word."""
+        sid = (row["student_id"] or "").strip()
+        if sid:
+            return ("sid", sid.lower())
+        first = (row["first_name"] or "").strip().lower().split()
+        last = (row["last_name"] or "").strip().lower()
+        if not first or not last:
+            return None
+        return ("name", first[0], last)
+
+    def find_duplicate_students(self, school_year=None):
+        """Groups of rows that describe one student.  Each group is ordered
+        best-first: the record with the most real data is the keeper."""
+        sql = "SELECT * FROM students WHERE is_active=1"
+        params = []
+        if school_year:
+            sql += " AND school_year=?"
+            params.append(school_year)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+
+        groups = {}
+        for r in rows:
+            key = self._dup_key(r)
+            if key:
+                groups.setdefault(key, []).append(r)
+
+        def score(r):
+            return sum(1 for f in self._IDENTITY_FIELDS
+                       if str(r[f] or "").strip())
+
+        out = []
+        for key, members in groups.items():
+            if len(members) < 2:
+                continue
+            members.sort(key=lambda r: (-score(r), r["id"]))
+            out.append(members)
+        return out
+
+    def merge_duplicate_students(self, school_year=None):
+        """Fold each duplicate group into its best record: fill blanks from the
+        copies, union the ensemble/period lists, repoint checkouts, fees and
+        uniforms, then delete the copies.
+
+        Returns ``(groups_merged, records_removed)``."""
+        groups = self.find_duplicate_students(school_year)
+        if not groups:
+            return (0, 0)
+
+        fill = [f for f in self._IDENTITY_FIELDS] + [
+            "gender", "city", "state", "zip_code", "preferred_name",
+            "secondary_instrument", "jazz_instrument", "notes",
+            "parent1_relation", "parent2_relation"]
+        removed = 0
+        with self._connect() as conn:
+            for members in groups:
+                keeper, extras = members[0], members[1:]
+                updates = {}
+                for f in fill:
+                    if str(keeper[f] or "").strip():
+                        continue
+                    for e in extras:
+                        val = str(e[f] or "").strip()
+                        if val:
+                            updates[f] = val
+                            break
+                for f in ("ensembles", "class_periods"):
+                    merged = keeper[f] or ""
+                    for e in extras:
+                        merged = self._csv_merge(
+                            merged,
+                            [p.strip() for p in (e[f] or "").split(",") if p.strip()],
+                            False, by_class=(f == "ensembles"))
+                    if merged != (keeper[f] or ""):
+                        updates[f] = merged
+                for f in ("honors", "all_state"):
+                    if not keeper[f] and any(e[f] for e in extras):
+                        updates[f] = 1
+                if updates:
+                    conn.execute(
+                        "UPDATE students SET "
+                        + ", ".join(f"{c}=?" for c in updates)
+                        + " WHERE id=?",
+                        list(updates.values()) + [keeper["id"]])
+
+                for e in extras:
+                    for table in ("checkouts", "student_fees",
+                                  "uniform_checkouts", "budget_transactions"):
+                        try:
+                            conn.execute(
+                                f"UPDATE {table} SET student_id=? WHERE student_id=?",
+                                (keeper["id"], e["id"]))
+                        except sqlite3.Error:
+                            pass
+                    conn.execute("DELETE FROM students WHERE id=?", (e["id"],))
+                    removed += 1
+        return (len(groups), removed)
+
     def get_current_roster(self):
         """Current, active members only — for every dropdown/autocomplete in the
         app.  Uses the most recent enrolled school year (so students who left or
@@ -1752,9 +1903,8 @@ class Database:
             if period and not _has(r["class_periods"], str(period)):
                 continue
             if instrument:
-                prim = (r["primary_instrument"] or "").strip()
-                sec = (r["secondary_instrument"] or "").strip()
-                if instrument not in (prim, sec):
+                if not any(instrument_matches(instrument, r[c])
+                           for c in ("primary_instrument", "secondary_instrument")):
                     continue
             out.append(r)
         return out

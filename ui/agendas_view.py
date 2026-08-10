@@ -365,6 +365,8 @@ class AgendasView(ttk.Frame):
                        command=self._open_assessments).pack(side=RIGHT, padx=2, pady=6)
         ttk.Button(bar, text="↺ Reset Day", bootstyle=(SECONDARY, OUTLINE),
                    command=self._reset_day).pack(side=RIGHT, padx=2, pady=6)
+        ttk.Button(bar, text="⧉ Copy Previous Day", bootstyle=(PRIMARY, OUTLINE),
+                   command=self._copy_previous_day).pack(side=RIGHT, padx=2, pady=6)
         ttk.Label(bar, text="Screen bg:", font=("Segoe UI", fs(9))).pack(
             side=RIGHT, padx=(10, 2))
         self._bg_var = tk.StringVar(value=self._present_bg_name())
@@ -692,6 +694,57 @@ class AgendasView(ttk.Frame):
         self.db.delete_agenda_day(self._group, self._date.isoformat())
         self.refresh()
 
+    def _previous_saved_day(self):
+        """The newest agenda this class actually has before today.  Saved dates
+        are used rather than the calendar so unsaved gaps (and days the class
+        doesn't meet) are skipped instead of coming back empty."""
+        for iso in sorted(self.db.get_saved_agenda_dates(self._group),
+                          reverse=True):
+            d = _parse_date(iso)
+            if d and d < self._date:
+                row = self.db.get_agenda_day(self._group, iso)
+                if not row or not row["data"]:
+                    continue
+                try:
+                    return d, json.loads(row["data"])
+                except (ValueError, TypeError):
+                    continue
+        return None, None
+
+    def _copy_previous_day(self):
+        import copy as _copy
+        src_date, src = self._previous_saved_day()
+        if src is None:
+            Messagebox.show_warning(
+                "There's no earlier saved agenda for this class to copy from.",
+                title="Nothing to Copy", parent=self)
+            return
+        when = f"{src_date.strftime('%a %b')} {src_date.day}"
+        if self._saved and Messagebox.yesno(
+                f"Replace this day's agenda with the one from {when}?"
+                "\n\nWhat you have entered for today will be discarded.",
+                title="Copy Previous Day", parent=self) != "Yes":
+            return
+
+        day = _copy.deepcopy(src)
+        day["date"] = self._date.isoformat()
+        # Announcements are generated from the concert calendar, so today's are
+        # right and yesterday's ("concert in 5 days") are not.
+        fresh = spine.build_default_day(self._date, self._context())
+        day["announcements"] = list(fresh.get("announcements") or [])
+        # Fresh item ids, and nothing pre-checked: the per-section check-off
+        # state is keyed by item id, so reusing them would carry yesterday's
+        # checkmarks into today.
+        for sec in day.get("sections", []):
+            for it in sec.get("items", []):
+                it["done"] = False
+                it.pop("id", None)
+        self._ensure_ids(day)
+
+        self._day = day
+        self._save_day()
+        self.refresh()
+
     # ─────────────────────────────────────────────────────────────── render ───
 
     def _render(self):
@@ -827,9 +880,22 @@ class AgendasView(ttk.Frame):
         ttk.Label(body, text=group["name"],
                   font=("Segoe UI", fs(9), "bold")).pack(anchor=W)
         asg, day, cycle = self._perc_assignments(group)
-        ttk.Label(body, text=(f"Day {day} of {cycle}" if cycle else "No players"),
+        paused = self._is_perc_paused()
+        status = ttk.Frame(body)
+        status.pack(fill=X, pady=(2, 2))
+        ttk.Label(status,
+                  text=("Rotation paused" if paused else
+                        (f"Day {day} of {cycle}" if cycle else "No players")),
                   font=("Segoe UI", fs(8), "bold"),
-                  foreground=muted_fg()).pack(anchor=W, pady=(2, 2))
+                  foreground=(WARNING if paused else muted_fg())).pack(side=LEFT)
+        ttk.Button(status, text=("▶ Resume" if paused else "⏸ Pause"),
+                   bootstyle=((WARNING, OUTLINE) if paused else (SECONDARY, OUTLINE)),
+                   command=self._toggle_perc_pause).pack(side=RIGHT)
+        if paused:
+            ttk.Label(body, text="No instruments today — the rotation holds and "
+                                 "picks up here next class.",
+                      wraplength=fs(24) * 11, font=("Segoe UI", fs(8)),
+                      foreground=muted_fg(), justify=LEFT).pack(anchor=W)
         for name, station in asg:
             r = ttk.Frame(body)
             r.pack(fill=X)
@@ -1540,6 +1606,47 @@ class AgendasView(ttk.Frame):
         except (KeyError, IndexError, TypeError):
             return True
 
+    # ── paused percussion days ───────────────────────────────────────────────
+    # Some days the percussionists aren't on instruments at all (a written
+    # assessment, a sectional, a guest clinician).  A paused day shows no
+    # assignments AND doesn't consume a rotation slot, so the next playing day
+    # picks up exactly where the section left off.
+
+    def _pause_setting_key(self, sid=None):
+        if sid is None:
+            sid = self._section_id()
+        return (f"agenda_perc_pause_{sid}" if sid is not None
+                else "agenda_perc_pause_none")
+
+    def _load_pause_set(self, sid=None):
+        raw = self.db.get_program_setting(self._pause_setting_key(sid))
+        if not raw:
+            return set()
+        try:
+            vals = json.loads(raw)
+        except (ValueError, TypeError):
+            return set()
+        return set(vals) if isinstance(vals, list) else set()
+
+    def _is_perc_paused(self):
+        return self._date.isoformat() in self._load_pause_set()
+
+    def _toggle_perc_pause(self):
+        paused = self._load_pause_set()
+        iso = self._date.isoformat()
+        if iso in paused:
+            paused.discard(iso)
+        else:
+            paused.add(iso)
+        self.db.set_program_setting(self._pause_setting_key(),
+                                    json.dumps(sorted(paused)))
+        self.refresh()
+
+    def _paused_before_today(self):
+        """Rotation slots to give back: paused days already gone by."""
+        iso = self._date.isoformat()
+        return sum(1 for d in self._load_pause_set() if d < iso)
+
     def _rotation_day(self, payload, group=None):
         cal = self._calendar()
         if cal:
@@ -1547,6 +1654,7 @@ class AgendasView(ttk.Frame):
         else:
             start, _end = self._year_bounds()
             idx = spine._school_days_between(start, self._date)
+        idx -= self._paused_before_today()
         cycle = pr.cycle_length(
             payload, mallet_subrotation=self._perc_subrotation(group),
             inventory=self._perc_inventory(),
@@ -1561,6 +1669,8 @@ class AgendasView(ttk.Frame):
         if not payload:
             return [], 0, 0
         day, cycle = self._rotation_day(payload, group)
+        if self._is_perc_paused():
+            return [], day, cycle
         asg = pr.day_assignments(payload, day, group["class_type"],
                                  mallet_subrotation=self._perc_subrotation(group),
                                  inventory=self._perc_inventory(),

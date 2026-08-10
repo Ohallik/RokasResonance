@@ -138,6 +138,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         self._selected_id = None
         self._checked = set()   # student ids ticked for bulk actions
         self._repair_prompted = False
+        self._dup_prompted = False
 
         self._build()
         self._populate_year_options()
@@ -146,6 +147,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         # wrong (its name column was really the Student ID column).  Offer
         # the one-click repair as soon as the window is up.
         self.after(400, self._offer_botched_repair)
+        self.after(900, self._offer_duplicate_merge)
 
     def _build(self):
         # ── Toolbar ───────────────────────────────────────────────────────────
@@ -385,6 +387,37 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         Messagebox.show_info(msg, title="Import repaired",
                              parent=self.winfo_toplevel())
         self._populate_year_options()
+        self.refresh()
+
+    def _offer_duplicate_merge(self):
+        """Offer to fold duplicate student records together.  Older class-list
+        imports made a record per roster row, so a student listed in two
+        sections became two students."""
+        if self._dup_prompted:
+            return
+        try:
+            groups = self.db.find_duplicate_students(self._year_var.get() or None)
+        except Exception:
+            return
+        if not groups:
+            return
+        self._dup_prompted = True
+        extra = sum(len(g) - 1 for g in groups)
+        if Messagebox.yesno(
+                f"{len(groups)} student(s) appear more than once, for a total "
+                f"of {extra} duplicate record(s).\n\n"
+                "Merge them now? Each student is reduced to one record that "
+                "keeps their contact information and all of their classes; "
+                "instruments, fees and check-outs move with them.",
+                title="Merge duplicate students?",
+                parent=self.winfo_toplevel()) != "Yes":
+            return
+        merged, removed = self.db.merge_duplicate_students(
+            self._year_var.get() or None)
+        Messagebox.show_info(
+            f"Merged {merged} student(s) and removed {removed} duplicate "
+            "record(s).", title="Duplicates merged",
+            parent=self.winfo_toplevel())
         self.refresh()
 
     def refresh(self):
@@ -659,6 +692,11 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             return
         dlg = _BulkAssignDialog(self.winfo_toplevel(), self.db, ids, self.program_type)
         self.wait_window(dlg)
+        # Ticks are cleared once an assignment lands.  Leaving them on invites
+        # the next assignment to silently hit the same students again — that is
+        # how a whole roster ends up playing one instrument.
+        if getattr(dlg, "applied", False):
+            self._clear_checks()
         self.refresh()
 
     def _email_list(self):
@@ -1880,6 +1918,7 @@ class _BulkAssignDialog(_ClassOptionsMixin, ttk.Toplevel):
         self.db = db
         self.student_ids = student_ids
         self.program_type = program_type
+        self.applied = False    # caller clears the roster ticks only if we ran
         self._ens_vars = {}
         self._per_vars = {}
         self._mode_var = tk.StringVar(value="add")
@@ -2003,6 +2042,7 @@ class _BulkAssignDialog(_ClassOptionsMixin, ttk.Toplevel):
         if sec:
             self.db.bulk_set_student_field(self.student_ids, "secondary_instrument", sec)
 
+        self.applied = True
         Messagebox.show_info(
             f"Updated {len(self.student_ids)} student(s).", title="Done", parent=self)
         self.destroy()

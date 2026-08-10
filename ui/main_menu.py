@@ -11,6 +11,65 @@ from PIL import Image, ImageTk
 from ui.theme import (fs, muted_fg, subtle_fg, link_fg, register_nav_styles,
                       nav_color, best_fg)
 
+# Earlier builds kept choir and orchestra repertoire in their own files beside
+# the profile database.  Switching program type then swapped the Music Manager
+# onto an empty file, so a band library looked deleted.  One library per profile
+# now; these names are only still known so their contents can be folded back in.
+_LEGACY_MUSIC_DBS = ("choir_music.db", "orchestra_music.db")
+
+
+def _absorb_legacy_music_db(main_db, path):
+    """Copy sheet music out of a retired per-program file into the profile DB."""
+    import sqlite3
+    cols = ["title", "composer", "arranger", "genre", "ensemble_type",
+            "difficulty", "file_path", "file_type", "num_pages", "notes",
+            "key_signature", "time_signature", "location", "publisher",
+            "source_file", "voicing", "language", "accompaniment"]
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute("SELECT * FROM sheet_music").fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        conn.close()
+
+    if rows:
+        with main_db._connect() as main_conn:
+            existing = {
+                ((r["title"] or "").strip().lower(),
+                 (r["composer"] or "").strip().lower())
+                for r in main_conn.execute(
+                    "SELECT title, composer FROM sheet_music")
+            }
+        for r in rows:
+            keys = r.keys()
+            key = ((r["title"] or "").strip().lower(),
+                   (r["composer"] or "").strip().lower())
+            if not key[0] or key in existing:
+                continue
+            main_db.add_sheet_music({c: (r[c] if c in keys else None) for c in cols})
+            existing.add(key)
+
+    # Retire the file rather than deleting it, so the rows stay recoverable.
+    try:
+        os.replace(path, path + ".merged")
+    except OSError:
+        pass
+
+
+def music_db_for_profile(main_db, base_dir):
+    """The profile database is the one music library, whatever the program type."""
+    for name in _LEGACY_MUSIC_DBS:
+        path = os.path.join(base_dir, name)
+        if os.path.exists(path):
+            try:
+                _absorb_legacy_music_db(main_db, path)
+            except Exception:
+                pass
+    return main_db
+
+
 class MainMenu(ttk.Frame):
     def __init__(self, parent, db, base_dir: str, app_dir: str = None, teacher_name: str = "", version: str = ""):
         super().__init__(parent)
@@ -405,28 +464,11 @@ class MainMenu(ttk.Frame):
                 count, year = self.db.get_student_count_for_current_year()
                 self._stat_students.config(text=str(count))
                 self._stat_students_year.config(text=year if year else "This Year")
-                # Music count comes from the choir DB, not the band DB
-                try:
-                    from database import Database
-                    choir_db = Database(os.path.join(self.base_dir, "choir_music.db"))
-                    music_count = choir_db.get_stats().get("sheet_music", 0)
-                except Exception:
-                    music_count = 0
             else:
                 co, total = stats["checked_out"], stats["total"]
                 self._stat_checkedout.config(text=f"{co} / {total}")
                 self._stat_repair.config(text=str(stats["in_repair"]))
-                if self._program_type == "orchestra":
-                    # Orchestra music lives in its own DB, like choir.
-                    try:
-                        from database import Database
-                        orch_db = Database(os.path.join(self.base_dir, "orchestra_music.db"))
-                        music_count = orch_db.get_stats().get("sheet_music", 0)
-                    except Exception:
-                        music_count = 0
-                else:
-                    music_count = stats.get("sheet_music", 0)
-            self._stat_music.config(text=str(music_count))
+            self._stat_music.config(text=str(stats.get("sheet_music", 0)))
         except Exception:
             pass
 
@@ -780,19 +822,11 @@ class MainMenu(ttk.Frame):
         settings = load_settings(self.base_dir)
         program_type = (settings.get("teacher") or {}).get("program_type", "band")
 
-        if program_type == "choir":
-            from database import Database
-            choir_db_path = os.path.join(self.base_dir, "choir_music.db")
-            music_db = Database(choir_db_path)
-            title = "Choir Music Manager — Roka's Resonance"
-        elif program_type == "orchestra":
-            from database import Database
-            orch_db_path = os.path.join(self.base_dir, "orchestra_music.db")
-            music_db = Database(orch_db_path)
-            title = "Orchestra Music Manager — Roka's Resonance"
-        else:
-            music_db = self.db
-            title = "Music Manager — Roka's Resonance"
+        music_db = music_db_for_profile(self.db, self.base_dir)
+        title = {
+            "choir":     "Choir Music Manager — Roka's Resonance",
+            "orchestra": "Orchestra Music Manager — Roka's Resonance",
+        }.get(program_type, "Music Manager — Roka's Resonance")
 
         win = ttk.Toplevel(self.winfo_toplevel())
         win.title(title)

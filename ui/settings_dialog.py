@@ -170,8 +170,9 @@ class SettingsDialog(ttk.Toplevel):
                   font=("Segoe UI", 10, "bold")).pack(anchor=W)
         ttk.Label(
             outer,
-            text="Select the type of music program you teach. "
-                 "The Music Manager will load the appropriate repertoire library for your program.",
+            text="Select the type of music program you teach. This sets your "
+                 "class names, instrument lists, and seating layouts. Your "
+                 "sheet music library stays the same either way.",
             font=("Segoe UI", 9), foreground="#888",
             wraplength=460, justify=LEFT,
         ).pack(anchor=W, pady=(2, 12))
