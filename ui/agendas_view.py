@@ -838,10 +838,22 @@ class AgendasView(ttk.Frame):
             row.columnconfigure(2, weight=0, minsize=fs(24) * 12)
         self._banner_text(row, "Reminders", "reminders", 0)
         self._banner_text(row, "Announcements", "announcements", 1)
-        if self._is_jazz:
-            self._banner_rhythm(row, 2)
-        elif self._percussion:
-            self._banner_percussion(row, 2)
+        # The rotation pane is the most intricate part of the banner and it sits
+        # BEFORE the agenda body in the render order.  If it ever throws, the
+        # teacher loses the whole day's agenda rather than one panel, so it is
+        # contained: show the failure in place and let the rest of the day draw.
+        try:
+            if self._is_jazz:
+                self._banner_rhythm(row, 2)
+            elif self._percussion:
+                self._banner_percussion(row, 2)
+        except Exception as e:
+            fallback = ttk.Frame(row)
+            fallback.grid(row=0, column=2, sticky="nsew")
+            self._hdr_label(fallback, "Percussion", 11).pack(fill=X)
+            ttk.Label(fallback, text=f"Couldn't draw the rotation:\n{e}",
+                      wraplength=fs(24) * 11, font=("Segoe UI", fs(8)),
+                      foreground=muted_fg(), justify=LEFT).pack(anchor=W)
 
     def _banner_text(self, parent, title, key, col):
         wrap = ttk.Frame(parent)
@@ -883,11 +895,18 @@ class AgendasView(ttk.Frame):
         paused = self._is_perc_paused()
         status = ttk.Frame(body)
         status.pack(fill=X, pady=(2, 2))
-        ttk.Label(status,
-                  text=("Rotation paused" if paused else
-                        (f"Day {day} of {cycle}" if cycle else "No players")),
-                  font=("Segoe UI", fs(8), "bold"),
-                  foreground=(WARNING if paused else muted_fg())).pack(side=LEFT)
+        # bootstyle, not foreground: "warning" is a ttkbootstrap style name, and
+        # handing it to foreground raises TclError mid-render, which takes the
+        # whole agenda down with it.
+        lbl = ttk.Label(status,
+                        text=("Rotation paused" if paused else
+                              (f"Day {day} of {cycle}" if cycle else "No players")),
+                        font=("Segoe UI", fs(8), "bold"))
+        if paused:
+            lbl.configure(bootstyle=WARNING)
+        else:
+            lbl.configure(foreground=muted_fg())
+        lbl.pack(side=LEFT)
         ttk.Button(status, text=("▶ Resume" if paused else "⏸ Pause"),
                    bootstyle=((WARNING, OUTLINE) if paused else (SECONDARY, OUTLINE)),
                    command=self._toggle_perc_pause).pack(side=RIGHT)
