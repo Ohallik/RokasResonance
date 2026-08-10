@@ -65,12 +65,24 @@ SECTION_COLORS = {
     "Baritone BC": "#c77dff", "Baritone TC": "#c77dff",
     "Euphonium BC": "#c77dff", "Euphonium TC": "#c77dff",
     "Baritone/Euphonium": "#c77dff",
-    "Violin": "#48cae4", "Violin 1": "#48cae4", "Violin 2": "#8fdcf0",
-    "Viola": "#00b4d8", "Viola 1": "#00b4d8", "Viola 2": "#4cc9e6",
-    "Cello": "#0096c7", "Cello 1": "#0096c7", "Cello 2": "#3fb0d6",
-    "String Bass": "#0077b6", "Harp": "#48bfe3", "Piano": "#56cfe1",
+    # Strings get five separate hues rather than shades of one.  Every string
+    # section used to be a variant of cyan, which read as a single blue block
+    # across the whole chart.  Divided parts share their section's hue (a second
+    # viola stand is still viola); firsts and seconds of the violins are the one
+    # split a conductor scans for, so they are deliberately far apart.
+    "Violin": "#ff6b6b", "Violin 1": "#ff6b6b", "Violin 2": "#ffd166",
+    "Viola": "#8ac926", "Viola 1": "#8ac926", "Viola 2": "#8ac926",
+    "Cello": "#4d96ff", "Cello 1": "#4d96ff", "Cello 2": "#4d96ff",
+    # A deeper purple than the obvious #9b5de5: red-blind and green-blind
+    # viewers see that lighter violet as very nearly the cello blue, and the
+    # two lowest voices sitting next to each other is exactly where that
+    # matters.  This one stays plainly purple and reads darker than the blue.
+    # Harp and piano sit outside the five string sections, so they get colors
+    # that belong to no section at all rather than another pink or orange that
+    # competes with the violins.
+    "String Bass": "#8e24aa", "Harp": "#8d6e63", "Piano": "#264653",
     "Soprano": "#ff6b6b", "Alto": "#ffd166", "Tenor": "#8ac926",
-    "Baritone": "#4d96ff", "Bass": "#9b5de5",
+    "Baritone": "#4d96ff", "Bass": "#8e24aa",
     "Percussion": "#adb5bd",
 }
 _SECTION_FALLBACK = ["#ff6b6b", "#ffd166", "#8ac926", "#4d96ff", "#9b5de5",
