@@ -464,6 +464,12 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
 
     description  = str(instrument_data.get("description") or "")
     category     = str(instrument_data.get("category")    or "")
+    size         = str(instrument_data.get("size")        or "").strip()
+    # The form is the record of exactly which instrument went home, so the size
+    # has to be on it now that it lives in its own column.
+    printed_name = f"{description} {size}".strip() if size else description
+    if not printed_name:
+        printed_name = category
     serial_no    = str(instrument_data.get("serial_no")   or "")
     barcode      = str(instrument_data.get("barcode")     or "")
     brand        = str(instrument_data.get("brand")       or "")
@@ -514,7 +520,7 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     # ── Student / Instrument Info ──────────────────────────────────────────
     story.append(_row_student(student_name, grade, s, school_name=school_name))
     story.append(_row_address(full_address, phone, parent, s, parent_style))
-    story.append(_row_instrument(description, serial_no, barcode, s))
+    story.append(_row_instrument(printed_name, serial_no, barcode, s))
     story.append(_row_make(brand, condition, est_value, s))
     story.append(_row_describe(s))
     story.append(Spacer(1, 8))

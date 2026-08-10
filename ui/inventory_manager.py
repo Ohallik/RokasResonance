@@ -12,7 +12,7 @@ from ui.theme import muted_fg, fs, bind_copy_menu
 
 
 TREEVIEW_COLS = (
-    "status", "category", "description", "brand", "model",
+    "status", "category", "description", "size", "brand", "model",
     "barcode", "serial_no", "condition",
     "checked_out_to", "est_value"
 )
@@ -20,6 +20,7 @@ COL_HEADERS = {
     "status":        "●",
     "category":      "Category",
     "description":   "Instrument",
+    "size":          "Size",
     "brand":         "Brand",
     "model":         "Model",
     "barcode":       "Barcode",
@@ -32,6 +33,7 @@ COL_WIDTHS = {
     "status":        40,
     "category":      95,
     "description":   190,
+    "size":          60,
     "brand":         115,
     "model":         115,
     "barcode":       90,
@@ -64,8 +66,48 @@ class InventoryManager(ttk.Frame):
         self._build()
         self._load_col_prefs()
         self._apply_col_visibility()
+        self._layout_prompted = False
         self.refresh()
         self.after(400, self._maybe_recover_repairs)
+        self.after(900, self._offer_layout_normalize)
+
+    def _offer_layout_normalize(self):
+        """Offer to move instrument names out of the Category column and sizes
+        into the Size column.  Category is meant to hold the family, and every
+        feature that groups by family, prints a loan form, or prints barcode
+        labels depends on that."""
+        if self._layout_prompted:
+            return
+        try:
+            issues = self.db.find_instrument_layout_issues()
+        except Exception:
+            return
+        if not issues:
+            return
+        self._layout_prompted = True
+        preview = "\n".join(
+            f"  • {(r['category'] or '')} / {(r['description'] or '') or '(blank)'}"
+            f"   →   {fam} / {desc}" + (f" / {size}" if size else "")
+            for r, fam, desc, size in issues[:10])
+        if len(issues) > 10:
+            preview += f"\n  … and {len(issues) - 10} more"
+        if Messagebox.yesno(
+                f"{len(issues)} instrument(s) have the instrument's name in the "
+                "Category column. Category is meant to hold the family "
+                "(Strings, Brass, …), with the instrument in its own column and "
+                "the size in the new Size column.\n\n"
+                f"{preview}\n\n"
+                "Tidy these up? Nothing is deleted — the same information moves "
+                "into the right columns, and sizes stay sortable.",
+                title="Tidy up the inventory columns?",
+                parent=self.winfo_toplevel()) != "Yes":
+            return
+        changed, families = self.db.normalize_instrument_layout()
+        Messagebox.show_info(
+            f"Updated {changed} instrument(s).\n"
+            f"Families used: {', '.join(families) or 'none'}.",
+            title="Inventory tidied", parent=self.winfo_toplevel())
+        self.refresh()
 
     def _maybe_recover_repairs(self):
         """One-time: rescue repair info that older check-ins buried in returned
@@ -257,8 +299,9 @@ class InventoryManager(ttk.Frame):
 
         self._detail_labels = {}
         fields = [
-            ("Description", "description"),
+            ("Instrument", "description"),
             ("Category", "category"),
+            ("Size", "size"),
             ("Brand", "brand"),
             ("Model", "model"),
             ("Barcode", "barcode"),
@@ -493,6 +536,7 @@ class InventoryManager(ttk.Frame):
                     str(row["serial_no"] or ""),
                     str(row["checked_out_to"] or ""),
                     str(row["category"] or ""),
+                    str((row["size"] if "size" in row.keys() else "") or ""),
                 ]).lower()
                 if search not in haystack:
                     continue
@@ -507,7 +551,18 @@ class InventoryManager(ttk.Frame):
         # Sort
         reverse = not self._sort_asc
         try:
-            rows = sorted(rows, key=lambda r: (r[self._sort_col] or "").lower(), reverse=reverse)
+            if self._sort_col == "size":
+                # Alphabetical order would put 1/2 before 1/4 and 12" after
+                # 1/4; sizes sort smallest to largest instead.
+                import instrument_sizes as isz
+                rows = sorted(
+                    rows,
+                    key=lambda r: isz.size_sort_key(
+                        r["size"] if "size" in r.keys() else ""),
+                    reverse=reverse)
+            else:
+                rows = sorted(rows, key=lambda r: (r[self._sort_col] or "").lower(),
+                              reverse=reverse)
         except Exception:
             pass
 
@@ -539,6 +594,7 @@ class InventoryManager(ttk.Frame):
                 "●" if status == "Available" else ("⇄" if status == "On Loan" else "◉"),
                 row["category"] or "",
                 row["description"] or "",
+                (row["size"] if "size" in row.keys() else "") or "",
                 row["brand"] or "",
                 row["model"] or "",
                 row["barcode"] or row["district_no"] or "",
@@ -1550,13 +1606,14 @@ class InventoryManager(ttk.Frame):
                 return a if a >= 0 else ""
             return ""
 
+        import instrument_sizes as isz
         st = self._excel_styles()
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Instrument Inventory"
         ws.freeze_panes = "A2"
 
-        headers = ["Category", "Instrument", "Brand", "Model", "Serial #",
+        headers = ["Category", "Instrument", "Size", "Brand", "Model", "Serial #",
                    "Barcode", "Condition", "Status",
                    "Assigned To", "Year Purchased", "Year Made", "Age (yrs)",
                    "Amount Paid", "Est. Value", "Repair $ Spent", "Location", "Comments"]
@@ -1576,7 +1633,7 @@ class InventoryManager(ttk.Frame):
         _row(1, headers, font=st["hdr_font"], fill=st["hdr_fill"])
         ws.row_dimensions[1].height = 18
 
-        money_cols = (13, 14, 15)
+        money_cols = (14, 15, 16)
         grand_paid = grand_value = grand_repair = 0.0
 
         # An instrument is "unavailable" (still district property, but not usable
@@ -1620,6 +1677,7 @@ class InventoryManager(ttk.Frame):
             _row(r, [
                 inst.get("category") or "",
                 inst.get("description") or "",
+                inst.get("size") or "",
                 inst.get("brand") or "",
                 inst.get("model") or "",
                 inst.get("serial_no") or "",
@@ -1638,7 +1696,8 @@ class InventoryManager(ttk.Frame):
             ], fill=fill, money_cols=money_cols)
             return r + 1
 
-        skey = lambda x: (x.get("category") or "", x.get("description") or "")
+        skey = lambda x: (x.get("category") or "", x.get("description") or "",
+                          isz.size_sort_key(x.get("size") or ""))
         available = [i for i in instruments if not _unavailable(i)]
         unavailable = [i for i in instruments if _unavailable(i)]
 
@@ -1657,11 +1716,11 @@ class InventoryManager(ttk.Frame):
             for inst in sorted(unavailable, key=skey):
                 r = _emit(inst, r)
 
-        _row(r, ["", "", "", "", "", "", "", "", "", "", "", "TOTALS",
+        _row(r, ["", "", "", "", "", "", "", "", "", "", "", "", "TOTALS",
                  grand_paid, grand_value, grand_repair, "", ""],
              font=st["total_font"], fill=st["total_fill"], money_cols=money_cols)
 
-        widths = [14, 24, 14, 14, 14, 14, 12, 12, 18, 12, 12, 9, 12, 12, 13, 12, 30]
+        widths = [14, 24, 8, 14, 14, 14, 14, 12, 12, 18, 12, 12, 9, 12, 12, 13, 12, 30]
         for col, w in zip(range(1, len(widths) + 1), widths):
             ws.column_dimensions[get_column_letter(col)].width = w
 

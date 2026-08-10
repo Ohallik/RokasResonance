@@ -30,10 +30,14 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Table, TableStyle,
 from reportlab.graphics.barcode import code128
 
 # ── Instrument-family classification (from the inventory `category` field) ────
-# Only brass + woodwinds get a barcode; percussion, strings, etc. are excluded.
+# Instruments that get issued to one student for the year get a barcode: brass,
+# woodwinds and strings.  Percussion, keyboards and electronics stay out — they
+# live in the room and are shared, so a label per item is noise.
 WOODWINDS = {"Flute", "Oboe", "Clarinet", "Bass Clarinet", "Bassoon",
              "Alto Saxophone", "Tenor Saxophone", "Baritone Saxophone"}
 BRASS = {"Trumpet", "French Horn", "Trombone", "Baritone", "Euphonium", "Tuba"}
+STRINGS = {"Violin", "Viola", "Cello", "String Bass", "Double Bass",
+           "Upright Bass", "Harp"}
 
 COLUMNS = 3
 _MARGIN = 0.5 * inch
@@ -41,22 +45,26 @@ _CONTENT_W = letter[0] - 2 * _MARGIN
 
 
 def instrument_family(category):
-    """'Woodwind' / 'Brass' for the categories we print, else None (excluded).
+    """'Woodwind' / 'Brass' / 'Strings' for the categories we print, else None.
 
-    Accepts BOTH a family-level category ("Brass"/"Woodwind", as the live
-    inventory stores it) and a specific instrument type ("Trumpet"/"Flute", as
-    the add-instrument picker offers) — so percussion, electronics, guitars,
-    keyboards, etc. are excluded either way."""
+    Accepts BOTH a family-level category ("Brass"/"Woodwind"/"Strings", as the
+    inventory stores it) and a specific instrument type ("Trumpet"/"Viola", as
+    an inventory built before the family convention may hold) — so percussion,
+    electronics, guitars and keyboards are excluded either way."""
     c = (category or "").strip()
     cl = c.lower()
     if cl == "brass":
         return "Brass"
     if cl in ("woodwind", "woodwinds"):
         return "Woodwind"
+    if cl in ("strings", "string"):
+        return "Strings"
     if c in WOODWINDS:
         return "Woodwind"
     if c in BRASS:
         return "Brass"
+    if c in STRINGS:
+        return "Strings"
     return None
 
 
@@ -140,21 +148,28 @@ def _grid_pdf(path, title, subtitle, cells):
 # ── public exports ────────────────────────────────────────────────────────────
 
 def export_instrument_barcodes(instruments, path):
-    """Brass + woodwind instruments (percussion excluded), sorted by type A-Z.
-    Returns the number of labels printed."""
+    """Instruments issued to a student for the year (brass, woodwind, strings),
+    sorted by instrument A-Z.  Returns the number of labels printed."""
     items = []
     for r in instruments:
         cat = _val(r, "category").strip()
-        if instrument_family(cat) is None:
+        desc = _val(r, "description").strip()
+        if instrument_family(cat) is None and instrument_family(desc) is None:
             continue
         code = _val(r, "barcode").strip() or _val(r, "district_no").strip()
         if not code:
             continue                              # nothing scannable
-        items.append((cat, code))
+        # The label has to say what the thing IS.  Prefer the instrument name;
+        # fall back to the category for an inventory that kept the name there.
+        size = _val(r, "size").strip()
+        label = desc or cat
+        if size:
+            label = f"{label} {size}"
+        items.append((label, code))
     items.sort(key=lambda t: (t[0].lower(), t[1]))
-    cells = [_cell([Paragraph(cat, _head_style())], code) for cat, code in items]
+    cells = [_cell([Paragraph(label, _head_style())], code) for label, code in items]
     _grid_pdf(path, "Instrument Barcodes",
-              "Brass & Woodwind, sorted by type", cells)
+              "Brass, woodwind & strings, sorted by instrument", cells)
     return len(items)
 
 

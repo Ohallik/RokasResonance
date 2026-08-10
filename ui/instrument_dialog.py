@@ -16,10 +16,19 @@ CONDITION_OPTIONS = ["New", "Excellent", "Good", "Fair", "Poor", "Needs Repair",
 # can type any custom category, and the specific item (e.g. "Audio Recorder",
 # "Mixer Board", "Electric Drum Set", "Microphone", "Tuner", "Metronome") goes
 # in the Instrument / Description field.  "Electronics" covers music-tech gear.
-CATEGORY_OPTIONS = [
-    "Woodwind", "Brass", "Percussion", "Mallets", "Other Percussion",
-    "Strings", "Guitar/Bass", "Keyboard", "Electronics", "Other",
-]
+# One vocabulary for families, shared with the normalizer so the picker and the
+# tidy-up tool can never drift apart.  "Other Percussion" is kept because the
+# live inventory already uses it.  The box stays editable for anything else.
+from instrument_sizes import FAMILIES as _FAMILIES
+CATEGORY_OPTIONS = [f for f in _FAMILIES if f != "Other"] + \
+                   ["Other Percussion", "Other"]
+
+# Sizes belong in their own field, not in the instrument's name, so they stay
+# sortable and a 1/2 violin is still findable as a violin.  The offered list
+# follows the instrument: violas are measured in inches, everything else in
+# fractions.  The box is editable, so an odd size can still be typed.
+DEFAULT_SIZE_OPTIONS = ["1/16", "1/10", "1/8", "1/4", "1/2", "3/4", "7/8",
+                        "4/4 (full)"]
 
 
 class InstrumentDialog(ttk.Toplevel):
@@ -114,9 +123,17 @@ class InstrumentDialog(ttk.Toplevel):
 
         row0 = ttk.Frame(basic)
         row0.pack(fill=X, pady=2)
-        self._field(row0, "Category", "category", widget="combobox",
-                    options=CATEGORY_OPTIONS, side=LEFT, width=22)
-        self._field(row0, "Description *", "description", side=LEFT, width=30)
+        self._field(row0, "Category (family)", "category", widget="combobox",
+                    options=CATEGORY_OPTIONS, side=LEFT, width=20)
+        self._field(row0, "Instrument *", "description", side=LEFT, width=26)
+        self._size_box = self._field(row0, "Size", "size", widget="combobox",
+                                     options=DEFAULT_SIZE_OPTIONS, side=LEFT,
+                                     width=10)
+        # The size choices depend on which instrument this is, so they are
+        # rebuilt whenever the instrument or family is edited.
+        self._vars["description"].trace_add("write", self._refresh_size_options)
+        self._vars["category"].trace_add("write", self._refresh_size_options)
+        self._refresh_size_options()
 
         row1 = ttk.Frame(basic)
         row1.pack(fill=X, pady=2)
@@ -319,6 +336,21 @@ class InstrumentDialog(ttk.Toplevel):
         self._result = "saved"
         self._load_instrument(self.instrument_id)
 
+    def _refresh_size_options(self, *_):
+        """Offer the sizes this instrument actually comes in.  Instruments that
+        have no sizes leave the box empty rather than offering fractions that
+        mean nothing for a trumpet."""
+        box = getattr(self, "_size_box", None)
+        if box is None:
+            return
+        import instrument_sizes as isz
+        opts = isz.sizes_for(self._vars["description"].get(),
+                             self._vars["category"].get())
+        try:
+            box.configure(values=opts)
+        except tk.TclError:
+            pass
+
     def _section(self, parent, title):
         f = ttk.Frame(parent)
         f.pack(fill=X, padx=8, pady=(10, 2))
@@ -383,6 +415,12 @@ class InstrumentDialog(ttk.Toplevel):
         # code that reads either column stays consistent.
         data["district_no"] = data.get("barcode", "")
 
+        # A size typed as "3 / 4" or "14 in" should sort and group with the
+        # ones picked from the list.
+        if data.get("size"):
+            import instrument_sizes as isz
+            data["size"] = isz.normalize_size(data["size"])
+
         # Type coercions
         for f in ("amount_paid", "est_value"):
             try:
@@ -401,7 +439,7 @@ class InstrumentDialog(ttk.Toplevel):
 
     def _validate(self, data: dict) -> bool:
         if not data.get("description"):
-            Messagebox.show_warning("Description is required.", title="Validation")
+            Messagebox.show_warning("Instrument is required.", title="Validation")
             return False
         return True
 

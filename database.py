@@ -130,8 +130,12 @@ class Database:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS instruments (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    category TEXT,
-                    description TEXT,
+                    category TEXT,        -- family: Strings, Woodwind, Brass, …
+                    description TEXT,     -- the instrument: Viola, Trumpet - Bb
+                    size TEXT,            -- 3/4, 1/2, 14" — its own field so it
+                                          -- stays sortable and never has to be
+                                          -- squeezed into the name
+
                     brand TEXT,
                     model TEXT,
                     barcode TEXT,
@@ -425,6 +429,13 @@ class Database:
             # separate from year_purchased) to instruments
             try:
                 conn.execute("ALTER TABLE instruments ADD COLUMN year_manufactured TEXT")
+                conn.commit()
+            except Exception:
+                pass  # Column already exists
+            # Migrate: add size (3/4, 1/2, 14") so string inventories can record
+            # it without hiding it inside the category or the description
+            try:
+                conn.execute("ALTER TABLE instruments ADD COLUMN size TEXT")
                 conn.commit()
             except Exception:
                 pass  # Column already exists
@@ -882,7 +893,7 @@ class Database:
 
     def add_instrument(self, data: dict) -> int:
         cols = [
-            "category", "description", "brand", "model", "barcode", "quantity",
+            "category", "description", "size", "brand", "model", "barcode", "quantity",
             "district_no", "case_no", "condition", "serial_no", "date_purchased",
             "year_purchased", "year_manufactured", "po_number", "last_service", "amount_paid", "est_value",
             "locker", "lock_no", "combo", "comments", "accessories"
@@ -898,7 +909,7 @@ class Database:
 
     def update_instrument(self, instrument_id: int, data: dict):
         cols = [
-            "category", "description", "brand", "model", "barcode", "quantity",
+            "category", "description", "size", "brand", "model", "barcode", "quantity",
             "district_no", "case_no", "condition", "serial_no", "date_purchased",
             "year_purchased", "year_manufactured", "po_number", "last_service", "amount_paid", "est_value",
             "locker", "lock_no", "combo", "comments", "accessories", "is_active"
@@ -909,6 +920,59 @@ class Database:
             conn.execute(
                 f"UPDATE instruments SET {set_clause} WHERE id=?", values
             )
+
+    # ── Inventory layout normalization ────────────────────────────────────
+    # The intended layout is category = family ("Strings"), description = the
+    # instrument ("Viola"), size = the size ("14""").  An inventory built before
+    # there was a size field often reads category "Viola", description 14" —
+    # which makes sense to the person who typed it, but means every feature that
+    # groups by family, prints a loan form, or prints barcode labels sees a
+    # family it does not recognize.
+
+    def find_instrument_layout_issues(self):
+        """Instruments whose category holds an instrument name rather than a
+        family.  Returns [(row, proposed_category, proposed_description,
+        proposed_size)] so the change can be shown before it is made."""
+        import instrument_sizes as isz
+        families = {f.lower() for f in isz.FAMILIES}
+        out = []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM instruments WHERE is_active=1").fetchall()
+        for r in rows:
+            cat = (r["category"] or "").strip()
+            desc = (r["description"] or "").strip()
+            size = (r["size"] or "").strip()
+            if not cat or cat.lower() in families:
+                continue                      # already a family; nothing to do
+            family = isz.family_for(cat)
+            if not family:
+                continue                      # not an instrument name either
+            # The category names the instrument.  The description is either its
+            # size or a genuine detail worth keeping on the name.
+            if desc and isz.looks_like_size(desc):
+                new_desc, new_size = cat, (size or isz.normalize_size(desc))
+            elif desc:
+                new_desc, new_size = f"{cat} - {desc}", size
+            else:
+                new_desc, new_size = cat, size
+            out.append((r, family, new_desc, new_size))
+        return out
+
+    def normalize_instrument_layout(self):
+        """Move instrument names out of the category and sizes into their own
+        field.  Returns (rows_changed, families_used)."""
+        issues = self.find_instrument_layout_issues()
+        if not issues:
+            return (0, [])
+        families = set()
+        with self._connect() as conn:
+            for row, family, desc, size in issues:
+                conn.execute(
+                    "UPDATE instruments SET category=?, description=?, size=? "
+                    "WHERE id=?", (family, desc, size or None, row["id"]))
+                families.add(family)
+        return (len(issues), sorted(families))
 
     def deactivate_instrument(self, instrument_id: int):
         with self._connect() as conn:

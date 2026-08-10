@@ -28,6 +28,35 @@ def _is_header_or_junk(row: list) -> bool:
     return first in SKIP_VALUES or first.startswith("prepared") or first.startswith("chinook")
 
 
+def _normalize_instrument_row(data: dict):
+    """Put an imported row into the app's layout: category = family,
+    description = the instrument, size = the size.  Source exports vary wildly
+    in what they call a category, so infer rather than trust it.  Edits `data`
+    in place."""
+    import instrument_sizes as isz
+
+    cat = (data.get("category") or "").strip()
+    desc = (data.get("description") or "").strip()
+    families = {f.lower() for f in isz.FAMILIES}
+
+    if cat and cat.lower() not in families and isz.family_for(cat):
+        # The category names an instrument.  The description is either its size
+        # or a genuine detail worth keeping alongside the name.
+        if desc and isz.looks_like_size(desc):
+            data["size"] = data.get("size") or isz.normalize_size(desc)
+            desc = cat
+        elif desc:
+            desc = f"{cat} - {desc}"
+        else:
+            desc = cat
+        data["description"] = desc
+        cat = ""
+
+    if not cat or cat.lower() not in families:
+        data["category"] = isz.family_for(desc) or cat or "Other"
+    return data
+
+
 def _parse_float(val: str) -> float:
     if not val:
         return 0.0
@@ -95,6 +124,7 @@ def import_inventory(db: Database, csv_path: str) -> dict:
             if len(row) < 2:
                 continue
 
+
             data = {
                 "category":       str(row[0]).strip() if len(row) > 0 else "",
                 "description":    str(row[1]).strip() if len(row) > 1 else "",
@@ -123,6 +153,11 @@ def import_inventory(db: Database, csv_path: str) -> dict:
             if not data["description"]:
                 skipped += 1
                 continue
+
+            # Column 0 is whatever the source file called a category, which is
+            # often the instrument itself ("Viola").  Category means the family
+            # here, so translate it and keep the instrument in the description.
+            _normalize_instrument_row(data)
 
             iid = db.import_instrument(data)
             if iid:
