@@ -95,9 +95,14 @@ INSTRUMENT_ACCESSORIES = {
 }
 
 
-# School strings are inventoried by size — "Violin 3/4", "Cello - 1/2".  The
-# size says nothing about the accessory kit, so it is stripped before matching.
-_SIZE_RE = re.compile(r"\b\d+\s*/\s*\d+\b|\bfull[\s-]*size\b", re.I)
+# School strings are inventoried by size: "Violin 3/4", "Cello - 1/2", or a
+# viola measured across the back, 14".  The size says nothing about the
+# accessory kit, so it is stripped before matching.
+_SIZE_RE = re.compile(
+    r"\b\d+\s*/\s*\d+\b"                            # 3/4, 1/2
+    r"|\b\d+(?:\.\d+)?\s*(?:\"|''|in\b|inch(?:es)?\b)"   # 14", 15.5 inch
+    r"|\bfull[\s-]*size\b",
+    re.I)
 
 # Bowed strings, spelled the ways a district inventory spells them.  "Bass"
 # alone is ambiguous (bass drum, bass clarinet, bass guitar), so it is matched
@@ -109,26 +114,40 @@ _BOWED_STRINGS = ("violin", "viola", "cello", "string bass", "double bass",
 _CHIN_HELD = ("violin", "viola")
 
 
-def _get_accessories(description: str, program_type: str = "band") -> list:
-    """Return the accessory list for the given instrument description."""
-    desc = (description or "").strip()
-    if desc in INSTRUMENT_ACCESSORIES:
-        return INSTRUMENT_ACCESSORIES[desc]
+def _strip_size(text: str) -> str:
+    """Drop size markings so "Viola 14"" and "Cello - 1/2" match their entry."""
+    return " ".join(_SIZE_RE.sub("", text or "").replace(" - ", " ").split()).strip(" -")
 
-    # "Violin 3/4" and "Cello - 1/2" take the same kit as the full-size entry.
-    sized = " ".join(_SIZE_RE.sub("", desc).replace(" - ", " ").split()).strip(" -")
-    if sized in INSTRUMENT_ACCESSORIES:
-        return INSTRUMENT_ACCESSORIES[sized]
+
+def _get_accessories(description: str, program_type: str = "band",
+                     category: str = "") -> list:
+    """Return the accessory list for an instrument.
+
+    Which field holds the instrument's NAME depends on how the teacher set up
+    their inventory.  A band inventory usually puts it in the description
+    ("Trumpet - Bb") and keeps the category at family level ("Brass").  An
+    orchestra inventory often does the opposite: category "Viola", description
+    "14"" — the size.  So both fields are consulted, most specific first.
+    """
+    desc = (description or "").strip()
+    cat = (category or "").strip()
+
+    for candidate in (desc, _strip_size(desc), cat, _strip_size(cat)):
+        if candidate and candidate in INSTRUMENT_ACCESSORIES:
+            return INSTRUMENT_ACCESSORIES[candidate]
 
     # Prefix fallback: "Trombone" → matches "Trombone - Bass" etc.
-    base = desc.split(" - ")[0]
-    for key, val in INSTRUMENT_ACCESSORIES.items():
-        if key.startswith(base + " ") or key == base:
-            return val
+    for source in (desc, cat):
+        base = source.split(" - ")[0].strip()
+        if not base:
+            continue
+        for key, val in INSTRUMENT_ACCESSORIES.items():
+            if key.startswith(base + " ") or key == base:
+                return val
 
-    # Nothing matched.  A mouthpiece is the right guess only for something you
-    # blow into, so decide from the instrument family instead of assuming one.
-    low = sized.lower() or desc.lower()
+    # Nothing matched by name.  A mouthpiece is the right guess only for
+    # something you blow into, so decide from the family instead of assuming.
+    low = f"{_strip_size(desc)} {_strip_size(cat)} {desc} {cat}".lower()
     if any(w in low for w in _BOWED_STRINGS):
         acc = ["Case", "Bow"]
         if any(w in low for w in _CHIN_HELD):
@@ -136,7 +155,7 @@ def _get_accessories(description: str, program_type: str = "band") -> list:
         return acc
     try:
         from cuttime_import import instrument_family
-        family = instrument_family(desc)
+        family = instrument_family(desc) or instrument_family(cat)
     except Exception:
         family = None
     if family in ("Strings", "Keyboard", "Electronics", "Percussion"):
@@ -444,6 +463,7 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     date_raw     = checkout_data.get("date_assigned") or datetime.today().strftime("%Y-%m-%d")
 
     description  = str(instrument_data.get("description") or "")
+    category     = str(instrument_data.get("category")    or "")
     serial_no    = str(instrument_data.get("serial_no")   or "")
     barcode      = str(instrument_data.get("barcode")     or "")
     brand        = str(instrument_data.get("brand")       or "")
@@ -483,7 +503,7 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
                 and not any("bag" in a.lower() for a in accessories):
             accessories = ["Stick Bag"] + accessories
     else:
-        accessories = _get_accessories(description, program_type)
+        accessories = _get_accessories(description, program_type, category)
 
     # ── Title ─────────────────────────────────────────────────────────────
     story.append(_p(f"{district_name} Equipment Loan Form", s["title"]))
