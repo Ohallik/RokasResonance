@@ -71,6 +71,15 @@ class InventoryManager(ttk.Frame):
         self.after(400, self._maybe_recover_repairs)
         self.after(900, self._offer_layout_normalize)
 
+    def _open_carry_over(self):
+        """Start this year's assignments from last year's, rather than checking
+        every student out again by hand."""
+        from ui.instrument_carryover_dialog import InstrumentCarryOverDialog
+        dlg = InstrumentCarryOverDialog(self.winfo_toplevel(), self.db)
+        self.wait_window(dlg)
+        if getattr(dlg, "assigned", 0):
+            self.refresh()
+
     def _offer_layout_normalize(self):
         """Offer to move instrument names out of the Category column and sizes
         into the Size column.  Category is meant to hold the family, and every
@@ -150,6 +159,8 @@ class InventoryManager(ttk.Frame):
                    command=self._open_checkin_chooser).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="📄 Generate Form", bootstyle=PRIMARY,
                    command=self._generate_form).pack(side=LEFT, padx=2, pady=6)
+        ttk.Button(toolbar, text="🔁 Carry Over…", bootstyle=(SUCCESS, OUTLINE),
+                   command=self._open_carry_over).pack(side=LEFT, padx=2, pady=6)
 
         ttk.Separator(toolbar, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=4)
 

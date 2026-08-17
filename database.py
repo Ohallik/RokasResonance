@@ -1035,6 +1035,69 @@ class Database:
             out.append(d)
         return out
 
+    # ── Carrying instrument assignments into a new year ───────────────────
+    # Most students keep the instrument they had, so the new year starts from
+    # last year's assignments rather than from nothing.  Everything here is
+    # per CHECKOUT, never per student: a tuba player keeps one at school and one
+    # at home, and a sax player may have three.
+
+    @staticmethod
+    def previous_school_year(school_year: str):
+        try:
+            start_year = int(str(school_year).split("-")[0])
+        except (ValueError, AttributeError, IndexError):
+            return ""
+        return f"{start_year - 1}-{start_year}"
+
+    def get_assignments_for_school_year(self, school_year: str):
+        """Every instrument assignment made during that school year, one row per
+        checkout, with the instrument and whether the student is still here."""
+        # school_year_bounds is July-to-June and its end date is inclusive.
+        start, end = self.school_year_bounds(school_year)
+        if not start:
+            return []
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT c.id            AS checkout_id,
+                          c.student_id    AS student_id,
+                          c.student_name  AS student_name,
+                          c.date_assigned AS date_assigned,
+                          c.notes         AS notes,
+                          i.id            AS instrument_id,
+                          i.category      AS category,
+                          i.description   AS description,
+                          i.size          AS size,
+                          i.brand         AS brand,
+                          i.barcode       AS barcode,
+                          i.district_no   AS district_no,
+                          i.serial_no     AS serial_no,
+                          s.grade         AS grade,
+                          s.school_year   AS student_year,
+                          s.is_active     AS student_active
+                     FROM checkouts c
+                     JOIN instruments i ON i.id = c.instrument_id
+                     LEFT JOIN students s ON s.id = c.student_id
+                    WHERE c.date_assigned >= ? AND c.date_assigned <= ?
+                      AND i.is_active = 1
+                    ORDER BY c.student_name, i.description, i.size""",
+                (start, end),
+            ).fetchall()
+
+    def get_available_instruments(self):
+        """Active instruments with nothing checked out against them and not out
+        on loan to another school."""
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT i.* FROM instruments i
+                    WHERE i.is_active = 1
+                      AND NOT EXISTS (SELECT 1 FROM checkouts c
+                                       WHERE c.instrument_id = i.id
+                                         AND c.date_returned IS NULL)
+                      AND NOT EXISTS (SELECT 1 FROM loans l
+                                       WHERE l.instrument_id = i.id
+                                         AND l.date_returned IS NULL)
+                    ORDER BY i.description, i.size, i.barcode""").fetchall()
+
     def get_active_checkouts_for_instrument(self, instrument_id):
         """All open checkouts for one instrument (may be several)."""
         with self._connect() as conn:
@@ -2034,7 +2097,8 @@ class Database:
 
     def checkout_instrument(self, instrument_id: int, student_id: int,
                             student_name: str, date_assigned: str, notes: str = "",
-                            due_date: str = "", rental_type: str = "school_year") -> int:
+                            due_date: str = "", rental_type: str = "school_year",
+                            charge_fee: bool = True) -> int:
         with self._connect() as conn:
             cur = conn.execute(
                 """INSERT INTO checkouts
@@ -2047,7 +2111,10 @@ class Database:
         # under Budget ▸ Student Fees (dedup keeps it to one per year; waive or
         # remove it there if the instrument is the student's own).  rental_type
         # is "school_year" ($75 default) or "summer" ($20 default).
-        if student_id:
+        # charge_fee=False is for bulk work that re-records assignments the
+        # school already made — carrying a year forward should not invoice the
+        # whole program a second time unless the teacher asks for it.
+        if student_id and charge_fee:
             try:
                 self._auto_add_rental_fee(student_id, date_assigned, rental_type)
             except Exception:

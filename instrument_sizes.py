@@ -141,6 +141,45 @@ _SIZE_TOKEN_RE = re.compile(
     re.IGNORECASE)
 
 
+def base_type(description: str) -> str:
+    """The instrument without its variant: "Saxophone - Eb Alto" -> "saxophone".
+    This is what makes a trumpet swappable for another trumpet but not for a
+    trombone."""
+    d = " ".join((description or "").strip().lower().split())
+    return d.split(" - ")[0].strip()
+
+
+def type_rank(wanted: str, candidate: str) -> int:
+    """How good a substitute `candidate` is for `wanted`: 0 identical,
+    1 the same instrument in another variant, 2 merely the same family,
+    3 unrelated.  Used to order the swap list so the closest match is first."""
+    w = " ".join((wanted or "").strip().lower().split())
+    c = " ".join((candidate or "").strip().lower().split())
+    if not w or not c:
+        return 3
+    if w == c:
+        return 0
+    if base_type(w) and base_type(w) == base_type(c):
+        return 1
+    fw, fc = family_for(w), family_for(c)
+    if fw and fw == fc:
+        return 2
+    return 3
+
+
+def smallest_larger_than(size: str, candidates):
+    """The smallest of `candidates` that is bigger than `size`, or None.
+
+    Deliberately not "the next size in the catalogue": hardly any school owns a
+    7/8 violin, so a student outgrowing a 3/4 should be offered the 4/4 that is
+    actually on the shelf rather than told nothing is available."""
+    key = size_sort_key(normalize_size(size))
+    bigger = [c for c in candidates if size_sort_key(normalize_size(c)) > key]
+    if not bigger:
+        return None
+    return min(bigger, key=lambda c: size_sort_key(normalize_size(c)))
+
+
 def looks_like_size(text: str) -> bool:
     """True when a value is ONLY a size, which is the signature of an inventory
     that put the size where the instrument's name belongs."""
