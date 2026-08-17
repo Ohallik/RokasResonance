@@ -2098,7 +2098,8 @@ class Database:
     def checkout_instrument(self, instrument_id: int, student_id: int,
                             student_name: str, date_assigned: str, notes: str = "",
                             due_date: str = "", rental_type: str = "school_year",
-                            charge_fee: bool = True) -> int:
+                            charge_fee: bool = True,
+                            fee_per_instrument: bool = False) -> int:
         with self._connect() as conn:
             cur = conn.execute(
                 """INSERT INTO checkouts
@@ -2111,18 +2112,26 @@ class Database:
         # under Budget ▸ Student Fees (dedup keeps it to one per year; waive or
         # remove it there if the instrument is the student's own).  rental_type
         # is "school_year" ($75 default) or "summer" ($20 default).
-        # charge_fee=False is for bulk work that re-records assignments the
-        # school already made — carrying a year forward should not invoice the
-        # whole program a second time unless the teacher asks for it.
+        # The rental fee is an annual charge every student renting an instrument
+        # is expected to pay, so it is added by default.  charge_fee=False is
+        # only for re-recording assignments that were already billed.
         if student_id and charge_fee:
             try:
-                self._auto_add_rental_fee(student_id, date_assigned, rental_type)
+                self._auto_add_rental_fee(student_id, date_assigned, rental_type,
+                                          per_instrument=fee_per_instrument)
             except Exception:
                 pass
         return checkout_id
 
     def _auto_add_rental_fee(self, student_id: int, date_assigned: str,
-                             rental_type: str = "school_year"):
+                             rental_type: str = "school_year",
+                             per_instrument: bool = False):
+        """The rental fee for one check-out.
+
+        ``per_instrument`` bills this instrument on its own line, which is what
+        a student renting three of them actually owes.  Left off, the fee is
+        deduped to one per student per year — the older behaviour, kept so a
+        single check-out screen can't double-bill someone by accident."""
         year = self.academic_year_of(date_assigned)
         if rental_type == "summer":
             name, amount, want = "Instrument Rental (Summer)", 20.0, "summer"
@@ -2133,7 +2142,10 @@ class Database:
             if n.lower().startswith("instrument rental") and want in n.lower():
                 name, amount = n, float(t["default_amount"] or amount)
                 break
-        self.ensure_student_fee(student_id, name, year, amount)
+        if per_instrument:
+            self.add_student_fee(student_id, name, year, amount)
+        else:
+            self.ensure_student_fee(student_id, name, year, amount)
 
     @staticmethod
     def academic_year_of(date_str: str) -> str:

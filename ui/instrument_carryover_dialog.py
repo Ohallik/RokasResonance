@@ -102,26 +102,24 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                    command=lambda: self._set_all(True)).pack(side=LEFT, padx=(0, 4))
         ttk.Button(tools, text="Untick All", bootstyle=(SECONDARY, OUTLINE),
                    command=lambda: self._set_all(False)).pack(side=LEFT, padx=4)
-        self._sizeup_btn = ttk.Button(
-            tools, text="⬆ Move strings up a size", bootstyle=(INFO, OUTLINE),
-            command=self._size_up_strings)
-        self._sizeup_btn.pack(side=LEFT, padx=(12, 4))
+        ttk.Label(tools, text="String players who have grown get a ⬆ button on "
+                              "their own row.",
+                  font=("Segoe UI", 8), foreground=muted_fg()).pack(side=LEFT, padx=(12, 4))
         self._count_lbl = ttk.Label(tools, text="", font=("Segoe UI", 9, "bold"))
         self._count_lbl.pack(side=RIGHT)
 
-        # Checking an instrument out normally adds that student's rental fee.
-        # Doing that for a whole program at once is a real bill, so it is a
-        # deliberate choice here rather than a silent side effect.
+        # The rental fee is an annual charge every renting student owes, one per
+        # instrument, so it is added by default.  The switch exists for the case
+        # where these assignments were billed already.
         fees = ttk.Frame(self)
         fees.pack(fill=X, padx=16, pady=(0, 2))
-        self._fee_var = tk.BooleanVar(value=False)
+        self._fee_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             fees, variable=self._fee_var, bootstyle=PRIMARY,
-            text="Also add each student's instrument rental fee"
+            text="Add the instrument rental fee for each instrument assigned"
         ).pack(side=LEFT)
-        ttk.Label(fees, text="(off by default: carrying last year forward "
-                             "shouldn't re-bill the program. One fee per "
-                             "student per year either way.)",
+        ttk.Label(fees, text="(a student taking two instruments is billed twice; "
+                             "untick only if these were already billed)",
                   font=("Segoe UI", 8), foreground=muted_fg()).pack(side=LEFT, padx=6)
 
         # Column headings, aligned with the row grid below.
@@ -186,21 +184,40 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                  f"Students who have already left are unticked to start with.")
 
         rows = [dict(r) for r in prior]
-        # Whether the roster has been rolled into the new year yet decides what
-        # "still here" can even mean.  Run before the New Year wizard, nobody is
-        # on the new year, and ticking nothing would look broken — so fall back
-        # to every active student.
+        # Whether the roster has been rolled into the new year yet decides
+        # whether we can tell who has left.
         self._rolled = any((r.get("student_year") or "") == self.school_year
                            for r in rows)
-        for row in rows:
+
+        def enrolled(r):
+            if not r.get("student_active"):
+                return False
+            if not self._rolled:
+                return True        # can't tell yet; the note below says so
+            return (r.get("student_year") or "") == self.school_year
+
+        keep_rows = [r for r in rows if enrolled(r)]
+        dropped = len(rows) - len(keep_rows)
+
+        for row in keep_rows:
             self._add_row(row, self._options_for(row, available, in_use))
 
-        if not self._rolled:
+        if not keep_rows:
+            self._intro.config(
+                text=f"Everyone who had an instrument in {self.prior_year} has "
+                     "since left, so there is nothing to carry forward.")
+            self._apply_btn.config(state="disabled")
+        elif not self._rolled:
             self._intro.config(
                 text=self._intro.cget("text")
-                + "  (Your roster is still on "
-                + f"{self.prior_year}, so everyone active is ticked. Run the New "
-                  "Year wizard first if you want leavers dropped automatically.)")
+                + f"  (Your roster is still on {self.prior_year}. Run the New "
+                  "Year wizard first and graduating students will drop off this "
+                  "list automatically.)")
+        elif dropped:
+            self._intro.config(
+                text=self._intro.cget("text")
+                + f"  ({dropped} assignment(s) belonged to students who have "
+                  "since graduated or left, and are not listed.)")
         self._update_count()
 
     def _options_for(self, row, available, in_use):
@@ -240,10 +257,8 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         f = ttk.Frame(self._list)
         f.pack(fill=X, pady=1)
 
-        still_here = bool(row.get("student_active")) and (
-            not self._rolled
-            or (row.get("student_year") or "") == self.school_year)
-        keep = tk.BooleanVar(value=still_here)
+        # Only enrolled students reach this point, so every row starts ticked.
+        keep = tk.BooleanVar(value=True)
         cb = ttk.Checkbutton(f, variable=keep, bootstyle=PRIMARY,
                              command=self._update_count)
         cb.pack(side=LEFT, padx=(2, 4))
@@ -251,8 +266,6 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         name = (row.get("student_name") or "(unknown)").strip()
         grade = (row.get("grade") or "").strip()
         who = f"{name}" + (f"  (Gr {grade})" if grade else "")
-        if not still_here:
-            who += "  — not enrolled"
         ttk.Label(f, text=who, width=26, anchor=W,
                   font=("Segoe UI", 9)).pack(side=LEFT, padx=2)
 
@@ -298,14 +311,26 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         elif not alternatives:
             note = ("no additional instruments available"
                     if free_labels else "none free — sharing only")
+        entry = {
+            "data": row, "keep": keep, "choice": choice,
+            "options": options, "combo": combo, "sizeup_btn": None,
+        }
+
+        # A string player who has grown gets their own size-up button, right
+        # where their instrument is chosen.
+        bigger = self._bigger_option(row, options)
+        if bigger is not None:
+            btn = ttk.Button(f, text="⬆", width=3, bootstyle=(INFO, OUTLINE),
+                             command=lambda e=entry: self._size_up_row(e))
+            btn.pack(side=LEFT, padx=(4, 0))
+            entry["sizeup_btn"] = btn
+            note = f"can go up to {bigger['size']}"
+
         if note:
             ttk.Label(f, text=note, font=("Segoe UI", 8, "italic"),
                       foreground=muted_fg()).pack(side=LEFT, padx=6)
 
-        self._rows.append({
-            "data": row, "keep": keep, "choice": choice,
-            "options": options, "combo": combo,
-        })
+        self._rows.append(entry)
 
     # ── actions ──────────────────────────────────────────────────────────────
 
@@ -319,42 +344,35 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         n = sum(1 for r in self._rows if r["keep"].get())
         self._count_lbl.config(text=f"{n} of {len(self._rows)} to assign")
 
-    def _size_up_strings(self):
-        """For every ticked string row, switch to a free instrument one size
-        larger when there is one.  Anything not a string, or already at the
-        largest size, is left alone."""
-        moved, no_stock = 0, 0
-        for r in self._rows:
-            if not r["keep"].get():
-                continue
-            row = r["data"]
-            desc = row.get("description") or ""
-            if (row.get("category") or "").strip().lower() != "strings" and \
-                    isz.family_for(desc) != "Strings":
-                continue
-            # Offer the smallest free one that is genuinely bigger, rather than
-            # insisting on the next size in the catalogue — a school that owns
-            # no 7/8 violins should still move a 3/4 player up to a 4/4.
-            same_kind = [o for o in r["options"]
-                         if not o["shared"] and o["size"]
-                         and isz.base_type(o["desc"]) == isz.base_type(desc)]
-            target = isz.smallest_larger_than(row.get("size") or "",
-                                              [o["size"] for o in same_kind])
-            if target is None:
-                if isz.sizes_for(desc, row.get("category") or ""):
-                    no_stock += 1
-                continue
-            match = next(o["label"] for o in same_kind if o["size"] == target)
-            r["choice"].set(match)
-            moved += 1
-        msg = f"Moved {moved} student(s) up a size."
-        if no_stock:
-            msg += (f"\n\n{no_stock} could use a bigger instrument but none is "
-                    "free in that size right now.")
-        if not moved and not no_stock:
-            msg = ("No ticked string players need a bigger size, or they are "
-                   "already on the largest one.")
-        Messagebox.show_info(msg, title="Size Up", parent=self)
+    @staticmethod
+    def _bigger_option(row, options):
+        """The smallest free instrument of the same kind that is genuinely
+        larger than the one this student had, or None.
+
+        Deliberately not "the next size in the catalogue": hardly any school
+        owns a 7/8 violin, so a student outgrowing a 3/4 should be offered the
+        4/4 that is actually on the shelf."""
+        desc = row.get("description") or ""
+        if (row.get("category") or "").strip().lower() != "strings" and \
+                isz.family_for(desc) != "Strings":
+            return None
+        same_kind = [o for o in options
+                     if not o["shared"] and o["size"]
+                     and isz.base_type(o["desc"]) == isz.base_type(desc)]
+        target = isz.smallest_larger_than(row.get("size") or "",
+                                          [o["size"] for o in same_kind])
+        if target is None:
+            return None
+        return next(o for o in same_kind if o["size"] == target)
+
+    def _size_up_row(self, entry):
+        """Move one student up a size.  Growing into a bigger instrument is a
+        judgement about that particular child, so it is never done in bulk."""
+        bigger = self._bigger_option(entry["data"], entry["options"])
+        if bigger is None:
+            return
+        entry["choice"].set(bigger["label"])
+        entry["sizeup_btn"].config(state="disabled")
 
     def _apply(self):
         picks = []
@@ -411,7 +429,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                     opt["id"], row.get("student_id"),
                     row.get("student_name") or "", today,
                     notes=f"Carried over from {self.prior_year}",
-                    due_date=due, charge_fee=charge)
+                    due_date=due, charge_fee=charge, fee_per_instrument=True)
                 done += 1
             except Exception as e:
                 failed.append(f"  • {row.get('student_name')}: {e}")
