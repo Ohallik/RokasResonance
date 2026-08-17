@@ -350,8 +350,8 @@ class BudgetManager(ttk.Frame):
         hdr_fill = PatternFill("solid", fgColor="2E7D32")
         border = Border(*[Side(style="thin", color="CCCCCC")] * 4)
         money = '"$"#,##0.00'
-        headers = ["Date", "Type", "Category", "Description", "Funding Source",
-                   "Use", "Student", "Amount"]
+        headers = ["Date", "Type", "Category", "Description", "Vendor",
+                   "Invoice #", "Funding Source", "Use", "Student", "Amount"]
         for c, h in enumerate(headers, 1):
             cell = ws.cell(row=1, column=c, value=h)
             cell.font = hdr_font; cell.fill = hdr_fill; cell.border = border
@@ -359,13 +359,15 @@ class BudgetManager(ttk.Frame):
         for t in rows:
             for c, val in enumerate([
                 t.get("txn_date") or "", (t.get("kind") or "").title(), t.get("category") or "",
-                t.get("description") or "", t.get("funding_source") or "",
+                t.get("description") or "",
+                t.get("vendor") or "", t.get("invoice_no") or "",
+                t.get("funding_source") or "",
                 funding_class(t.get("funding_source")),
                 t.get("student_name") or "", float(t.get("amount") or 0),
             ], 1):
                 cell = ws.cell(row=r, column=c, value=val)
                 cell.border = border
-                if c == 8:
+                if c == len(headers):
                     cell.number_format = money
             r += 1
         # Summary sheet
@@ -466,6 +468,16 @@ class _TxnDialog(ttk.Toplevel):
         ttk.Combobox(m, textvariable=self._src, state="readonly", width=16,
                      values=self.db.FUNDING_SOURCES).pack(anchor=W)
 
+        # Optional paperwork trail: what a district business office asks for
+        # months later when reconciling a purchase.
+        field("Vendor (optional)")
+        self._vendor = tk.StringVar(value=(self.txn or {}).get("vendor", "") or "")
+        ttk.Entry(m, textvariable=self._vendor, width=34).pack(anchor=W)
+
+        field("Invoice # (optional)")
+        self._invoice = tk.StringVar(value=(self.txn or {}).get("invoice_no", "") or "")
+        ttk.Entry(m, textvariable=self._invoice, width=24).pack(anchor=W)
+
         field("Student (optional)")
         self._students = [(display_last_first(s), s["id"])
                           for s in self.db.get_current_roster()]
@@ -513,6 +525,8 @@ class _TxnDialog(ttk.Toplevel):
             "amount": amount,
             "funding_source": self._src.get().strip(),
             "student_id": sid,
+            "vendor": self._vendor.get().strip(),
+            "invoice_no": self._invoice.get().strip(),
             "notes": self._notes.get("1.0", "end").strip(),
         }
         if self.txn and self.txn.get("id"):

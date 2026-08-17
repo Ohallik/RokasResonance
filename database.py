@@ -439,6 +439,28 @@ class Database:
                 conn.commit()
             except Exception:
                 pass  # Column already exists
+            # Migrate: invoice number + vendor on a budget line, so a purchase
+            # can be matched back to the paperwork it came from
+            for col in ("invoice_no TEXT", "vendor TEXT"):
+                try:
+                    conn.execute(f"ALTER TABLE budget_transactions ADD COLUMN {col}")
+                    conn.commit()
+                except Exception:
+                    pass  # Column already exists
+            # Migrate: a Books category for method and class books.  The seed
+            # list only runs on an empty database, so existing profiles need
+            # this added explicitly.
+            try:
+                have = conn.execute(
+                    "SELECT 1 FROM budget_categories WHERE LOWER(name)='books' "
+                    "AND kind='expense'").fetchone()
+                if not have:
+                    conn.execute(
+                        "INSERT INTO budget_categories (name, kind) "
+                        "VALUES ('Books', 'expense')")
+                    conn.commit()
+            except Exception:
+                pass
             # Migrate: flag imported/archival repairs so they stay in the repair
             # log but don't count as current budget expenses.
             try:
@@ -534,6 +556,8 @@ class Database:
                         amount REAL DEFAULT 0,
                         funding_source TEXT,      -- Building | ASB | Boosters | Other
                         student_id INTEGER,
+                        invoice_no TEXT,          -- both optional, for matching
+                        vendor TEXT,              -- a purchase back to paperwork
                         notes TEXT,
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP
                     );
@@ -567,6 +591,9 @@ class Database:
                         ("Instrument Repair", "expense"),
                         ("Instrument Supplies", "expense"),
                         ("Sheet Music", "expense"),
+                        # Method and class books, separate from performance
+                        # repertoire — every program buys them.
+                        ("Books", "expense"),
                         ("Office Supplies", "expense"),
                         ("Field Trip", "expense"),
                         ("Guest Artist / Clinician", "expense"),
@@ -2522,7 +2549,7 @@ class Database:
 
     def add_budget_transaction(self, data: dict) -> int:
         cols = ["txn_date", "description", "category", "kind", "amount",
-                "funding_source", "student_id", "notes"]
+                "funding_source", "student_id", "invoice_no", "vendor", "notes"]
         vals = [data.get(c) for c in cols]
         with self._connect() as conn:
             cur = conn.execute(
@@ -2532,7 +2559,7 @@ class Database:
 
     def update_budget_transaction(self, txn_id: int, data: dict):
         cols = ["txn_date", "description", "category", "kind", "amount",
-                "funding_source", "student_id", "notes"]
+                "funding_source", "student_id", "invoice_no", "vendor", "notes"]
         set_clause = ", ".join(f"{c}=?" for c in cols)
         with self._connect() as conn:
             conn.execute(f"UPDATE budget_transactions SET {set_clause} WHERE id=?",
