@@ -15,6 +15,7 @@ from datetime import datetime
 
 from ui.ensembles import ensembles_for
 from ui.names import display_last_first
+from ui.theme import px
 
 
 def _pick_from_list(parent, title, prompt, options):
@@ -137,20 +138,36 @@ class BudgetManager(ttk.Frame):
 
         left = ttk.Frame(paned)
         paned.add(left, weight=3)
-        cols = ("date", "type", "category", "desc", "source", "use", "student", "amount")
+        cols = ("date", "type", "category", "desc", "vendor", "invoice",
+                "source", "use", "student", "amount")
         sb = ttk.Scrollbar(left, orient=VERTICAL)
+        hsb = ttk.Scrollbar(left, orient=HORIZONTAL)
         self.tree = ttk.Treeview(left, columns=cols, show="headings",
-                                 yscrollcommand=sb.set, selectmode="browse", bootstyle=SUCCESS)
+                                 yscrollcommand=sb.set, xscrollcommand=hsb.set,
+                                 selectmode="browse", bootstyle=SUCCESS)
         sb.config(command=self.tree.yview)
+        hsb.config(command=self.tree.xview)
         sb.pack(side=RIGHT, fill=Y)
+        # Horizontal scrolling matters here: with every column wide enough to
+        # read, the row can be wider than the pane, and the Amount at the far
+        # right is the one thing that must never be cut off.
+        hsb.pack(side=BOTTOM, fill=X)
         self.tree.pack(fill=BOTH, expand=True)
-        heads = {"date": "Date", "type": "Type", "category": "Category", "desc": "Description",
-                 "source": "Funding", "use": "Use", "student": "Student", "amount": "Amount"}
-        widths = {"date": 90, "type": 68, "category": 130, "desc": 220, "source": 82,
-                  "use": 96, "student": 120, "amount": 96}
+        heads = {"date": "Date", "type": "Type", "category": "Category",
+                 "desc": "Description", "vendor": "Vendor", "invoice": "Invoice #",
+                 "source": "Funding", "use": "Use", "student": "Student",
+                 "amount": "Amount"}
+        self._heads = heads
+        # Starting widths only; _autosize_columns measures the real text once
+        # there are rows, because a width in pixels cannot be guessed for a font
+        # whose size the teacher chooses.
+        widths = {"date": 96, "type": 80, "category": 140, "desc": 240,
+                  "vendor": 150, "invoice": 110, "source": 96, "use": 116,
+                  "student": 140, "amount": 108}
         for c in cols:
-            self.tree.heading(c, text=heads[c], anchor=W)
-            self.tree.column(c, width=widths[c], anchor=(E if c == "amount" else W),
+            self.tree.heading(c, text=heads[c], anchor=(E if c == "amount" else W))
+            self.tree.column(c, width=px(widths[c]), minwidth=px(60),
+                             anchor=(E if c == "amount" else W),
                              stretch=c == "desc")
         self.tree.tag_configure("income", foreground="#1a7a1a")
         self.tree.tag_configure("repair", foreground="#666")
@@ -192,6 +209,45 @@ class BudgetManager(ttk.Frame):
         self._fill(rows)
         self._build_summary(rows)
 
+    # Widest sensible column, so one long note can't push Amount off the edge.
+    _COL_MAX = {"desc": 420, "vendor": 240, "student": 220, "category": 240}
+    _COL_MAX_DEFAULT = 200
+
+    def _autosize_columns(self):
+        """Widen every column to fit what it actually contains.
+
+        Column widths are raw pixels while the font size is the teacher's
+        choice, so any fixed number is wrong at some setting — on a laptop at
+        Large, "2026-08-17" was showing as "2026-08" and the amount was cut in
+        half.  Measuring the real strings is the only thing that holds up."""
+        import tkinter.font as tkfont
+        # Style.lookup returns a font DESCRIPTION ("Segoe UI 11"), not the name
+        # of a named font, so it has to go through Font(font=...).  Measuring
+        # with the wrong font is how a column ends up almost-but-not-quite wide
+        # enough, so fall back only as a last resort.
+        font = None
+        try:
+            spec = ttk.Style().lookup("Treeview", "font")
+            if spec:
+                font = tkfont.Font(root=self.tree, font=spec)
+        except Exception:
+            font = None
+        if font is None:
+            try:
+                font = tkfont.nametofont("TkDefaultFont")
+            except Exception:
+                return
+        pad_px = px(24)                     # cell padding + a little breathing room
+        for idx, col in enumerate(self.tree["columns"]):
+            widest = font.measure(self._heads.get(col, col))
+            for iid in self.tree.get_children():
+                vals = self.tree.item(iid, "values")
+                if idx < len(vals):
+                    widest = max(widest, font.measure(str(vals[idx])))
+            want = widest + pad_px
+            want = min(want, px(self._COL_MAX.get(col, self._COL_MAX_DEFAULT)))
+            self.tree.column(col, width=want, minwidth=min(want, px(60)))
+
     def _fill(self, rows):
         self.tree.delete(*self.tree.get_children())
         for i, r in enumerate(rows):
@@ -208,11 +264,14 @@ class BudgetManager(ttk.Frame):
                 (r.get("kind") or "").title(),
                 r.get("category") or "",
                 (r.get("description") or "") + ("  [auto]" if r.get("source") == "repair" else ""),
+                r.get("vendor") or "",
+                r.get("invoice_no") or "",
                 r.get("funding_source") or "",
                 funding_class(r.get("funding_source")),
                 r.get("student_name") or "",
                 amt,
             ))
+        self._autosize_columns()
 
     def _build_summary(self, rows):
         for w in self._summary_frame.winfo_children():

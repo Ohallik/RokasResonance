@@ -93,6 +93,17 @@ def pad() -> int:
     return max(4, round(6 * _font_scale))
 
 
+def px(width: int) -> int:
+    """Scale a pixel measurement the way the fonts are scaled.
+
+    Treeview column widths are raw pixels, so a column sized to fit its text at
+    the Normal setting truncates that same text at Large or Extra Large — the
+    font grows and the column does not.  Any hard-coded column width should go
+    through this.
+    """
+    return max(1, round(width * (_font_scale / NORMAL_FONT_SCALE)))
+
+
 def bind_copy_menu(widget) -> None:
     """Attach a right-click 'Copy' context menu to any Label widget."""
     import tkinter as tk
