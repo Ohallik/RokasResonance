@@ -48,6 +48,10 @@ instruments over to a new year, why somebody is missing from a list. The user \
 guide is included below; answer from it and name the screen and the button. \
 Never invent a feature that is not in the guide.
 
+Contact details:
+- You know the children on this year's roster and the names of their parents and guardians, and you should use those names freely.
+- You are NOT given anybody's phone number, email address or home address, and you must never invent one or reconstruct one from a pattern you have seen. If you are asked for a way to contact a family, give the guardian's name and send the teacher to Manage Students, where the details are kept and always current.
+
 Response rules:
 - Lead with the answer first — never make them wait for it.
 - Use markdown **bold** on the single most important fact or number.
@@ -185,28 +189,29 @@ def _build_inventory_summary(db) -> str:
         if grade_str:
             lines.append(f"  By grade: {grade_str}")
         if students:
-            lines.append("  Students (last, first — grade, phone, parent contacts):")
+            # Names only — no phone numbers, no email addresses.
+            #
+            # Knowing that Leo Chen's guardian is Wei Chen is what makes him
+            # useful ("who do I ring about the trombone?"); shipping every
+            # family's phone and email to an API on every single message is a
+            # different thing entirely, and not something the teacher agreed
+            # to each time she asks which flutes are out.  He is told below to
+            # send her to Manage Students for the actual contact details,
+            # which is one click and always current.
+            lines.append("  Students (last, first — grade, guardian names):")
             for s in sorted(students, key=lambda x: ((x.get("last_name") or ""),
                                                      (x.get("first_name") or ""))):
                 name = f"{s.get('last_name') or ''}, {s.get('first_name') or ''}".strip(", ")
                 grade = s.get("grade") or ""
-                phone = s.get("phone") or ""
-                contacts = []
-                for n, ph, em in (("parent1_name", "parent1_phone", "parent1_email"),
-                                  ("parent2_name", "parent2_phone", "parent2_email")):
-                    if s.get(n):
-                        p = s[n]
-                        if s.get(ph):
-                            p += f" {s[ph]}"
-                        if s.get(em):
-                            p += f" {s[em]}"
-                        contacts.append(p)
+                guardians = [s[n] for n in ("parent1_name", "parent2_name")
+                             if s.get(n)]
                 line = f"    {name}" + (f" — Grade {grade}" if grade else "")
-                if phone:
-                    line += f" Ph:{phone}"
-                if contacts:
-                    line += f" Parents: {'; '.join(contacts)}"
+                if guardians:
+                    line += f" Guardian(s): {'; '.join(guardians)}"
                 lines.append(line)
+            lines.append("  (Guardian phone numbers and email addresses are "
+                         "deliberately not listed here — see the rule on "
+                         "contact details.)")
         else:
             lines.append("  (No students on this year's roster yet — the class "
                          "lists have not been imported.)")
