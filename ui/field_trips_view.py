@@ -426,7 +426,8 @@ class FieldTripsView(ttk.Frame):
     def _chaperones(self, t):
         attending = self._attending(t)
         dlg = _ChaperonesDialog(self, self.db, dict(t), self._students(),
-                                len(attending), attending=attending)
+                                len(attending), attending=attending,
+                                base_dir=self.base_dir)
         self.wait_window(dlg)
         self.refresh()
 
@@ -899,9 +900,11 @@ class _RosterCostsDialog(ttk.Toplevel):
 # ═══════════════════════════════════════════ Chaperones ══════════════════════
 
 class _ChaperonesDialog(ttk.Toplevel):
-    def __init__(self, parent, db, trip, students, going, attending=None):
+    def __init__(self, parent, db, trip, students, going, attending=None,
+                 base_dir=None):
         super().__init__(parent.winfo_toplevel())
         self.db = db
+        self.base_dir = base_dir
         self.trip = trip
         self.students = students
         self.attending = attending or []
@@ -975,9 +978,58 @@ class _ChaperonesDialog(ttk.Toplevel):
         ttk.Button(brow, text="⟳ Fill Missing Contacts",
                    bootstyle=(PRIMARY, OUTLINE),
                    command=self._fill_missing).pack(side=LEFT, padx=4)
+        ttk.Button(brow, text="✉ Email Chaperones",
+                   bootstyle=(INFO, OUTLINE),
+                   command=self._email).pack(side=LEFT, padx=4)
 
         self._reload()
         fit_window(self, 680, 480)
+
+    def _email(self):
+        """Open a blank message to this trip's chaperones.
+
+        Addresses go in BCC and the teacher's own goes in To, the same as
+        every other list Roka sends: a dozen parents in the To line shows
+        each of them all the others' addresses.  Subject and body are left
+        empty on purpose -- this is for whatever she needs to say today, not
+        a template.
+        """
+        chaps = [dict(c) for c in self.db.get_trip_chaperones(self.trip["id"])]
+        if not chaps:
+            Messagebox.show_info(
+                "No chaperones have signed up for this trip yet.",
+                title="Nobody to email", parent=self)
+            return
+
+        # Dedupe case-insensitively; two parents of the same child are often
+        # entered with the same address.
+        seen, addresses, missing = set(), [], []
+        for c in chaps:
+            addr = (c.get("email") or "").strip()
+            if not addr:
+                missing.append(c.get("name") or "(unnamed)")
+                continue
+            if addr.lower() not in seen:
+                seen.add(addr.lower())
+                addresses.append(addr)
+
+        if not addresses:
+            Messagebox.show_warning(
+                f"None of the {len(chaps)} chaperone(s) has an email address "
+                "on file.\n\nTry Fill Missing Contacts, or add the "
+                "addresses in the list above.",
+                title="No addresses", parent=self)
+            return
+
+        from ui.email_compose import open_message
+        note = open_message(self, self.base_dir, subject="", body="",
+                            bcc=addresses)
+        if note and missing:
+            note += (f"  ({len(missing)} without an address: "
+                     f"{', '.join(missing[:4])}"
+                     f"{'...' if len(missing) > 4 else ''})")
+        if note:
+            Messagebox.show_info(note, title="Email Chaperones", parent=self)
 
     def _reload(self):
         self.tree.delete(*self.tree.get_children())
