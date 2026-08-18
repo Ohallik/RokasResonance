@@ -2984,7 +2984,9 @@ class _LLMValidateDialog(ttk.Toplevel):
                             max_tokens=4096, temperature=0.2,
                         ).choices[0].message.content
                 elif not llm_client._is_anthropic_model(model) and anthropic_key:
-                    fallback = llm_client.ANTHROPIC_MODELS[1]  # claude-sonnet
+                    # By name, not by position -- this was ANTHROPIC_MODELS[1]
+                    # and trusted the list never to be reordered.
+                    fallback = llm_client.CLAUDE_SONNET
                     self.after(0, self._log_msg,
                                f"  Content filter blocked — retrying with {fallback}...")
                     text = llm_client._query_with_images_anthropic(

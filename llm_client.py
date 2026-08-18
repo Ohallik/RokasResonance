@@ -15,17 +15,83 @@ from ui.settings_dialog import load_settings
 
 ENDPOINT = "https://models.github.ai/inference"
 DEFAULT_MODEL = "openai/gpt-4o"
-_ENRICH_MODEL = "claude-haiku-4-5-20251001"  # always use for enrichment (cheapest)
+# Named, so that nothing has to know a position in the list below.  The image
+# fallback in music_manager used to reach for ANTHROPIC_MODELS[1] and trust it
+# to be a Sonnet, which is only true until somebody reorders the list.
+CLAUDE_HAIKU  = "claude-haiku-4-5"
+CLAUDE_SONNET = "claude-sonnet-5"
+CLAUDE_OPUS   = "claude-opus-5"
 
+_ENRICH_MODEL = CLAUDE_HAIKU  # always use for enrichment (cheapest)
+
+# Cheapest first, so the top of the dropdown stays the safe default.  Model IDs
+# carry no date suffix; the dated Haiku is kept at the end only because saved
+# settings may still name it, and a teacher should not have her chosen model
+# silently disappear from the list.
 ANTHROPIC_MODELS = [
-    "claude-haiku-4-5-20251001",
-    "claude-sonnet-4-6",
-    "claude-opus-4-6",
+    CLAUDE_HAIKU,                  # fast, cheapest — the default
+    CLAUDE_SONNET,                 # balanced
+    CLAUDE_OPUS,                   # most capable
+    "claude-opus-4-8",             # previous generation
     "claude-opus-4-7",
-    "claude-opus-4-8",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5-20251001",   # legacy ID, kept so old settings still match
 ]
 
 _MAX_RETRIES = 10  # high — prefer waiting over giving up
+
+
+# ── Answer extraction ────────────────────────────────────────────────────────
+def _answer(msg) -> str:
+    """The reply text out of an Anthropic response.
+
+    This used to be `.content[0].text`, which assumes the first block in the
+    response is the answer.  On any model that thinks -- which now includes
+    everything in the Opus 5 family, where thinking is on unless it is turned
+    off -- the first block is a thinking block and has no .text at all, so the
+    old line raised AttributeError and Reginald simply broke.  Walk the blocks
+    and take the first real text one.
+    """
+    for block in getattr(msg, "content", None) or []:
+        if getattr(block, "type", None) == "text":
+            return block.text
+    # Nothing to read.  Being told the answer was cut off is far more use than
+    # an empty reply that looks like the model had nothing to say.
+    if getattr(msg, "stop_reason", None) == "max_tokens":
+        raise RuntimeError(
+            "The model hit its length limit before finishing an answer. "
+            "Try a shorter question, or a model that thinks less."
+        )
+    if getattr(msg, "stop_reason", None) == "refusal":
+        raise RuntimeError("The model declined to answer that one.")
+    return ""
+
+
+# ── Prompt caching ───────────────────────────────────────────────────────────
+# Reginald's system prompt is the whole of his knowledge -- the inventory, the
+# roster, the repairs, the fees, the calendar and the entire user guide -- and
+# it is rebuilt identically on every message.  Sent as a plain string it was
+# re-read and re-billed in full each time, so a ten message conversation paid
+# for that same ~30k tokens ten times over.
+#
+# Marking it cacheable means the first message writes it once and the rest of
+# the conversation reads it back at about a tenth of the price, and faster,
+# because the model is not re-ingesting 30k tokens before it starts answering.
+#
+# Caching is a prefix match: the cached text has to be byte-identical, so
+# anything that varies per message must come after it.  It does -- the question
+# lives in `messages`, and everything here is the system prompt.
+_CACHE_MIN_CHARS = 4096  # the API will not cache a prefix under ~1k tokens
+
+
+def _cacheable(system_prompt):
+    """Wrap a system prompt so the API caches it, if it is worth caching."""
+    if not system_prompt or len(system_prompt) < _CACHE_MIN_CHARS:
+        return system_prompt          # too short to cache; send it as it is
+    return [{"type": "text",
+             "text": system_prompt,
+             "cache_control": {"type": "ephemeral"}}]
 
 
 # ── Citation markup ──────────────────────────────────────────────────────────
@@ -188,8 +254,16 @@ def _get_anthropic_key(base_dir: str) -> str:
     return (settings.get("llm") or {}).get("anthropic_api_key", "").strip()
 
 
+# 1024 was fine when no model thought before answering.  Thinking tokens count
+# against max_tokens, so on an Opus 5 the budget could be gone before the reply
+# even started and the answer came back truncated.  This is a cap, not a target
+# -- output is billed on what is actually produced -- so the headroom is free.
+_DEFAULT_MAX_TOKENS = 4096
+
+
 def _query_anthropic(base_dir: str, model: str, user_prompt: str,
-                     system_prompt: str = None, on_retry=None, max_tokens: int = 1024) -> str:
+                     system_prompt: str = None, on_retry=None,
+                     max_tokens: int = _DEFAULT_MAX_TOKENS) -> str:
     """Send a text-only query via the Anthropic API."""
     try:
         from anthropic import Anthropic, RateLimitError, APIStatusError
@@ -209,12 +283,12 @@ def _query_anthropic(base_dir: str, model: str, user_prompt: str,
         messages=[{"role": "user", "content": user_prompt}],
     )
     if system_prompt:
-        kwargs["system"] = system_prompt  # Anthropic: system is a top-level param
+        kwargs["system"] = _cacheable(system_prompt)  # Anthropic: system is a top-level param
 
     last_exc = None
     for attempt in range(_MAX_RETRIES):
         try:
-            return client.messages.create(**kwargs).content[0].text
+            return _answer(client.messages.create(**kwargs))
         except RateLimitError as e:
             last_exc = e
             delay = _retry_delay(e, attempt, model)
@@ -265,7 +339,7 @@ def _query_anthropic_with_search(base_dir: str, model: str, user_prompt: str,
         }],
     )
     if system_prompt:
-        kwargs["system"] = system_prompt
+        kwargs["system"] = _cacheable(system_prompt)
 
     last_exc = None
     for attempt in range(_MAX_RETRIES):
@@ -327,12 +401,12 @@ def _query_with_images_anthropic(base_dir: str, model: str, user_prompt: str,
         messages=[{"role": "user", "content": content}],
     )
     if system_prompt:
-        kwargs["system"] = system_prompt
+        kwargs["system"] = _cacheable(system_prompt)
 
     last_exc = None
     for attempt in range(_MAX_RETRIES):
         try:
-            return client.messages.create(**kwargs).content[0].text
+            return _answer(client.messages.create(**kwargs))
         except RateLimitError as e:
             last_exc = e
             delay = _retry_delay(e, attempt, model)
@@ -432,7 +506,7 @@ def _make_client(api_key: str):
 
 @_clean_output
 def query(base_dir: str, user_prompt: str, system_prompt: str = None, on_retry=None,
-          max_tokens: int = 1024) -> str:
+          max_tokens: int = _DEFAULT_MAX_TOKENS) -> str:
     """
     Send a single query to the LLM and return the response text.
 

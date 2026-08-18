@@ -17,11 +17,14 @@ GITHUB_MODELS_CATALOG = "https://models.github.ai/catalog/models"
 
 # Anthropic Claude models (direct API, separate key)
 ANTHROPIC_MODELS = [
-    "claude-haiku-4-5-20251001",   # fast, low cost
-    "claude-sonnet-4-6",            # balanced quality/speed
-    "claude-opus-4-6",              # most capable (older)
-    "claude-opus-4-7",              # most capable (previous)
-    "claude-opus-4-8",              # most capable (latest)
+    "claude-haiku-4-5",             # fast, low cost — the default
+    "claude-sonnet-5",              # balanced quality/speed
+    "claude-opus-5",                # most capable
+    "claude-opus-4-8",              # previous generation
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5-20251001",    # legacy ID, kept so saved settings match
 ]
 
 # Default model list (publisher/model format) — shown before "Fetch Models" is clicked.
