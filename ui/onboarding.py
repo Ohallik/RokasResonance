@@ -22,11 +22,26 @@ from ui.theme import muted_fg, fs, fit_window
 from ui.lesson_plans_hub import _TMPL_DISPLAY
 
 # District is assumed BSD; this seeds the school picker but stays editable.
+#
+# Full names on purpose.  Everyone shortens Sherwood Forest to "Sherwood" in
+# conversation, and a handoff file written by a teacher who typed the short
+# form will not match one written by a teacher who typed the long form.  The
+# picker offers one spelling so the two never diverge.
 BSD_SCHOOLS = [
+    # Secondary
     "Chinook Middle School", "Highland Middle School", "Odle Middle School",
     "Tillicum Middle School", "Tyee Middle School",
     "Bellevue High School", "Interlake High School", "International School",
     "Newport High School", "Sammamish High School", "Big Picture School",
+    # Elementary — the sixteen with a 5th grade band and/or orchestra.
+    "Ardmore Elementary School", "Bennett Elementary School",
+    "Cherry Crest Elementary School", "Clyde Hill Elementary School",
+    "Enatai Elementary School", "Jing Mei Elementary School",
+    "Lake Hills Elementary School", "Medina Elementary School",
+    "Newport Heights Elementary School", "Phantom Lake Elementary School",
+    "Puesta del Sol Elementary School", "Sherwood Forest Elementary School",
+    "Somerset Elementary School", "Spiritridge Elementary School",
+    "Stevenson Elementary School", "Woodridge Elementary School",
 ]
 
 FOCUS = [("Band", "band"), ("Choir", "choir"), ("Orchestra", "orchestra"),
