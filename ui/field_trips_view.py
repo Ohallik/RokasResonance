@@ -159,6 +159,13 @@ class FieldTripsView(ttk.Frame):
     # ── Card overview ────────────────────────────────────────────────────────
 
     def refresh(self):
+        # Every dialog on this tab calls back here as it closes, and by then
+        # the tab itself may be gone: closing Teacher Tools, or switching the
+        # year, destroys and rebuilds the whole notebook while a dialog is
+        # still open.  Redrawing a tab that no longer exists is a crash, so
+        # check before touching anything.
+        if not (self.winfo_exists() and self._cards.winfo_exists()):
+            return
         for w in self._cards.winfo_children():
             w.destroy()
         for w in self._done_rows.winfo_children():

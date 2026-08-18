@@ -221,6 +221,12 @@ class ConcertsView(ttk.Frame):
     # ── Card overview ────────────────────────────────────────────────────────
 
     def refresh(self):
+        # The dialogs on this tab call back here as they close, by which time
+        # the tab may have been destroyed underneath them (Teacher Tools shut,
+        # or the year switched, both of which rebuild the notebook).  Redrawing
+        # a tab that no longer exists is a crash.
+        if not (self.winfo_exists() and self._cards.winfo_exists()):
+            return
         for w in self._cards.winfo_children():
             w.destroy()
         for w in self._done_rows.winfo_children():
