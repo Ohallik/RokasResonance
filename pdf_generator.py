@@ -538,8 +538,8 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     story.append(_row_repairs(s))
     story.append(Spacer(1, 8))
 
-    # ── To Students and Parents ────────────────────────────────────────────
-    story.append(_p("<u><b>To Students and Parents:</b></u>", s["b10"]))
+    # ── To Students and Parents/Guardians ──────────────────────────────────
+    story.append(_p("<u><b>To Students and Parents/Guardians:</b></u>", s["b10"]))
     story.append(Spacer(1, 2))
     story.append(_p(
         f"Besides the maintenance fee, of <u><b>{MAINT_YEAR} for the school year and "
@@ -552,8 +552,8 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     terms = [
         "We expect normal wear, but we also expect that the instrument will be returned "
         "in as good a condition as it was when you checked it out.",
-        "<u>Any repairs necessary due to accident or misuse are you and your parents' "
-        "responsibility.</u>",
+        "<u>Any repairs necessary due to accident or misuse are you and your "
+        "parents/guardians' responsibility.</u>",
         "Should you leave Bellevue, you must return the instrument to your music instructor.",
         "You may keep the instrument out over the summer provided you make arrangements "
         "with your instructor.",
@@ -570,7 +570,8 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
         "When the instrument is stored in a school building and it is damaged by fire, "
         "the school district insurance will cover its loss or damage. There is no school "
         "district insurance in effect to cover losses due to damage by accidents, "
-        "mistreatment, and loss by theft. It is you and your parents' responsibility.",
+        "mistreatment, and loss by theft. It is you and your parents/guardians' "
+        "responsibility.",
         s["n9"]
     ))
     story.append(Spacer(1, 8))
