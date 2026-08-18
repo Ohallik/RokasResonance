@@ -38,6 +38,11 @@ class LessonPlansHub(ttk.Frame):
         header = ttk.Frame(self, bootstyle=PRIMARY)
         header.pack(fill=X)
 
+        # The ? follows the open tab, so it lands on seating, concerts or
+        # agendas rather than on a general "Teacher Tools" page.
+        from ui.help_system import add_help_button
+        add_help_button(header, self._help_topic)
+
         # Buttons are packed BEFORE the title so a narrow window truncates the
         # description rather than pushing the buttons off the right edge.
         # New School Year lives on the main hub now — it rolls the whole
@@ -106,6 +111,21 @@ class LessonPlansHub(ttk.Frame):
                 "program_type", "band")
         except Exception:
             return "band"
+
+    _HELP_TOPICS = {"seating": "seating", "percussion": "percussion",
+                    "concerts": "concerts", "field": "fieldtrips",
+                    "agendas": "agendas"}
+
+    def _help_topic(self):
+        """Which section of the guide the ? should open, for the tab on show."""
+        try:
+            label = self._notebook.tab(self._notebook.select(), "text").lower()
+        except Exception:
+            return "tools"
+        for word, topic in self._HELP_TOPICS.items():
+            if word in label:
+                return topic
+        return "tools"
 
     def _classes(self):
         import class_registry

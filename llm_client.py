@@ -6,7 +6,9 @@ Auth: GITHUB_TOKEN env var (fallback) or key stored in settings.json
 SDK: openai with custom base_url
 """
 
+import functools
 import os
+import re
 import time
 
 from ui.settings_dialog import load_settings
@@ -24,6 +26,52 @@ ANTHROPIC_MODELS = [
 ]
 
 _MAX_RETRIES = 10  # high — prefer waiting over giving up
+
+
+# ── Citation markup ──────────────────────────────────────────────────────────
+# A web-search answer comes back with its sources marked up in the text:
+#     <cite index="4-14">A Duke Ellington classic…</cite>
+# That is meant for a program that renders footnotes.  Here the text goes
+# straight into a field a teacher reads and edits, so the tags have to come off
+# before anything stores them.  Only the wrappers go; the words inside stay.
+_CITE_PATTERNS = (
+    re.compile(r"</?cite\b[^>]*>", re.I),          # <cite index="1-3">  </cite>
+    re.compile(r"</?citations?\b[^>]*>", re.I),    # <citation> / <citations>
+    re.compile(r"\[cite_start\]", re.I),           # marker some tooling emits
+    re.compile(r"\[cite:[^\]]*\]", re.I),          # [cite: 3]
+    re.compile(r"【[^】]*†[^】]*】"),                 # 【4:0†source】
+)
+
+
+def strip_citation_markup(text):
+    """Model output with its citation tags taken off, and the spacing tidied.
+
+    Safe to run twice, and safe on text that never had any: nothing but those
+    specific tags is touched, so a piece called "Fanfare <3" survives."""
+    if not text or not isinstance(text, str):
+        return text
+    cleaned = text
+    for pattern in _CITE_PATTERNS:
+        cleaned = pattern.sub("", cleaned)
+    if cleaned == text:
+        return text
+    # Removing a tag can leave a double space, or a gap before punctuation.
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"[ \t]+([,.;:!?])", r"\1", cleaned)
+    cleaned = re.sub(r"[ \t]+$", "", cleaned, flags=re.M)
+    return cleaned.strip()
+
+
+def _clean_output(fn):
+    """Take citation markup off whatever this query function returns.
+
+    Applied to every public query so a new caller cannot forget it; running it
+    twice on the same string changes nothing."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        return strip_citation_markup(fn(*args, **kwargs))
+    return wrapper
+
 
 # Fallback base delay (seconds) per model family when no Retry-After header is present.
 # Actual delay = base * 2^attempt  (attempt 0..5 → 1×, 2×, 4×, 8×, 16×, 32×)
@@ -382,6 +430,7 @@ def _make_client(api_key: str):
     return OpenAI(base_url=ENDPOINT, api_key=api_key)
 
 
+@_clean_output
 def query(base_dir: str, user_prompt: str, system_prompt: str = None, on_retry=None,
           max_tokens: int = 1024) -> str:
     """
@@ -452,6 +501,7 @@ def query(base_dir: str, user_prompt: str, system_prompt: str = None, on_retry=N
     raise last_exc
 
 
+@_clean_output
 def query_with_search(base_dir: str, user_prompt: str,
                       system_prompt: str = None, on_retry=None) -> str:
     """
@@ -469,6 +519,7 @@ def query_with_search(base_dir: str, user_prompt: str,
     return query(base_dir, user_prompt, system_prompt, on_retry)
 
 
+@_clean_output
 def query_haiku(base_dir: str, user_prompt: str,
                 system_prompt: str = None, on_retry=None) -> str:
     """Query using Haiku regardless of selected model. Cheapest text-only option.
@@ -478,6 +529,7 @@ def query_haiku(base_dir: str, user_prompt: str,
     return _query_anthropic(base_dir, _ENRICH_MODEL, user_prompt, system_prompt, on_retry)
 
 
+@_clean_output
 def query_haiku_with_search(base_dir: str, user_prompt: str,
                              system_prompt: str = None, on_retry=None) -> str:
     """Haiku + 1 web search. Cheapest web-search option for enrichment.
@@ -489,6 +541,7 @@ def query_haiku_with_search(base_dir: str, user_prompt: str,
     )
 
 
+@_clean_output
 def query_with_images(
     base_dir: str,
     user_prompt: str,

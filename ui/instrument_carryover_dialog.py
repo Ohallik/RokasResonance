@@ -12,6 +12,13 @@ Each row offers the instrument they had plus every other AVAILABLE instrument of
 the same kind, so a flute player sees flutes and a trumpet player sees trumpets.
 String players can be moved up a size in one click, since a student who grew
 over the summer needs the next size, not the one they had.
+
+Only students who are on THIS year's roster are listed.  Last year's top class
+has moved on to the high school and their instruments come back to the shelf,
+so they must not appear here — and neither must anyone who chose not to
+continue.  That test is deliberately strict: a row that reaches this screen
+gets an instrument checked out and a rental fee billed, and billing the wrong
+child is far worse than leaving a returning one to be checked out by hand.
 """
 
 import tkinter as tk
@@ -33,6 +40,73 @@ def _is_usable(inst) -> bool:
     blob = ((inst.get("condition") or "") + " " +
             (inst.get("comments") or "")).lower()
     return not any(w in blob for w in _UNUSABLE)
+
+
+def _norm(text) -> str:
+    """A name flattened for comparison: case, punctuation and stray spaces are
+    all things a district export changes between years."""
+    return " ".join(str(text or "").replace(".", " ").replace(",", " ")
+                    .strip().lower().split())
+
+
+def _given_name(first) -> str:
+    """The part of a first name that survives a re-export.  Rosters carry
+    middle initials one year and drop them the next — 'Lincoln A.' and
+    'Lincoln' are the same child, so the initial is not part of the key."""
+    parts = [p for p in _norm(first).split() if len(p) > 1]
+    return parts[0] if parts else _norm(first)
+
+
+def _split_full_name(full):
+    """'Bryson D. Park' → ('Bryson D.', 'Park').
+
+    The surname is the LAST word, not the second one: splitting from the left
+    made 'D. Park' a surname, and nobody matched."""
+    parts = _norm(full).split()
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return "", parts[0]
+    return " ".join(parts[:-1]), parts[-1]
+
+
+def _numeric_grade(value):
+    text = str(value or "").strip()
+    return int(text) if text.isdigit() else None
+
+
+def _year_end_holdings(rows):
+    """One row per instrument a student was actually holding by June, rather
+    than one per check-out event.
+
+    A horn that went in for repair and came back, or a loaner swapped for a
+    better one, is ONE instrument across the year.  Carrying every event
+    forward would hand that student two horns and bill them twice.  Overlapping
+    loans are kept apart though — a sax player really does hold an alto, a
+    tenor and a bari at the same time — by threading each check-out onto a
+    "slot" that was free when it started, and keeping the last of each slot."""
+    groups = {}
+    for r in rows:
+        who = r.get("student_id") or _norm(r.get("student_name"))
+        groups.setdefault((who, isz.base_type(r.get("description") or "")),
+                          []).append(r)
+
+    keep = []
+    for group in groups.values():
+        group.sort(key=lambda r: ((r.get("date_assigned") or ""),
+                                  (r.get("checkout_id") or 0)))
+        slots = []                      # [(date that slot came free, row)]
+        for r in group:
+            out = r.get("date_assigned") or ""
+            back = (r.get("date_returned") or "").strip()
+            for i, (free_from, _held) in enumerate(slots):
+                if free_from and out >= free_from:
+                    slots[i] = (back, r)        # this one replaced that one
+                    break
+            else:
+                slots.append((back, r))         # held alongside the others
+        keep.extend(held for _free, held in slots)
+    return keep
 
 
 def _default_return_date() -> str:
@@ -61,12 +135,14 @@ def _label_for(inst) -> str:
 
 
 class InstrumentCarryOverDialog(ttk.Toplevel):
-    def __init__(self, parent, db, school_year=None):
+    def __init__(self, parent, db, school_year=None, base_dir=None):
         super().__init__(parent)
         self.db = db
+        self.base_dir = base_dir
         self.school_year = school_year or db.current_school_year()
         self.prior_year = db.previous_school_year(self.school_year)
         self.assigned = 0
+        self._year_start = db.school_year_bounds(self.school_year)[0]
 
         self.title("Carry Over Instrument Assignments")
         self.resizable(True, True)
@@ -74,6 +150,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         self.lift()
 
         self._rows = []
+        self._already = {}
         self._rolled = True
         self._build()
         self._load()
@@ -81,11 +158,42 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         from ui.theme import fit_window
         fit_window(self, 940, 660)
 
+    # ── the teacher's own setup ──────────────────────────────────────────────
+
+    def _program_type(self):
+        """band / orchestra / choir — an orchestra director gets the size-up
+        button on rows a band-shaped guess would skip."""
+        if getattr(self, "_cached_program", None) is None:
+            try:
+                from ui.settings_dialog import load_settings
+                self._cached_program = str(
+                    (load_settings(self.base_dir or ".").get("teacher") or {}
+                     ).get("program_type", "band")).strip().lower()
+            except Exception:
+                self._cached_program = "band"
+        return self._cached_program
+
+    def _fee_label(self):
+        """The school-year rental as the teacher has it priced — $75 unless
+        they changed the fee type."""
+        amount = 75.0
+        try:
+            for t in self.db.get_fee_types():
+                name = (t["name"] or "").lower()
+                if name.startswith("instrument rental") and "school year" in name:
+                    amount = float(t["default_amount"] or amount)
+                    break
+        except Exception:
+            pass
+        return f"${amount:,.2f}".replace(".00", "")
+
     # ── layout ───────────────────────────────────────────────────────────────
 
     def _build(self):
         hdr = ttk.Frame(self, bootstyle=PRIMARY)
         hdr.pack(fill=X)
+        from ui.help_system import add_help_button
+        add_help_button(hdr, "carryover")
         ttk.Label(hdr, text="🎺  Carry Over Instrument Assignments",
                   font=("Segoe UI", 13, "bold"),
                   bootstyle=(INVERSE, PRIMARY)).pack(pady=12, padx=16, anchor=W)
@@ -95,6 +203,18 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         self._intro = ttk.Label(
             top, text="", font=("Segoe UI", 9), wraplength=880, justify=LEFT)
         self._intro.pack(anchor=W)
+
+        # Helper hint: users should run the New School Year wizard before
+        # carrying forward assignments. Offer a quick link to open it.
+        hint_frame = ttk.Frame(top)
+        hint_frame.pack(fill=X, pady=(6, 0))
+        self._new_year_hint = ttk.Label(hint_frame,
+            text=("If you haven't run the New School Year wizard yet, "
+                  "do that first — it imports class lists and rolls students "
+                  "forward."), font=("Segoe UI", 8), foreground=muted_fg(), wraplength=760, justify=LEFT)
+        self._new_year_hint.pack(side=LEFT)
+        ttk.Button(hint_frame, text="Start New School Year…",
+                   bootstyle=(INFO, OUTLINE), command=self._open_year_wizard).pack(side=RIGHT)
 
         tools = ttk.Frame(self)
         tools.pack(fill=X, padx=16, pady=(6, 4))
@@ -116,7 +236,8 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         self._fee_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             fees, variable=self._fee_var, bootstyle=PRIMARY,
-            text="Add the instrument rental fee for each instrument assigned"
+            text=f"Bill the {self._fee_label()} school-year rental for each "
+                 "instrument assigned"
         ).pack(side=LEFT)
         ttk.Label(fees, text="(a student taking two instruments is billed twice; "
                              "untick only if these were already billed)",
@@ -172,61 +293,162 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                 text=f"No instrument assignments were recorded for "
                      f"{self.prior_year}, so there is nothing to carry forward.")
             self._apply_btn.config(state="disabled")
-            self._sizeup_btn.config(state="disabled")
             self._update_count()
             return
 
         self._intro.config(
-            text=f"These students had a school instrument in {self.prior_year}. "
-                 f"Ticked rows will be checked out for {self.school_year}. "
-                 f"Untick anyone who no longer needs one. Each row is one "
-                 f"instrument, so a student who had two still shows twice. "
-                 f"Students who have already left are unticked to start with.")
+            text=f"These students had a school instrument in {self.prior_year} "
+                 f"and are on the {self.school_year} roster. Ticked rows will be "
+                 f"checked out for {self.school_year} and billed the "
+                 f"{self._fee_label()} rental. Untick anyone who no longer needs "
+                 f"one. Each row is one instrument, so a student who really "
+                 f"keeps two is billed for both. Students who graduated or did "
+                 f"not continue are not listed at all.")
 
-        rows = [dict(r) for r in prior]
-        # Whether the roster has been rolled into the new year yet decides
-        # whether we can tell who has left.
-        self._rolled = any((r.get("student_year") or "") == self.school_year
-                           for r in rows)
+        # One row per instrument they finished the year with, not one per
+        # check-out event: repairs and swaps would otherwise each become a
+        # separate instrument to hand out and a separate fee to pay.
+        rows = _year_end_holdings([dict(r) for r in prior])
 
-        def enrolled(r):
-            if not r.get("student_active"):
-                return False
-            if not self._rolled:
-                return True        # can't tell yet; the note below says so
-            return (r.get("student_year") or "") == self.school_year
+        # Who is on THIS year's roster.  Resolved by identity rather than by the
+        # student id stored on the checkout: that id is last year's row, and a
+        # district CSV import creates a new row per year, which would make every
+        # returning student look like they had left.
+        #
+        # Only three keys count, and each must land on exactly ONE student:
+        #   1) district student ID     — respellings don't change it
+        #   2) full name               — middle initials normalised away
+        #   3) given name + surname    — 'Sandra Menchu Ixcotoyac' → Sandra …
+        # Looser keys were tried and are deliberately gone.  Matching on a
+        # surname alone handed a graduated Alan Chen's trombone to his brother
+        # Leo and billed Leo for it; a surname plus a first initial did the same
+        # for Asahel and Aneeka Satpathy.  A student the roster can't confirm is
+        # left off and checked out by hand.
+        cur_students = [dict(s) for s in self.db.get_all_students(self.school_year)]
+        by_sid, by_full, by_given = {}, {}, {}
+        for s in cur_students:
+            sid = str(s.get("student_id") or "").strip()
+            if sid:
+                by_sid.setdefault(sid, []).append(s)
+            last = _norm(s.get("last_name"))
+            if not last:
+                continue
+            for first in {_norm(s.get("first_name")), _norm(s.get("preferred_name"))}:
+                if first:
+                    by_full.setdefault((first, last), []).append(s)
+            for given in {_given_name(s.get("first_name")),
+                          _given_name(s.get("preferred_name"))}:
+                if given:
+                    by_given.setdefault((given, last), []).append(s)
 
-        keep_rows = [r for r in rows if enrolled(r)]
+        def only(bucket, key):
+            found = bucket.get(key) or []
+            return found[0] if len(found) == 1 else None
+
+        # The highest grade this program teaches, read off last year's roster —
+        # 8 for a middle school, 12 for a high school.  Trusted only when that
+        # roster spans three grades or more, because a handful of students left
+        # behind says nothing about where the program ends, and a wrong ceiling
+        # would quietly hide students who really are coming back.  Nobody is
+        # dropped on this test either way: a student above the ceiling is shown
+        # unticked, with the reason, for the teacher to judge.
+        top_grade = None
+        try:
+            last_roster = [dict(s) for s in self.db.get_all_students(
+                self.prior_year, include_inactive=True)]
+            grades = [g for g in (_numeric_grade(s.get("grade")) for s in last_roster)
+                      if g is not None]
+            if len(set(grades)) >= 3:
+                top_grade = max(grades)
+        except Exception:
+            top_grade = None
+
+        for r in rows:
+            first, last = r.get("first_name"), r.get("last_name")
+            if not (first and last):
+                first, last = _split_full_name(r.get("student_name"))
+            first, last = _norm(first), _norm(last)
+            district_id = str(r.get("district_id") or "").strip()
+
+            match, confidence = None, None
+            if district_id:
+                match = only(by_sid, district_id)
+                confidence = "id" if match else None
+            if not match and first and last:
+                match = only(by_full, (first, last))
+                confidence = "name" if match else None
+            if not match and first and last:
+                match = only(by_given, (_given_name(first), last))
+                confidence = "given" if match else None
+
+            grade = _numeric_grade(match.get("grade")) if match else None
+            r["_current"] = dict(match) if match else None
+            r["_match_confidence"] = confidence
+            r["_past_top"] = (top_grade if match and top_grade and grade
+                              and grade > top_grade else None)
+
+        keep_rows = [r for r in rows if r["_current"]]
+        # Only assignments that resolve to a current roster entry are listed.
+        # If nothing resolves, the user must run the New Year wizard or import
+        # the roster before carrying assignments forward.
+        self._rolled = bool(keep_rows)
         dropped = len(rows) - len(keep_rows)
+
+        # Anything this student already holds this year — so running the screen
+        # twice can't check the same horn out twice or bill the fee twice.
+        self._already = {}
+        try:
+            for c in self.db.get_open_instrument_checkouts():
+                c = dict(c)
+                self._already.setdefault(c.get("instrument_id"), []).append(c)
+        except Exception:
+            pass
 
         for row in keep_rows:
             self._add_row(row, self._options_for(row, available, in_use))
 
         if not keep_rows:
             self._intro.config(
-                text=f"Everyone who had an instrument in {self.prior_year} has "
-                     "since left, so there is nothing to carry forward.")
+                text=(f"No students from {self.prior_year} are on the "
+                      f"{self.school_year} roster, so there is nothing to carry "
+                      "forward. Run the New Year wizard (or import this year's "
+                      "class lists) first — carry-over only offers students it "
+                      "can confirm are still in your program."))
             self._apply_btn.config(state="disabled")
-        elif not self._rolled:
-            self._intro.config(
-                text=self._intro.cget("text")
-                + f"  (Your roster is still on {self.prior_year}. Run the New "
-                  "Year wizard first and graduating students will drop off this "
-                  "list automatically.)")
         elif dropped:
             self._intro.config(
                 text=self._intro.cget("text")
-                + f"  ({dropped} assignment(s) belonged to students who have "
-                  "since graduated or left, and are not listed.)")
+                + f"  ({dropped} instrument(s) belonged to students who are not "
+                  f"on the {self.school_year} roster — graduated or not "
+                  "continuing — and are not listed.)")
         self._update_count()
+
+    def _held_by(self, row, instrument_id):
+        """The open check-out on this instrument that belongs to this same
+        student, if there is one.
+
+        Instruments kept over the summer are still signed out, so without this
+        a student's own horn would come back to them marked "already with
+        <themself>" — and assigning it would open a second loan on top of the
+        first."""
+        cur = row.get("_current") or {}
+        ids = {i for i in (cur.get("id"), row.get("student_id")) if i is not None}
+        names = {n for n in (_norm(f"{cur.get('first_name') or ''} "
+                                   f"{cur.get('last_name') or ''}"),
+                             _norm(row.get("student_name"))) if n}
+        for c in self._already.get(instrument_id, []):
+            if c.get("student_id") in ids or _norm(c.get("student_name")) in names:
+                return c
+        return None
 
     def _options_for(self, row, available, in_use):
         """Free instruments of the same kind, closest match first, followed by
         same-kind instruments someone else already holds.  Sharing one
         instrument between two students is unusual but sometimes the only
-        option, so it is offered last and clearly marked rather than hidden."""
+        option, so it is offered last and clearly marked rather than hidden.
+
+        An instrument this student is already holding counts as free to them."""
         wanted = row.get("description") or ""
-        prior_id = row.get("instrument_id")
 
         def collect(source, shared):
             out = []
@@ -235,23 +457,40 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                 if rank > 1:        # same instrument, not merely the same family
                     continue
                 label = _label_for(inst)
-                if shared:
+                mine = self._held_by(row, inst["id"]) if shared else None
+                if mine:
+                    label += "  — still has it"
+                elif shared:
                     holder = (inst.get("checked_out_to") or "someone else").strip()
                     label = f"⚠ {label}  — already with {holder}"
                 out.append({
-                    "label": label, "id": inst["id"], "shared": shared,
+                    "label": label, "id": inst["id"],
+                    "shared": bool(shared and not mine), "mine": mine,
                     "size": (inst.get("size") or ""),
                     "desc": (inst.get("description") or ""),
                     "sort": (rank, isz.size_sort_key(inst.get("size") or ""), label),
                 })
             return out
 
-        free = collect(available, False)
-        shared = collect(in_use, True)
+        picked = collect(available, False) + collect(in_use, True)
+        free = [o for o in picked if not o["shared"]]
+        shared = [o for o in picked if o["shared"]]
         free.sort(key=lambda o: o["sort"])
         shared.sort(key=lambda o: o["sort"])
+        options = free + shared
 
-        return free + shared
+        # Two untagged flutes read as the same line, and the teacher has no way
+        # to tell which one they just picked.  Number the repeats.
+        counts = {}
+        for o in options:
+            counts[o["label"]] = counts.get(o["label"], 0) + 1
+        seen = {}
+        for o in options:
+            if counts[o["label"]] > 1:
+                base = o["label"]
+                seen[base] = seen.get(base, 0) + 1
+                o["label"] = f"{base}  ({seen[base]} of {counts[base]})"
+        return options
 
     def _add_row(self, row, options):
         f = ttk.Frame(self._list)
@@ -263,11 +502,27 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                              command=self._update_count)
         cb.pack(side=LEFT, padx=(2, 4))
 
-        name = (row.get("student_name") or "(unknown)").strip()
-        grade = (row.get("grade") or "").strip()
+        cur = row.get("_current") or {}
+        name = ((cur.get("first_name") and
+                 f"{cur['first_name']} {cur.get('last_name') or ''}".strip())
+                or (row.get("student_name") or "(unknown)").strip())
+        # This year's grade, not the one they were in when they borrowed it.
+        grade = str(cur.get("grade") or row.get("grade") or "").strip()
         who = f"{name}" + (f"  (Gr {grade})" if grade else "")
-        ttk.Label(f, text=who, width=26, anchor=W,
-                  font=("Segoe UI", 9)).pack(side=LEFT, padx=2)
+        lbl = ttk.Label(f, text=who, width=26, anchor=W,
+                  font=("Segoe UI", 9))
+        lbl.pack(side=LEFT, padx=2)
+
+        # How this student was recognised on the new roster.  Shown because the
+        # teacher is the only one who can spot a wrong pairing, and the fee
+        # follows whoever is on the row.
+        conf_text = {"id": "matched on student ID",
+                     "name": "matched on name",
+                     "given": "matched on first + last name"}.get(
+            row.get("_match_confidence") or "", "")
+        if conf_text:
+            ttk.Label(f, text=conf_text, font=("Segoe UI", 8),
+                      foreground=muted_fg()).pack(side=LEFT, padx=(6, 10))
 
         had = (row.get("description") or "").strip()
         if row.get("size"):
@@ -285,20 +540,23 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         combo.pack(side=LEFT, padx=2)
 
         # Default to the very instrument they had, when it is still free.
+        # Selection is tracked by POSITION, never by the text in the box: two
+        # untagged flutes can read identically, and looking the choice back up
+        # by its label handed the student whichever one came first.
         prior_id = row.get("instrument_id")
-        default = next((o["label"] for o in options
-                        if o["id"] == prior_id and not o["shared"]), None)
-        free_labels = [o["label"] for o in options if not o["shared"]]
-        if default:
-            choice.set(default)
-        elif free_labels:
-            choice.set(free_labels[0])
+        free_at = [i for i, o in enumerate(options) if not o["shared"]]
+        default = next((i for i in free_at if options[i]["id"] == prior_id), None)
+        if default is not None:
+            combo.current(default)
+        elif free_at:
+            combo.current(free_at[0])
         elif labels:
-            choice.set(labels[0])          # only a shared one is left
+            combo.current(0)               # only a shared one is left
         else:
             combo.config(state="disabled")
             keep.set(False)
             cb.config(state="disabled")
+        free_labels = [options[i]["label"] for i in free_at]
 
         # Say plainly when there is nothing else of this kind to switch to, so
         # an unchangeable dropdown reads as a fact rather than a glitch.
@@ -311,8 +569,31 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         elif not alternatives:
             note = ("no additional instruments available"
                     if free_labels else "none free — sharing only")
+
+        # Already carried over — a second run must not check the same horn out
+        # twice or bill the rental fee twice, so the row starts unticked.  A
+        # loan begun this year says so by its date; one that simply ran on from
+        # the summer says so by the note carry-over left on it.
+        held = self._held_by(row, prior_id)
+        done = bool(held and ((held.get("date_assigned") or "") >= self._year_start
+                              or f"Carried over to {self.school_year}"
+                              in (held.get("notes") or "")))
+        if done:
+            keep.set(False)
+            note = "already assigned this year"
+
+        # Still on the roster, but a grade above where the program ends: most
+        # likely a leftover row for someone who has moved up to the high
+        # school.  Shown rather than hidden — the teacher knows which it is —
+        # but never ticked, because ticking it bills them.
+        past = row.get("_past_top")
+        if past:
+            keep.set(False)
+            note = f"Gr {grade} — past Gr {past}; has this student moved on?"
+
         entry = {
             "data": row, "keep": keep, "choice": choice,
+            "done": done or bool(past),
             "options": options, "combo": combo, "sizeup_btn": None,
         }
 
@@ -336,6 +617,10 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
 
     def _set_all(self, value):
         for r in self._rows:
+            # Rows already assigned this year stay off: Tick All is a
+            # convenience, not a reason to bill somebody twice.
+            if r.get("done") and value:
+                continue
             if str(r["combo"].cget("state")) != "disabled":
                 r["keep"].set(value)
         self._update_count()
@@ -344,16 +629,21 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         n = sum(1 for r in self._rows if r["keep"].get())
         self._count_lbl.config(text=f"{n} of {len(self._rows)} to assign")
 
-    @staticmethod
-    def _bigger_option(row, options):
+    def _bigger_option(self, row, options):
         """The smallest free instrument of the same kind that is genuinely
         larger than the one this student had, or None.
 
         Deliberately not "the next size in the catalogue": hardly any school
         owns a 7/8 violin, so a student outgrowing a 3/4 should be offered the
-        4/4 that is actually on the shelf."""
+        4/4 that is actually on the shelf.
+
+        Sizing up is a string thing, so it is offered on string rows for any
+        teacher.  An orchestra director gets it on every sized instrument they
+        own, since their whole inventory is sized and a fractional cello may
+        sit under a category a band-shaped guess doesn't recognise."""
         desc = row.get("description") or ""
-        if (row.get("category") or "").strip().lower() != "strings" and \
+        if self._program_type() != "orchestra" and \
+                (row.get("category") or "").strip().lower() != "strings" and \
                 isz.family_for(desc) != "Strings":
             return None
         same_kind = [o for o in options
@@ -371,7 +661,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         bigger = self._bigger_option(entry["data"], entry["options"])
         if bigger is None:
             return
-        entry["choice"].set(bigger["label"])
+        entry["combo"].current(entry["options"].index(bigger))
         entry["sizeup_btn"].config(state="disabled")
 
     def _apply(self):
@@ -379,11 +669,10 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         for r in self._rows:
             if not r["keep"].get():
                 continue
-            label = r["choice"].get()
-            opt = next((o for o in r["options"] if o["label"] == label), None)
-            if opt is None:
+            i = r["combo"].current()
+            if i is None or i < 0 or i >= len(r["options"]):
                 continue
-            picks.append((r["data"], opt))
+            picks.append((r["data"], r["options"][i]))
 
         if not picks:
             Messagebox.show_warning("Nothing is ticked to assign.",
@@ -422,21 +711,70 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         today = datetime.today().strftime("%Y-%m-%d")
         due = _default_return_date()
         charge = self._fee_var.get()
-        done, failed = 0, []
+        done, kept, failed = 0, 0, []
         for row, opt in picks:
             try:
+                cur = row.get("_current") or {}
+                # Check out against THIS year's student record, so the loan and
+                # its rental fee land on the roster the teacher is looking at.
+                sid = cur.get("id") or row.get("student_id")
+                sname = ((cur.get("first_name") and
+                          f"{cur['first_name']} {cur.get('last_name') or ''}".strip())
+                         or row.get("student_name") or "")
+                if opt.get("mine"):
+                    # They kept it over the summer and it never came back, so
+                    # the loan is already open.  Run it on into this year and
+                    # bill the new year's fee, rather than opening a second
+                    # loan on an instrument that never came back to the shelf.
+                    self.db.carry_checkout_into_year(
+                        opt["mine"].get("checkout_id"), self.school_year, due)
+                    if charge and sid:
+                        self.db.add_rental_fee(sid, today, "school_year",
+                                               per_instrument=True)
+                    kept += 1
+                    continue
                 self.db.checkout_instrument(
-                    opt["id"], row.get("student_id"),
-                    row.get("student_name") or "", today,
+                    opt["id"], sid, sname, today,
                     notes=f"Carried over from {self.prior_year}",
                     due_date=due, charge_fee=charge, fee_per_instrument=True)
                 done += 1
             except Exception as e:
                 failed.append(f"  • {row.get('student_name')}: {e}")
 
-        self.assigned = done
+        self.assigned = done + kept
         msg = f"Checked out {done} instrument(s) for {self.school_year}."
+        if kept:
+            msg += (f"\n\n{kept} student(s) already had their instrument from "
+                    "over the summer — those loans stay as they are"
+                    + (", and only the new year's fee was added." if charge
+                       else "."))
         if failed:
             msg += "\n\nCouldn't assign:\n" + "\n".join(failed[:8])
         Messagebox.show_info(msg, title="Assignments Made", parent=self)
         self.destroy()
+
+    def _open_year_wizard(self):
+        """Open the global New School Year wizard and refresh matches on return."""
+        try:
+            from ui.year_wizard import NewSchoolYearWizard
+            from lesson_plan_db import current_school_year
+        except Exception:
+            Messagebox.show_error("Couldn't open the New School Year wizard.", parent=self)
+            return
+        try:
+            years = self.db.get_school_years()
+        except Exception:
+            years = []
+        current = years[0] if years else current_school_year()
+        wiz = NewSchoolYearWizard(self.winfo_toplevel(), self.db, self.base_dir or ".", current)
+        self.winfo_toplevel().wait_window(wiz)
+        # If a new year was created or class lists imported, refresh matching.
+        if getattr(wiz, "new_year", None) or getattr(wiz, "_imports", None):
+            try:
+                # Rebuild rows to pick up any newly imported roster
+                for child in list(self._list.winfo_children()):
+                    child.destroy()
+            except Exception:
+                pass
+            self._rows = []
+            self._load()

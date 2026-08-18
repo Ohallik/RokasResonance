@@ -73,6 +73,8 @@ class RepairHub(ttk.Toplevel):
     def _build(self):
         hdr = ttk.Frame(self, bootstyle=SECONDARY)
         hdr.pack(fill=X)
+        from ui.help_system import add_help_button
+        add_help_button(hdr, "repairs")
         ttk.Label(hdr, text="🔧  Repair Center", font=("Segoe UI", 13, "bold"),
                   bootstyle=(INVERSE, SECONDARY)).pack(pady=10, padx=16, anchor=W)
 

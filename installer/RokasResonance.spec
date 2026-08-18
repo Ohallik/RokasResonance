@@ -25,8 +25,9 @@ block_cipher = None
 # Format: (source path on disk, destination folder inside the bundle)
 datas = [
     (os.path.join(PROJECT_ROOT, "assets"), "assets"),
-    (os.path.join(PROJECT_ROOT, "Getting_Started.txt"), "."),
-    (os.path.join(PROJECT_ROOT, "User_Guide.txt"), "."),
+    # The user guide the ? button in every window opens.  It must keep the
+    # "help" folder name: ui/help_system.py looks for help/roka_help.html.
+    (os.path.join(PROJECT_ROOT, "help"), "help"),
 ]
 
 # Runtime data files loaded by module code (band-book / Technique line data).

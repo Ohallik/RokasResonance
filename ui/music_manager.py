@@ -265,10 +265,70 @@ class MusicManager(ttk.Frame):
         self._search_debounce_id = None
         self._detail_debounce_id = None
 
+        self._markup_prompted = False
         self._build()
         self._load_col_prefs()
         self._apply_col_visibility()
         self.refresh()
+        self.after(900, self._maybe_offer_tidy)
+
+    # ─────────────────────────────────────────── Tidying up AI text ─────
+
+    def _maybe_offer_tidy(self):
+        """Mention the citation markup once, for anyone who wouldn't think to
+        look for a button about it.
+
+        Asked once per profile, not once per opening: imports don't bring the
+        tags in any more, so if the answer is no there is nothing new to ask
+        about, and the button stays on the toolbar either way."""
+        if self._markup_prompted:
+            return
+        self._markup_prompted = True
+        flag = os.path.join(self.base_dir, ".ai_markup_prompted")
+        if os.path.exists(flag):
+            return
+        try:
+            affected = self.db.find_music_markup()
+        except Exception:
+            return
+        if not affected:
+            return
+        try:
+            with open(flag, "w") as f:
+                f.write("asked")
+        except Exception:
+            pass
+        if Messagebox.yesno(
+                f"{len(affected)} piece(s) have web-reference tags left in their "
+                "text by an earlier AI import, like:\n\n"
+                '    <cite index="4-14">A Duke Ellington classic</cite>\n\n'
+                "Those are meant for a footnote, not for reading. Tidying them "
+                "takes the tags off and keeps every word inside.\n\n"
+                "Have a look now?",
+                title="Tidy up AI text?", parent=self.winfo_toplevel()) == "Yes":
+            self._tidy_ai_text()
+
+    def _tidy_ai_text(self):
+        """Show what the markup is hiding, and take it off the pieces chosen."""
+        try:
+            affected = self.db.find_music_markup()
+        except Exception as e:
+            Messagebox.show_error(f"Couldn't check the library:\n{e}",
+                                  title="Tidy AI Text",
+                                  parent=self.winfo_toplevel())
+            return
+        if not affected:
+            Messagebox.show_info(
+                "Nothing to tidy. No piece has web-reference tags in its text.",
+                title="Tidy AI Text", parent=self.winfo_toplevel())
+            return
+        dlg = _TidyMarkupDialog(self.winfo_toplevel(), self.db, affected)
+        self.wait_window(dlg)
+        if dlg.cleaned:
+            self.refresh()
+            Messagebox.show_info(
+                f"Tidied {dlg.cleaned} piece(s).",
+                title="Tidy AI Text", parent=self.winfo_toplevel())
 
     # ──────────────────────────────────────────────────────── Build UI ─────
 
@@ -276,6 +336,9 @@ class MusicManager(ttk.Frame):
         # ── Toolbar ───────────────────────────────────────────────────────
         toolbar = ttk.Frame(self, bootstyle=LIGHT)
         toolbar.pack(fill=X, padx=0, pady=0)
+
+        from ui.help_system import add_help_button
+        add_help_button(toolbar, "music", dark=False, pady=6)
 
         self._add_btn = ttk.Button(toolbar, text="Add Music", bootstyle=SUCCESS,
                                    command=self._add_music)
@@ -311,6 +374,9 @@ class MusicManager(ttk.Frame):
 
         ttk.Separator(toolbar, orient=VERTICAL).pack(
             side=LEFT, fill=Y, padx=8, pady=4)
+
+        ttk.Button(toolbar, text="🧹 Tidy AI Text", bootstyle=(SECONDARY, OUTLINE),
+                   command=self._tidy_ai_text).pack(side=LEFT, padx=2, pady=6)
 
         ttk.Button(toolbar, text="Refresh", bootstyle=(SECONDARY, OUTLINE),
                    command=self.refresh).pack(side=LEFT, padx=2, pady=6)
@@ -1707,6 +1773,152 @@ class MusicManager(ttk.Frame):
 # ══════════════════════════════════════════════════════════════════════════════
 # OMR Processing Dialog
 # ══════════════════════════════════════════════════════════════════════════════
+
+class _TidyMarkupDialog(ttk.Toplevel):
+    """Before and after for every piece carrying citation markup.
+
+    The change is only ever "take the tags off, keep the words", but it is
+    shown rather than simply done: this is text the teacher wrote or checked,
+    and a screen full of edits made behind her back is how trust in a tool
+    goes.  Tick boxes are there so one odd piece can be left alone."""
+
+    def __init__(self, parent, db, affected):
+        super().__init__(parent)
+        self.db = db
+        self._affected = affected
+        self.cleaned = 0
+        self._vars = {}
+
+        self.title("Tidy AI Text")
+        self.resizable(True, True)
+        self.grab_set()
+        self._build()
+        from ui.theme import fit_window
+        fit_window(self, 900, 680)
+
+    def _build(self):
+        hdr = ttk.Frame(self, bootstyle=PRIMARY)
+        hdr.pack(fill=X)
+        from ui.help_system import add_help_button
+        add_help_button(hdr, "tidy")
+        ttk.Label(hdr, text="🧹  Tidy AI Text",
+                  font=("Segoe UI", fs(13), "bold"),
+                  bootstyle=(INVERSE, PRIMARY)).pack(pady=12, padx=16, anchor=W)
+
+        top = ttk.Frame(self)
+        top.pack(fill=X, padx=16, pady=(10, 4))
+        ttk.Label(
+            top, wraplength=840, justify=LEFT, font=("Segoe UI", fs(9)),
+            text=(f"{len(self._affected)} piece(s) have web-reference tags in "
+                  "their text, left by an AI import that looked the piece up "
+                  "online. The tags mark which sentence came from which source, "
+                  "and are meant for a program that turns them into footnotes.\n"
+                  "Tidying removes only the tags. Every word inside them is "
+                  "kept, exactly as it reads now.")
+        ).pack(anchor=W)
+
+        tools = ttk.Frame(self)
+        tools.pack(fill=X, padx=16, pady=(6, 4))
+        ttk.Button(tools, text="Tick All", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: self._set_all(True)).pack(side=LEFT, padx=(0, 4))
+        ttk.Button(tools, text="Untick All", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: self._set_all(False)).pack(side=LEFT, padx=4)
+        self._count_lbl = ttk.Label(tools, text="", font=("Segoe UI", fs(9), "bold"))
+        self._count_lbl.pack(side=RIGHT)
+
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True, padx=16, pady=(2, 4))
+        canvas = tk.Canvas(body, highlightthickness=0)
+        sb = ttk.Scrollbar(body, orient=VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side=RIGHT, fill=Y)
+        canvas.pack(side=LEFT, fill=BOTH, expand=True)
+        lst = ttk.Frame(canvas)
+        win = canvas.create_window((0, 0), window=lst, anchor="nw")
+        lst.bind("<Configure>",
+                 lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
+        canvas.bind("<Enter>", lambda e: canvas.bind_all(
+            "<MouseWheel>",
+            lambda ev: canvas.yview_scroll(int(-ev.delta / 120), "units")))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        for row, fixes in self._affected:
+            self._add_row(lst, row, fixes)
+
+        btn = ttk.Frame(self)
+        btn.pack(fill=X, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Tidy Ticked", bootstyle=SUCCESS,
+                   command=self._apply).pack(side=RIGHT, padx=4)
+        self._update_count()
+
+    def _add_row(self, parent, row, fixes):
+        card = ttk.Frame(parent)
+        card.pack(fill=X, pady=(6, 0))
+        ttk.Separator(parent).pack(fill=X, pady=(6, 0))
+
+        head = ttk.Frame(card)
+        head.pack(fill=X)
+        keep = tk.BooleanVar(value=True)
+        self._vars[row["id"]] = keep
+        ttk.Checkbutton(head, variable=keep, bootstyle=PRIMARY,
+                        command=self._update_count).pack(side=LEFT, padx=(2, 6))
+        title = (row["title"] or "(untitled)").strip()
+        composer = (row["composer"] or "").strip() if "composer" in row.keys() else ""
+        ttk.Label(head, text=title + (f"   {composer}" if composer else ""),
+                  font=("Segoe UI", fs(10), "bold")).pack(side=LEFT)
+        ttk.Label(head, text="   " + ", ".join(sorted(fixes)),
+                  font=("Segoe UI", fs(8)),
+                  foreground=muted_fg()).pack(side=LEFT)
+
+        for col, after in sorted(fixes.items()):
+            before = row[col] or ""
+            pair = ttk.Frame(card)
+            pair.pack(fill=X, padx=(30, 4), pady=(2, 0))
+            ttk.Label(pair, text="now", width=6, anchor=NE,
+                      font=("Segoe UI", fs(8)),
+                      foreground=muted_fg()).pack(side=LEFT, anchor=N)
+            ttk.Label(pair, text=_shorten(before), wraplength=680, justify=LEFT,
+                      font=("Segoe UI", fs(8)),
+                      foreground=muted_fg()).pack(side=LEFT, anchor=W)
+            pair2 = ttk.Frame(card)
+            pair2.pack(fill=X, padx=(30, 4), pady=(1, 4))
+            ttk.Label(pair2, text="after", width=6, anchor=NE,
+                      font=("Segoe UI", fs(8), "bold")).pack(side=LEFT, anchor=N)
+            ttk.Label(pair2, text=_shorten(after), wraplength=680, justify=LEFT,
+                      font=("Segoe UI", fs(9))).pack(side=LEFT, anchor=W)
+
+    def _set_all(self, value):
+        for v in self._vars.values():
+            v.set(value)
+        self._update_count()
+
+    def _update_count(self):
+        n = sum(1 for v in self._vars.values() if v.get())
+        self._count_lbl.config(text=f"{n} of {len(self._vars)} to tidy")
+
+    def _apply(self):
+        ids = [mid for mid, v in self._vars.items() if v.get()]
+        if not ids:
+            Messagebox.show_warning("Nothing is ticked to tidy.",
+                                    title="Nothing to Do", parent=self)
+            return
+        try:
+            self.cleaned = self.db.clean_music_markup(ids)
+        except Exception as e:
+            Messagebox.show_error(f"Couldn't tidy the text:\n{e}",
+                                  title="Tidy AI Text", parent=self)
+            return
+        self.destroy()
+
+
+def _shorten(text, limit=320):
+    """One-line preview of a note, short enough to scan down the list."""
+    flat = " ".join((text or "").split())
+    return flat if len(flat) <= limit else flat[:limit].rstrip() + " ..."
+
 
 class _OMRProcessDialog(ttk.Toplevel):
     """Modal dialog that runs OMR processing with progress feedback."""

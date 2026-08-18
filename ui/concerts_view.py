@@ -1363,6 +1363,7 @@ class _RemindersDialog(ttk.Toplevel):
         self.db = db
         self.concert = concert
         self.school, self.director = teacher
+        self.base_dir = getattr(parent, "base_dir", "")
         self.title(f"Reminders — {concert['title']}")
         self.resizable(True, True)
         self.grab_set()
@@ -1474,20 +1475,36 @@ class _RemindersDialog(ttk.Toplevel):
         _copy(self, "; ".join(self._addresses))
         self._flash(f"✓ {len(self._addresses)} addresses copied — paste into BCC.")
 
-    def _show_email(self, stage):
-        """Preview + edit the reminder email before copying anything."""
+    def _family_email(self, stage):
+        """(subject, body), preferring the wording she has already settled on.
+
+        Her reworded version is kept against the concert and reused for every
+        stage — the auto text differs only in how near the date is, and that is
+        a line to update rather than a reason to lose the rewrite."""
         subject, body = ct.reminder_email(self.concert, stage,
                                           teacher_name=self.director,
                                           school_name=self.school)
+        saved = (self.concert.get("email_families") or "").strip()
+        return subject, (saved or body)
+
+    def _persist_families(self, body):
+        try:
+            self.db.update_concert(self.concert["id"], {"email_families": body})
+            self.concert["email_families"] = body
+        except Exception:
+            pass
+
+    def _show_email(self, stage):
+        """Preview + edit the reminder email before it goes out."""
+        subject, body = self._family_email(stage)
         win = ttk.Toplevel(self)
         win.title(f"Email Template — {stage} reminder")
         win.grab_set()
         ttk.Label(win, text=f"✉  Email Template — {stage} reminder",
                   font=("Segoe UI", 12, "bold"),
                   bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(12, 2))
-        ttk.Label(win, text="Adjust anything below, then copy — the copy "
-                            "buttons always take the edited version.",
-                  font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W, padx=16)
+        from ui.email_compose import add_send_button, add_send_hint
+        add_send_hint(win, "so reword it here, not there").pack(anchor=W, padx=16)
 
         srow = ttk.Frame(win)
         srow.pack(fill=X, padx=16, pady=(8, 2))
@@ -1510,23 +1527,41 @@ class _RemindersDialog(ttk.Toplevel):
             win.after(2000, lambda: status.config(text=""))
 
         def copy_body():
-            _copy(win, box.get("1.0", "end").strip())
-            flash("✓ Email body copied.")
+            text = box.get("1.0", "end").strip()
+            self._persist_families(text)
+            _copy(win, text)
+            flash("✓ Email body copied (and saved with this concert).")
 
         def copy_all():
-            _copy(win, f"Subject: {subj_var.get().strip()}\n\n"
-                       f"{box.get('1.0', 'end').strip()}")
-            flash("✓ Subject + body copied.")
+            text = box.get("1.0", "end").strip()
+            self._persist_families(text)
+            _copy(win, f"Subject: {subj_var.get().strip()}\n\n{text}")
+            flash("✓ Subject + body copied (and saved with this concert).")
+
+        def reset_auto():
+            self._persist_families("")
+            _, fresh = self._family_email(stage)
+            box.delete("1.0", "end")
+            box.insert("1.0", fresh)
+            flash("↺ Back to the auto-generated email.")
 
         btns = ttk.Frame(win)
         btns.pack(fill=X, padx=16, pady=(4, 12))
         ttk.Button(btns, text="Close", bootstyle=(SECONDARY, OUTLINE),
                    command=win.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(btns, text="📋 Copy Subject + Body", bootstyle=PRIMARY,
+        ttk.Button(btns, text="📋 Copy Subject + Body", bootstyle=(PRIMARY, OUTLINE),
                    command=copy_all).pack(side=RIGHT, padx=4)
         ttk.Button(btns, text="📋 Copy Body Only", bootstyle=(PRIMARY, OUTLINE),
                    command=copy_body).pack(side=RIGHT, padx=4)
-        fit_window(win, 660, 540)
+        add_send_button(btns, win, self.base_dir,
+                        subj_var.get, lambda: box.get("1.0", "end"),
+                        lambda: self._addresses,
+                        on_before_send=lambda s, t: self._persist_families(t),
+                        flash=flash,
+                        saved_note="Saved with this concert.")
+        ttk.Button(btns, text="↺ Reset to Auto", bootstyle=(SECONDARY, OUTLINE),
+                   command=reset_auto).pack(side=LEFT, padx=4)
+        fit_window(win, 700, 560)
 
     # ── Staff / facilities email ──
 
@@ -1636,15 +1671,29 @@ class _RemindersDialog(ttk.Toplevel):
         b.pack(fill=X, padx=16, pady=(4, 12))
         ttk.Button(b, text="Close", bootstyle=(SECONDARY, OUTLINE),
                    command=win.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(b, text="📋 Copy Subject + Body", bootstyle=PRIMARY,
+        ttk.Button(b, text="📋 Copy Subject + Body", bootstyle=(PRIMARY, OUTLINE),
                    command=copy_all).pack(side=RIGHT, padx=4)
         ttk.Button(b, text="📋 Copy Body Only", bootstyle=(PRIMARY, OUTLINE),
                    command=copy_body).pack(side=RIGHT, padx=4)
         ttk.Button(b, text="📋 Addresses", bootstyle=(SECONDARY, OUTLINE),
                    command=copy_addrs).pack(side=RIGHT, padx=4)
+
+        # Colleagues, not families: they go in To, where they can see each
+        # other and reply to the group, which is the point of this one.
+        def send_staff():
+            save_all()
+            import email_launcher
+            how = email_launcher.compose(
+                to=to_var.get().strip(), subject=subj_var.get().strip(),
+                body=box.get("1.0", "end").strip(), parent=win)
+            flash("✓ Opened in Outlook (and saved with this concert)."
+                  if how else "Couldn't open your email program — use Copy.")
+
+        ttk.Button(b, text="✉ Open in Outlook", bootstyle=SUCCESS,
+                   command=send_staff).pack(side=RIGHT, padx=4)
         ttk.Button(b, text="↺ Reset to Auto", bootstyle=(SECONDARY, OUTLINE),
                    command=reset_auto).pack(side=LEFT, padx=4)
-        fit_window(win, 680, 620)
+        fit_window(win, 760, 640)
 
     def _mark(self, stage):
         self.db.mark_concert_reminder(self.concert["id"], stage,

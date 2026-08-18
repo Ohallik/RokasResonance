@@ -38,6 +38,8 @@ class ImportWizard(ttk.Toplevel):
 
         hdr = ttk.Frame(self, bootstyle=PRIMARY)
         hdr.pack(fill=X)
+        from ui.help_system import add_help_button
+        add_help_button(hdr, "import")
         ttk.Label(hdr, text="📥  Import Your Data", font=("Segoe UI", 14, "bold"),
                   bootstyle=(INVERSE, PRIMARY)).pack(pady=12, padx=16, anchor=W)
         ttk.Label(hdr, text=f"Setting up {self.school_year}. Do this once — after "

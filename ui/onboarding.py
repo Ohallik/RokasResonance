@@ -50,6 +50,8 @@ class OnboardingWizard(ttk.Toplevel):
 
         hdr = ttk.Frame(self, bootstyle=PRIMARY)
         hdr.pack(fill=X)
+        from ui.help_system import add_help_button
+        add_help_button(hdr, "start")
         ttk.Label(hdr, text="👋  Welcome to Roka", font=("Segoe UI", 15, "bold"),
                   bootstyle=(INVERSE, PRIMARY)).pack(pady=12, padx=16, anchor=W)
         ttk.Label(hdr, text="A few quick things and you're set. You can change any "

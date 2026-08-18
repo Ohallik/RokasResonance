@@ -87,6 +87,8 @@ class SettingsDialog(ttk.Toplevel):
         # Header
         hdr = ttk.Frame(self, bootstyle=SECONDARY)
         hdr.pack(fill=X)
+        from ui.help_system import add_help_button
+        add_help_button(hdr, "settings")
         ttk.Label(hdr, text="  Settings", font=("Segoe UI", 13, "bold"),
                   bootstyle=(INVERSE, SECONDARY)).pack(pady=12, padx=16, anchor=W)
 
@@ -217,6 +219,18 @@ class SettingsDialog(ttk.Toplevel):
                   wraplength=420, justify=LEFT).pack(anchor=W)
         self._display_name_var = tk.StringVar()
         ttk.Entry(outer, textvariable=self._display_name_var, width=40).pack(
+            anchor=W, pady=(2, 10))
+
+        ttk.Label(outer, text="Your Email Address",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W)
+        ttk.Label(outer, text="Goes in the To line when Roka opens an email for "
+                              "you, with families in BCC. You get your own copy "
+                              "of what went out, and a stray Reply All comes "
+                              "back to you instead of to every family.",
+                  font=("Segoe UI", 8), foreground="#888",
+                  wraplength=420, justify=LEFT).pack(anchor=W)
+        self._email_var = tk.StringVar()
+        ttk.Entry(outer, textvariable=self._email_var, width=40).pack(
             anchor=W, pady=(2, 10))
 
         ttk.Separator(outer, orient=HORIZONTAL).pack(fill=X, pady=(4, 12))
@@ -680,6 +694,7 @@ class SettingsDialog(ttk.Toplevel):
         self._school_district_var.set(teacher.get("school_district", ""))
         self._school_name_var.set(teacher.get("school_name", ""))
         self._display_name_var.set(teacher.get("display_name", ""))
+        self._email_var.set(teacher.get("email", ""))
         ext_path = teacher.get("external_db_path", "")
         self._ext_db_entry.config(state="normal")
         self._ext_db_var.set(ext_path)
@@ -734,6 +749,7 @@ class SettingsDialog(ttk.Toplevel):
         self._settings["teacher"]["school_district"] = self._school_district_var.get().strip()
         self._settings["teacher"]["school_name"] = self._school_name_var.get().strip()
         self._settings["teacher"]["display_name"] = self._display_name_var.get().strip()
+        self._settings["teacher"]["email"] = self._email_var.get().strip()
         self._settings["teacher"]["external_db_path"] = self._ext_db_var.get().strip()
 
         # Helper Mode PIN lives in its own namespace so it survives round-trips.

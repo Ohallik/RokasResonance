@@ -52,6 +52,8 @@ class UniformManager(ttk.Frame):
     def _build(self):
         hdr = ttk.Frame(self, bootstyle=PRIMARY)
         hdr.pack(fill=X)
+        from ui.help_system import add_help_button
+        add_help_button(hdr, "uniforms")
         title = "👕  Uniforms & Attire"
         if self.helper_mode:
             title += "   —   Helper Mode"

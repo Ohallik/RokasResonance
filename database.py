@@ -1089,6 +1089,7 @@ class Database:
                           c.student_id    AS student_id,
                           c.student_name  AS student_name,
                           c.date_assigned AS date_assigned,
+                          c.date_returned AS date_returned,
                           c.notes         AS notes,
                           i.id            AS instrument_id,
                           i.category      AS category,
@@ -1099,6 +1100,9 @@ class Database:
                           i.district_no   AS district_no,
                           i.serial_no     AS serial_no,
                           s.grade         AS grade,
+                          s.first_name    AS first_name,
+                          s.last_name     AS last_name,
+                          s.student_id    AS district_id,
                           s.school_year   AS student_year,
                           s.is_active     AS student_active
                      FROM checkouts c
@@ -1109,6 +1113,47 @@ class Database:
                     ORDER BY c.student_name, i.description, i.size""",
                 (start, end),
             ).fetchall()
+
+    def find_enrolled_student(self, school_year, district_id="", first="", last="",
+                              fallback_id=None):
+        """This person's record on `school_year`'s roster, or None if they are
+        not on it.
+
+        A checkout stores the student ROW it was made against, and that row is
+        last year's.  Whether it is still the right row depends on how the
+        roster was brought forward: the class-list import updates a student in
+        place, while a district CSV import creates a fresh row for the new year
+        and archives the old one.  Following the stored key therefore says
+        "this student left" for every returning student in the second case, so
+        identity — district ID, then name — is what actually answers the
+        question."""
+        did = (district_id or "").strip()
+        f = (first or "").strip().lower()
+        l = (last or "").strip().lower()
+        with self._connect() as conn:
+            if did:
+                row = conn.execute(
+                    "SELECT * FROM students WHERE student_id=? AND school_year=? "
+                    "AND COALESCE(is_active,1)=1 ORDER BY id DESC LIMIT 1",
+                    (did, school_year)).fetchone()
+                if row:
+                    return row
+            if f and l:
+                row = conn.execute(
+                    "SELECT * FROM students WHERE LOWER(first_name)=? "
+                    "AND LOWER(last_name)=? AND school_year=? "
+                    "AND COALESCE(is_active,1)=1 ORDER BY id DESC LIMIT 1",
+                    (f, l, school_year)).fetchone()
+                if row:
+                    return row
+            if fallback_id is not None:
+                row = conn.execute(
+                    "SELECT * FROM students WHERE id=? AND school_year=? "
+                    "AND COALESCE(is_active,1)=1", (fallback_id, school_year)
+                ).fetchone()
+                if row:
+                    return row
+        return None
 
     def get_available_instruments(self):
         """Active instruments with nothing checked out against them and not out
@@ -1136,6 +1181,51 @@ class Database:
                    ORDER BY c.id""",
                 (instrument_id,)
             ).fetchall()
+
+    def get_open_instrument_checkouts(self):
+        """Every instrument still out, whoever has it.  Answers "is this one
+        already in that student's hands?" in one query, which the carry-over
+        screen asks of every row."""
+        with self._connect() as conn:
+            return conn.execute(
+                """SELECT c.id            AS checkout_id,
+                          c.instrument_id AS instrument_id,
+                          c.student_id    AS student_id,
+                          c.student_name  AS student_name,
+                          c.date_assigned AS date_assigned,
+                          c.notes         AS notes
+                     FROM checkouts c
+                    WHERE c.date_returned IS NULL OR TRIM(c.date_returned)=''
+                    ORDER BY c.id"""
+            ).fetchall()
+
+    CARRIED_NOTE = "Carried over to"
+
+    def carry_checkout_into_year(self, checkout_id: int, school_year: str,
+                                 due_date: str = ""):
+        """Run an open loan on into a new school year.
+
+        A student who kept their instrument over the summer never handed it
+        back, so the loan continues rather than being closed and re-opened —
+        opening a second one would show the instrument out twice and leave it
+        impossible to check in cleanly.  The note is also what tells a second
+        run of the carry-over screen that this loan has already been dealt
+        with, so nobody is billed for the same instrument twice."""
+        marker = f"{self.CARRIED_NOTE} {school_year}"
+        with self._connect() as conn:
+            row = conn.execute("SELECT notes FROM checkouts WHERE id=?",
+                               (checkout_id,)).fetchone()
+            if row is None:
+                return
+            notes = (row["notes"] or "").strip()
+            if marker not in notes:
+                notes = f"{notes}; {marker}" if notes else marker
+            if due_date:
+                conn.execute("UPDATE checkouts SET notes=?, due_date=? WHERE id=?",
+                             (notes, due_date, checkout_id))
+            else:
+                conn.execute("UPDATE checkouts SET notes=? WHERE id=?",
+                             (notes, checkout_id))
 
     # ─── Uniforms / attire ──────────────────────────────────────────────────────
     #
@@ -2150,6 +2240,15 @@ class Database:
                 pass
         return checkout_id
 
+    def add_rental_fee(self, student_id: int, date_assigned: str,
+                       rental_type: str = "school_year",
+                       per_instrument: bool = True):
+        """Bill the rental fee on its own, for an instrument the student is
+        already holding — a summer loan that simply runs on into the new school
+        year owes the new year's fee without a second check-out."""
+        self._auto_add_rental_fee(student_id, date_assigned, rental_type,
+                                  per_instrument=per_instrument)
+
     def _auto_add_rental_fee(self, student_id: int, date_assigned: str,
                              rental_type: str = "school_year",
                              per_instrument: bool = False):
@@ -3152,6 +3251,66 @@ class Database:
             conn.execute(
                 f"UPDATE sheet_music SET {set_clause} WHERE id=?", values
             )
+
+    # ── Tidying up AI-written text ────────────────────────────────────────
+    # A web-search enrichment answers with its sources marked up in the text
+    # ("<cite index="4-14">A Duke Ellington classic…</cite>"), which is meant
+    # for a program that turns them into footnotes.  Here it lands in the notes
+    # field a teacher reads, so it reads as gibberish wrapped round the useful
+    # sentence.  llm_client strips it on the way in now; these two find and fix
+    # what earlier imports already saved.
+
+    # Every free-text column a description could have been written into.
+    _MUSIC_TEXT_COLUMNS = ("notes", "title", "composer", "arranger", "genre",
+                           "publisher", "location", "voicing", "language",
+                           "accompaniment")
+
+    def find_music_markup(self, include_inactive=True):
+        """Pieces whose text still carries citation markup.
+
+        Returns [(row, {column: cleaned_text})] so the teacher can be shown
+        exactly what would change before any of it is written."""
+        from llm_client import strip_citation_markup
+        out = []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM sheet_music" +
+                ("" if include_inactive else " WHERE is_active=1") +
+                " ORDER BY title"
+            ).fetchall()
+        for row in rows:
+            keys = row.keys()
+            fixes = {}
+            for col in self._MUSIC_TEXT_COLUMNS:
+                if col not in keys:
+                    continue
+                before = row[col]
+                if not isinstance(before, str) or not before:
+                    continue
+                after = strip_citation_markup(before)
+                if after != before:
+                    fixes[col] = after
+            if fixes:
+                out.append((row, fixes))
+        return out
+
+    def clean_music_markup(self, music_ids=None):
+        """Take the citation markup off, keeping every word inside it.
+
+        ``music_ids`` limits the job to a chosen few; left out, it does the lot.
+        Returns the number of pieces changed."""
+        targets = self.find_music_markup()
+        if music_ids is not None:
+            wanted = set(music_ids)
+            targets = [(r, f) for r, f in targets if r["id"] in wanted]
+        if not targets:
+            return 0
+        with self._connect() as conn:
+            for row, fixes in targets:
+                sets = ", ".join(f"{col}=?" for col in fixes)
+                conn.execute(f"UPDATE sheet_music SET {sets} WHERE id=?",
+                             list(fixes.values()) + [row["id"]])
+        return len(targets)
 
     def deactivate_sheet_music(self, music_id: int):
         with self._connect() as conn:

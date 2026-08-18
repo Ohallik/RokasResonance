@@ -75,7 +75,7 @@ class InventoryManager(ttk.Frame):
         """Start this year's assignments from last year's, rather than checking
         every student out again by hand."""
         from ui.instrument_carryover_dialog import InstrumentCarryOverDialog
-        dlg = InstrumentCarryOverDialog(self.winfo_toplevel(), self.db)
+        dlg = InstrumentCarryOverDialog(self.winfo_toplevel(), self.db, base_dir=self.base_dir)
         self.wait_window(dlg)
         if getattr(dlg, "assigned", 0):
             self.refresh()
@@ -147,6 +147,11 @@ class InventoryManager(ttk.Frame):
         # ── Toolbar ───────────────────────────────────────────────────────────
         toolbar = ttk.Frame(self, bootstyle=LIGHT)
         toolbar.pack(fill=X, padx=0, pady=0)
+
+        # Help sits in the corner on every screen, packed first so it stays in
+        # the corner however many buttons are added to its left later.
+        from ui.help_system import add_help_button
+        add_help_button(toolbar, "equipment", dark=False, pady=6)
 
         # ── Group 1: core actions ─────────────────────────────────────────
         ttk.Button(toolbar, text="➕", bootstyle=SUCCESS, width=3,

@@ -123,6 +123,11 @@ class MainMenu(ttk.Frame):
         header = ttk.Frame(self, bootstyle=PRIMARY)
         header.pack(fill=X)
 
+        # Packed before the logo so it lands in the actual corner rather than
+        # to the left of the mascot.
+        from ui.help_system import add_help_button
+        add_help_button(header, "hub", padx=(0, 10), pady=10)
+
         # Load mascot image (remove white background for clean banner look)
         logo_path = os.path.join(self.app_dir, "assets", "banner_logo.png")
         self._banner_img = None
@@ -276,6 +281,26 @@ class MainMenu(ttk.Frame):
             foreground=link_fg(), cursor="hand2")
         helper_lbl.pack(side=LEFT)
         helper_lbl.bind("<Button-1>", lambda e: self._enter_helper_mode())
+
+        # Named in full down here as well as sitting as a ? in the corner: a
+        # teacher looking for help looks for the word "Help".
+        ttk.Label(footer_inner, text="  •  ", font=("Segoe UI", fs(8)),
+                  foreground=subtle_fg()).pack(side=LEFT)
+        help_lbl = ttk.Label(
+            footer_inner, text="Help Guide",
+            font=("Segoe UI", fs(8), "underline"),
+            foreground=link_fg(), cursor="hand2")
+        help_lbl.pack(side=LEFT)
+        help_lbl.bind("<Button-1>", lambda e: self._open_help_guide())
+
+        ttk.Label(footer_inner, text="  •  ", font=("Segoe UI", fs(8)),
+                  foreground=subtle_fg()).pack(side=LEFT)
+        bug_lbl = ttk.Label(
+            footer_inner, text="Report a Problem",
+            font=("Segoe UI", fs(8), "underline"),
+            foreground=link_fg(), cursor="hand2")
+        bug_lbl.pack(side=LEFT)
+        bug_lbl.bind("<Button-1>", lambda e: self._report_problem())
 
         # Ownership / copyright notice — proprietary software, all rights reserved.
         _copy = "© 2026 Meagan Mangum. All rights reserved."
@@ -604,6 +629,33 @@ class MainMenu(ttk.Frame):
             except tk.TclError:
                 pass
         self._refresh_stats()
+
+    def _open_help_guide(self):
+        from ui.help_system import open_help
+        open_help("start", self.winfo_toplevel())
+
+    def _report_problem(self):
+        """Point at the guide first, then hand them a pre-filled email.
+
+        The guide answers most of what gets emailed, so it is offered before
+        the mail window rather than after it."""
+        from ttkbootstrap.dialogs import Messagebox
+        from ui.help_system import open_help, report_bug, SUPPORT_EMAIL
+        answer = Messagebox.show_question(
+            "Have a look in the Help Guide first, it covers most questions and "
+            "you will get an answer straight away.\n\n"
+            "Still stuck? 'Email' opens a message with the right questions "
+            "already filled in, ready for you to describe the problem and "
+            f"attach a screenshot.\n\nIt goes to {SUPPORT_EMAIL}.",
+            title="Report a Problem", buttons=["Open Help Guide:primary",
+                                               "Email:secondary",
+                                               "Cancel:light"],
+            parent=self.winfo_toplevel())
+        if answer == "Open Help Guide":
+            open_help("support", self.winfo_toplevel())
+        elif answer == "Email":
+            report_bug(screen="Main screen", version=self._version,
+                       parent=self.winfo_toplevel())
 
     def _open_inventory(self):
         if self._raise_or_open("inventory"):

@@ -86,6 +86,8 @@ class BudgetManager(ttk.Frame):
     def _build(self):
         hdr = ttk.Frame(self, bootstyle=SUCCESS)
         hdr.pack(fill=X)
+        from ui.help_system import add_help_button
+        add_help_button(hdr, "budget")
         ttk.Label(hdr, text="💵  Budget", font=("Segoe UI", 15, "bold"),
                   bootstyle=(INVERSE, SUCCESS)).pack(pady=10, padx=16, anchor=W)
 
@@ -939,6 +941,7 @@ class _FeesDialog(ttk.Toplevel):
         super().__init__(parent)
         self.db = db
         self.program_type = program_type
+        self.base_dir = getattr(parent, "base_dir", "")
         # Fees attach to the STUDENT roster year (academic), which may differ
         # from the budget's fiscal year — default to a year that has students.
         years = db.get_school_years()
@@ -1294,13 +1297,29 @@ class _FeesDialog(ttk.Toplevel):
             Messagebox.show_info("Message template copied. Paste it into Outlook.",
                                  title="Copied", parent=win)
 
+        def _send():
+            """Families in BCC: a payment chase is the last email that should
+            show one family who else still owes."""
+            from ui.email_compose import open_message
+            addrs = [a.strip() for a in txt.get("1.0", "end").split(";")
+                     if a.strip()]
+            if not addrs:
+                Messagebox.show_info("No addresses to send to.",
+                                     title="No Addresses", parent=win)
+                return
+            open_message(win, self.base_dir,
+                         f"{fee} — payment reminder",
+                         msg.get("1.0", "end").strip(), addrs)
+
         b2 = ttk.Frame(win); b2.pack(fill=X, padx=14, pady=12)
         ttk.Button(b2, text="Close", bootstyle=(SECONDARY, OUTLINE),
                    command=win.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(b2, text="📋 Copy Message", bootstyle=SUCCESS,
+        ttk.Button(b2, text="📋 Copy Message", bootstyle=(SUCCESS, OUTLINE),
                    command=_copy_msg).pack(side=RIGHT, padx=4)
+        ttk.Button(b2, text="✉ Open in Outlook", bootstyle=SUCCESS,
+                   command=_send).pack(side=RIGHT, padx=4)
         from ui.theme import fit_window
-        fit_window(win, 600, 560)
+        fit_window(win, 640, 580)
 
     def _manage_types(self):
         win = ttk.Toplevel(self)

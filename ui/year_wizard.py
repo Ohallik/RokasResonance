@@ -262,6 +262,8 @@ class NewSchoolYearWizard(ttk.Toplevel):
 
         hdr = ttk.Frame(self, bootstyle=PRIMARY)
         hdr.pack(fill=X)
+        from ui.help_system import add_help_button
+        add_help_button(hdr, "newyear")
         ttk.Label(hdr, text="📦  Close Out the Year & Start a New One",
                   font=("Segoe UI", fs(13), "bold"),
                   bootstyle=(INVERSE, PRIMARY)).pack(pady=10, padx=16, anchor=W)

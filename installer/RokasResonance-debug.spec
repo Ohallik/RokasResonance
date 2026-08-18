@@ -27,8 +27,7 @@ block_cipher = None
 
 datas = [
     (os.path.join(PROJECT_ROOT, "assets"), "assets"),
-    (os.path.join(PROJECT_ROOT, "Getting_Started.txt"), "."),
-    (os.path.join(PROJECT_ROOT, "User_Guide.txt"), "."),
+    (os.path.join(PROJECT_ROOT, "help"), "help"),
 ]
 datas += collect_data_files("ttkbootstrap")
 

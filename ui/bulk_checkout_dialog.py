@@ -64,6 +64,8 @@ class BulkCheckoutDialog(ttk.Toplevel):
         # Header
         hdr = ttk.Frame(self, bootstyle=WARNING)
         hdr.pack(fill=X)
+        from ui.help_system import add_help_button
+        add_help_button(hdr, "bulk")
         ttk.Label(hdr, text="  Bulk Check Out / Check In",
                   font=("Segoe UI", 13, "bold"),
                   bootstyle=(INVERSE, WARNING)).pack(pady=10, padx=16, anchor=W)

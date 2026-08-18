@@ -154,6 +154,9 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         toolbar = ttk.Frame(self, bootstyle=LIGHT)
         toolbar.pack(fill=X)
 
+        from ui.help_system import add_help_button
+        add_help_button(toolbar, "students", dark=False, pady=6)
+
         ttk.Button(toolbar, text="➕ Add Student", bootstyle=SUCCESS,
                    command=self._add_student).pack(side=LEFT, padx=6, pady=6)
         ttk.Button(toolbar, text="✏️ Edit", bootstyle=PRIMARY,
@@ -2083,6 +2086,7 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
         self.db = db
         self.program_type = program_type
         self.school_year = school_year
+        self.base_dir = getattr(parent, "base_dir", "")
         self._recip_var = tk.StringVar(value="students")
         self._ens_var = tk.StringVar(value="All")
         self._per_var = tk.StringVar(value="All")
@@ -2162,8 +2166,10 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
         btn.pack(fill=X, padx=16, pady=12)
         ttk.Button(btn, text="Close", bootstyle=(SECONDARY, OUTLINE),
                    command=self.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(btn, text="📋 Copy to Clipboard", bootstyle=INFO,
+        ttk.Button(btn, text="📋 Copy to Clipboard", bootstyle=(INFO, OUTLINE),
                    command=self._copy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="✉ Open in Outlook", bootstyle=SUCCESS,
+                   command=self._send).pack(side=RIGHT, padx=4)
 
     def _generate(self):
         ens = self._ens_var.get()
@@ -2203,3 +2209,17 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
         self.clipboard_clear()
         self.clipboard_append(text)
         Messagebox.show_info("Email list copied to clipboard.", title="Copied", parent=self)
+
+    def _send(self):
+        """Start a blank message to this list, everyone in BCC.
+
+        There is no template here, so nothing is saved: this screen builds a
+        list, and the words are written in Outlook."""
+        from ui.email_compose import open_message
+        text = self._out.get("1.0", "end").strip()
+        addrs = [a.strip() for a in text.replace(",", ";").split(";") if a.strip()]
+        if not addrs:
+            Messagebox.show_info("Generate a list first.",
+                                 title="Nothing to Send", parent=self)
+            return
+        open_message(self, self.base_dir, "", "", addrs)

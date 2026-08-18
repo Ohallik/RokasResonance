@@ -397,7 +397,11 @@ class LessonPlanDatabase:
                         "details_sent INTEGER DEFAULT 0",
                         "program_printed INTEGER DEFAULT 0",
                         "setup_ready INTEGER DEFAULT 0",
-                        "email_staff TEXT"):
+                        "email_staff TEXT",
+                        # The family reminder, saved once she has reworded it,
+                        # so the next concert starts from her version instead
+                        # of throwing the edit away and regenerating.
+                        "email_families TEXT"):
                 try:
                     conn.execute(f"ALTER TABLE concerts ADD COLUMN {col}")
                     conn.commit()
@@ -1442,7 +1446,7 @@ class LessonPlanDatabase:
                      "acknowledgements", "upcoming", "extra_info",
                      "venue_reserved", "tutorials_scheduled",
                      "repertoire_final", "details_sent", "program_printed",
-                     "setup_ready", "email_staff", "notes"]
+                     "setup_ready", "email_staff", "email_families", "notes"]
 
     def get_program_setting(self, key, default=""):
         """Year-wide program values (e.g. the standing acknowledgements list) —

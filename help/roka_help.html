@@ -1,0 +1,1403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roka's Resonance - Help</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1d2330; --muted:#5b6577; --line:#dfe4ec;
+    --side:#f5f7fb; --accent:#2f6fb5; --accent-soft:#eaf2fb;
+    --warn-bg:#fff7e6; --warn-line:#e6b800; --tip-bg:#eefaf1; --tip-line:#37a05f;
+    --code:#eef1f6; --mark:#ffe97a;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#161a22; --fg:#e6eaf2; --muted:#9aa5b8; --line:#2b3340;
+      --side:#1c2230; --accent:#79b0ea; --accent-soft:#1e2a3a;
+      --warn-bg:#2e2718; --warn-line:#c9a227; --tip-bg:#17291d; --tip-line:#4caf70;
+      --code:#222937; --mark:#7a6410;
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font:16px/1.65 "Segoe UI",system-ui,-apple-system,sans-serif;
+  }
+  a{color:var(--accent)}
+  #wrap{display:flex; min-height:100vh; align-items:flex-start}
+
+  /* ── sidebar ─────────────────────────────────────────────── */
+  #side{
+    width:290px; flex:0 0 290px; background:var(--side);
+    border-right:1px solid var(--line); position:sticky; top:0;
+    height:100vh; overflow-y:auto; padding:18px 0 40px;
+  }
+  #side h1{font-size:19px; margin:0 18px 2px; letter-spacing:.2px}
+  #side .sub{font-size:12px; color:var(--muted); margin:0 18px 14px}
+  #side nav{padding:0 8px}
+  #side .grp{
+    font-size:11px; text-transform:uppercase; letter-spacing:.09em;
+    color:var(--muted); margin:16px 10px 5px; font-weight:700;
+  }
+  #side a{
+    display:block; padding:6px 10px; border-radius:7px;
+    text-decoration:none; color:var(--fg); font-size:14.5px;
+  }
+  #side a:hover{background:var(--accent-soft)}
+  #side a.on{background:var(--accent); color:#fff; font-weight:600}
+
+  /* ── search ──────────────────────────────────────────────── */
+  #searchbox{padding:0 18px 6px; position:relative}
+  #q{
+    width:100%; padding:9px 32px 9px 12px; font-size:14px; color:var(--fg);
+    border:1px solid var(--line); border-radius:8px; background:var(--bg);
+  }
+  #q:focus{outline:2px solid var(--accent); outline-offset:1px}
+  #qclear{
+    position:absolute; right:26px; top:7px; border:0; background:none;
+    color:var(--muted); font-size:18px; cursor:pointer; display:none; line-height:1;
+  }
+  #results{margin:8px 0 0; font-size:13.5px}
+  #results .hit{
+    display:block; padding:7px 10px; border-radius:7px; text-decoration:none;
+    color:var(--fg); border:1px solid transparent;
+  }
+  #results .hit:hover{background:var(--accent-soft); border-color:var(--line)}
+  #results .hit b{color:var(--accent)}
+  #results .snip{display:block; color:var(--muted); font-size:12.5px}
+  #results .none{color:var(--muted); padding:6px 10px}
+
+  /* ── content ─────────────────────────────────────────────── */
+  main{flex:1 1 auto; max-width:900px; padding:26px 40px 90px; min-width:0}
+  section{scroll-margin-top:18px; padding-bottom:8px}
+  h2{
+    font-size:25px; margin:34px 0 6px; padding-top:14px;
+    border-top:1px solid var(--line);
+  }
+  section:first-of-type h2{border-top:0; margin-top:0; padding-top:0}
+  h3{font-size:17.5px; margin:22px 0 4px}
+  h4{font-size:15px; margin:16px 0 2px; color:var(--muted)}
+  p,li{font-size:15.5px}
+  ul,ol{padding-left:22px}
+  li{margin:3px 0}
+  .lede{color:var(--muted); font-size:16px; margin-top:2px}
+  code,kbd{
+    background:var(--code); padding:1px 6px; border-radius:5px;
+    font:13.5px/1.5 Consolas,"Courier New",monospace;
+  }
+  .btn-ref{
+    background:var(--accent-soft); border:1px solid var(--line);
+    padding:1px 7px; border-radius:6px; font-size:14px; white-space:nowrap;
+  }
+  .note,.warn,.tip{
+    border-left:4px solid var(--accent); background:var(--accent-soft);
+    padding:10px 14px; margin:14px 0; border-radius:0 8px 8px 0;
+  }
+  .warn{border-left-color:var(--warn-line); background:var(--warn-bg)}
+  .tip{border-left-color:var(--tip-line); background:var(--tip-bg)}
+  .note p:first-child,.warn p:first-child,.tip p:first-child{margin-top:0}
+  .note p:last-child,.warn p:last-child,.tip p:last-child{margin-bottom:0}
+  table{border-collapse:collapse; width:100%; margin:14px 0; font-size:14.5px}
+  th,td{border:1px solid var(--line); padding:7px 10px; text-align:left; vertical-align:top}
+  th{background:var(--side); font-weight:600}
+  .steps{counter-reset:s; list-style:none; padding-left:0}
+  .steps>li{
+    counter-increment:s; position:relative; padding-left:36px; margin:9px 0;
+  }
+  .steps>li::before{
+    content:counter(s); position:absolute; left:0; top:1px;
+    width:24px; height:24px; border-radius:50%; background:var(--accent);
+    color:#fff; font-size:13px; font-weight:700; text-align:center; line-height:24px;
+  }
+  mark{background:var(--mark); color:inherit; border-radius:3px; padding:0 2px}
+  .mailbtn{
+    display:inline-block; margin:6px 10px 6px 0; padding:12px 20px;
+    background:var(--accent); color:#fff; text-decoration:none;
+    border-radius:9px; font-weight:600; font-size:15.5px;
+  }
+  .mailbtn:hover{filter:brightness(1.1)}
+  .mailbtn.alt{background:transparent; color:var(--accent); border:2px solid var(--accent)}
+  .top{
+    display:inline-block; margin-top:10px; font-size:13px;
+    color:var(--muted); text-decoration:none;
+  }
+  .top:hover{color:var(--accent)}
+  #hide-note{display:none}
+  @media print{
+    #side{display:none} main{max-width:none; padding:0}
+    .mailbtn{border:1px solid #999; color:#000; background:none}
+  }
+  @media (max-width:820px){
+    #wrap{flex-direction:column}
+    #side{position:static; width:auto; flex:auto; height:auto; border-right:0;
+          border-bottom:1px solid var(--line)}
+    main{padding:20px}
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+
+<aside id="side">
+  <h1>Roka's Resonance</h1>
+  <p class="sub">Help &amp; user guide</p>
+
+  <div id="searchbox">
+    <input id="q" type="search" placeholder="Search the guide..." autocomplete="off"
+           aria-label="Search the guide">
+    <button id="qclear" title="Clear search" aria-label="Clear search">&times;</button>
+    <div id="results"></div>
+  </div>
+
+  <nav id="toc">
+    <div class="grp">Getting help</div>
+    <a href="#support">Report a bug or ask for a feature</a>
+    <a href="#faq">Common questions</a>
+    <a href="#privacy">Student privacy</a>
+
+    <div class="grp">Start here</div>
+    <a href="#start">First time using Roka</a>
+    <a href="#hub">The main screen</a>
+    <a href="#import">Bringing in your old data</a>
+
+    <div class="grp">Equipment</div>
+    <a href="#equipment">Equipment inventory</a>
+    <a href="#checkouts">Checking out &amp; in</a>
+    <a href="#bulk">Barcode scanning</a>
+    <a href="#repairs">Repairs</a>
+    <a href="#carryover">Carry over to a new year</a>
+
+    <div class="grp">Music &amp; uniforms</div>
+    <a href="#music">Sheet music</a>
+    <a href="#tidy">Tidy AI text</a>
+    <a href="#uniforms">Uniforms &amp; attire</a>
+
+    <div class="grp">Students &amp; money</div>
+    <a href="#students">Manage students</a>
+    <a href="#newyear">Starting a new school year</a>
+    <a href="#budget">Budget &amp; student fees</a>
+
+    <div class="grp">Teacher tools</div>
+    <a href="#tools">Teacher Tools overview</a>
+    <a href="#seating">Seating charts</a>
+    <a href="#percussion">Percussion rotation</a>
+    <a href="#jazz">Jazz rhythm section</a>
+    <a href="#concerts">Concerts</a>
+    <a href="#fieldtrips">Field trips</a>
+    <a href="#agendas">Daily agendas</a>
+
+    <div class="grp">Setup &amp; extras</div>
+    <a href="#emails">Sending emails</a>
+    <a href="#settings">Settings</a>
+    <a href="#helper">Helper Mode (volunteers)</a>
+    <a href="#sharing">Sharing with a co-director</a>
+    <a href="#ai">Ask Reginald &amp; AI features</a>
+    <a href="#backup">Backups &amp; profiles</a>
+
+  </nav>
+</aside>
+
+<main>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="start">
+  <h2>First time using Roka</h2>
+  <p class="lede">What this program is, and the order to do things in.</p>
+
+  <p>Roka's Resonance keeps track of the things a music teacher has to keep
+  track of: which student has which school instrument, what is broken, what it
+  costs, who is in which class, what the library holds, and what is happening at
+  the next concert. Everything lives on your own computer.</p>
+
+  <h3>The ? button</h3>
+  <p>Every main window has a <span class="btn-ref">?</span> in its top right
+  corner. It opens this guide at the section for the screen you were looking at.
+  You can also press <kbd>F1</kbd> anywhere in the program.</p>
+
+  <h3>The order to set things up</h3>
+  <ol class="steps">
+    <li>Answer the few questions on the first run screen (your name, your
+      school, and whether you teach band, choir, orchestra or elementary). This
+      sets up your class list for you.</li>
+    <li>Bring in your existing data if you have any, from CutTime, Charms or
+      Synergy. See <a href="#import">Bringing in your old data</a>.</li>
+    <li>Import this year's class lists so your roster is real. See
+      <a href="#students">Manage students</a>.</li>
+    <li>Check instruments out to students. See
+      <a href="#checkouts">Checking out &amp; in</a>.</li>
+  </ol>
+
+  <div class="tip"><p><b>You cannot break it by clicking around.</b> Nothing is
+  deleted without asking you first, and anything you archive (students, old
+  instruments) can be brought back. Have a look through the screens before you
+  put real data in.</p></div>
+
+  <a class="top" href="#start">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="hub">
+  <h2>The main screen</h2>
+  <p class="lede">The hub you come back to. Everything opens from here.</p>
+
+  <h3>The numbers across the top</h3>
+  <p>These update on their own as you work. Depending on whether you teach band,
+  choir or orchestra you will see some of: instruments checked out, instruments
+  in repair, students enrolled this year, and pieces of music in your library.</p>
+
+  <h3>The buttons</h3>
+  <table>
+    <tr><th>Button</th><th>What it opens</th></tr>
+    <tr><td>🎺 Equipment</td><td>Your instruments: add, edit, check out, check in,
+      repairs. <a href="#equipment">More</a></td></tr>
+    <tr><td>🎼 Sheet Music</td><td>Your music library and performance history.
+      <a href="#music">More</a></td></tr>
+    <tr><td>👕 Uniforms</td><td>Uniforms and attire, checked out one piece at a
+      time. <a href="#uniforms">More</a></td></tr>
+    <tr><td>🎓 Manage Students</td><td>Your roster for a school year.
+      <a href="#students">More</a></td></tr>
+    <tr><td>📦 New School Year</td><td>Rolls everybody forward into the next
+      year. <a href="#newyear">More</a></td></tr>
+    <tr><td>💵 Budget</td><td>Money in, money out, and student fees.
+      <a href="#budget">More</a></td></tr>
+    <tr><td>🧰 Teacher Tools</td><td>Seating, percussion, concerts, field trips
+      and daily agendas. <a href="#tools">More</a></td></tr>
+  </table>
+
+  <h3>Along the bottom</h3>
+  <ul>
+    <li><b>Switch Profile</b> moves to another teacher's profile on this
+      computer. Each profile is completely separate.</li>
+    <li><b>Settings</b> opens the setup screen. <a href="#settings">More</a></li>
+  </ul>
+
+  <div class="note"><p>If a banner appears at the top saying a new version is
+  ready, or that the school year has rolled over, it is safe to deal with it
+  later. It will still be there next time.</p></div>
+
+  <a class="top" href="#hub">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="import">
+  <h2>Bringing in your old data</h2>
+  <p class="lede">A one time job when you first set up. You do not repeat it
+  every year.</p>
+
+  <p>Roka can read the exports from the programs BSD music teachers already use:</p>
+  <table>
+    <tr><th>From</th><th>What comes across</th></tr>
+    <tr><td>CutTime (.xlsx)</td><td>Your instrument inventory</td></tr>
+    <tr><td>Charms (.csv)</td><td>Inventory plus repair history, vendors and
+      purchase order details that CutTime does not export</td></tr>
+    <tr><td>Synergy (.csv)</td><td>Class lists, one file per class</td></tr>
+  </table>
+
+  <h4>How to export a class list from Synergy</h4>
+  <ol class="steps">
+    <li>In Synergy, open the class you want.</li>
+    <li>Export the student list as a CSV file and save it somewhere you can find
+      it, like your Downloads folder.</li>
+    <li>In Roka, use the import screen, pick the file, and tell it which class
+      and period the file belongs to.</li>
+  </ol>
+
+  <div class="note"><p>Synergy puts one row per parent or guardian, so a student
+  with two parents appears twice in the file. Roka expects that and merges them
+  into one student with two contacts. You do not need to clean the file up
+  first.</p></div>
+
+  <div class="warn"><p><b>Import one class at a time.</b> Each import asks which
+  class and period it is for, and that is what puts students in the right
+  roster, seating chart and agenda. Importing everything as one lump leaves you
+  sorting it out by hand later.</p></div>
+
+  <a class="top" href="#import">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="equipment">
+  <h2>Equipment inventory</h2>
+  <p class="lede">Every school owned instrument, where it is, and what state it
+  is in.</p>
+
+  <h3>Finding things</h3>
+  <p>Type in the search box to filter the list. The status filter narrows it to
+  what is available or checked out. <span class="btn-ref">Columns ▼</span> lets
+  you choose which columns you want to see, and
+  <span class="btn-ref">Show Inactive</span> brings back instruments you have
+  retired.</p>
+
+  <h3>Adding and editing</h3>
+  <ul>
+    <li><span class="btn-ref">➕</span> adds an instrument.</li>
+    <li><span class="btn-ref">✏️ Edit</span> changes the one you have selected.</li>
+  </ul>
+  <p>Worth filling in, because other parts of the program use them:</p>
+  <ul>
+    <li><b>Description</b>, for example "Trumpet - Bb" or "Viola". This is what
+      groups instruments together when Roka offers a replacement.</li>
+    <li><b>Size</b>, for strings. A 3/4 cello and a 4/4 cello are different
+      instruments to a growing student.</li>
+    <li><b>Barcode, district number or serial number.</b> Any one of these makes
+      two identical looking flutes tellable apart everywhere in the program.</li>
+    <li><b>Condition and comments.</b> If you write words like "unrepairable",
+      "lost", "missing", "stolen" or "retired" here, Roka stops offering that
+      instrument to students.</li>
+    <li><b>Year made</b>, if you know it, or can work it out from the serial
+      number.</li>
+  </ul>
+
+  <h3>The tabs at the bottom</h3>
+  <p>With an instrument selected: <b>Details</b> is everything on record,
+  <b>Checkout History</b> is every student who has ever had it, and
+  <b>Repairs</b> is what has been done to it and what that cost.</p>
+
+  <h3>Exports</h3>
+  <p><span class="btn-ref">📊 Exports ▾</span> gives you:</p>
+  <ul>
+    <li>Entire inventory, as Excel</li>
+    <li>Instruments needing repair</li>
+    <li>Currently checked out</li>
+    <li>Barcode sheet for brass and woodwind, as a PDF to print</li>
+    <li>Repair cost report, sorted by what you have spent</li>
+    <li>Full repair details</li>
+  </ul>
+
+  <a class="top" href="#equipment">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="checkouts">
+  <h2>Checking instruments out and in</h2>
+
+  <h3>One student at a time</h3>
+  <ol class="steps">
+    <li>Select the instrument.</li>
+    <li>Press <span class="btn-ref">📤 Check Out</span>.</li>
+    <li>Pick the student and check the return date.</li>
+    <li>Leave the rental fee ticked unless this student has already paid.</li>
+  </ol>
+  <p>Checking in is the same, with <span class="btn-ref">📥 Check In</span>.</p>
+
+  <h3>The rental fee</h3>
+  <p>Checking an instrument out adds the school year rental fee (75 dollars
+  unless you have changed it) to that student's account, one fee per instrument.
+  A student who takes home two instruments owes two fees. You can see, change,
+  waive or mark these paid in <a href="#budget">Budget</a>, under Student Fees.</p>
+  <p>Summer rentals are a separate, cheaper fee (20 dollars unless you have
+  changed it).</p>
+
+  <h3>Other things on this screen</h3>
+  <ul>
+    <li><span class="btn-ref">🎒 Check Out Item</span> is for the small things:
+      a mute, a lyre, a method book.</li>
+    <li><span class="btn-ref">🏫 Loan to Another School</span> records an
+      instrument that has physically left your building. Loaned instruments are
+      not offered to your students while they are out.</li>
+    <li><span class="btn-ref">📄 Generate Form</span> prints the district
+      Equipment Loan Form for the student to sign.</li>
+    <li><span class="btn-ref">📋 Checkouts</span> lists everything currently out,
+      and lets you return several at once.</li>
+  </ul>
+
+  <div class="note"><p>Two students really can share one instrument, so Roka
+  allows it. It warns you first, because most of the time it is a mistake.</p></div>
+
+  <a class="top" href="#checkouts">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="bulk">
+  <h2>Barcode scanning</h2>
+  <p class="lede">For the first week of school, when the whole band is in a
+  line.</p>
+
+  <p>With a handheld scanner plugged in, open Bulk Check Out / Check In from the
+  Equipment screen. Scan the student's ID, then scan the instrument. Repeat. The
+  scanner behaves like a keyboard, so there is nothing to set up.</p>
+
+  <p><span class="btn-ref">Check Out + Form</span> does the check out and prints
+  the loan form in one go.</p>
+
+  <h3>The barcode sheets</h3>
+  <p>If your instruments or student cards do not already carry barcodes, print
+  the two sheets once and keep them next to the computer:</p>
+  <ul>
+    <li>Equipment screen, <span class="btn-ref">📊 Exports ▾</span>, Barcode
+      Sheet for brass and woodwind.</li>
+    <li>Manage Students, <span class="btn-ref">📤 Export ▾</span>, Barcode Sheet
+      to scan student IDs.</li>
+  </ul>
+
+  <a class="top" href="#bulk">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="repairs">
+  <h2>Repairs</h2>
+  <p class="lede"><span class="btn-ref">🔧 Repair</span> on the Equipment screen
+  opens the repair centre.</p>
+
+  <ul>
+    <li><span class="btn-ref">📋 Upload Invoice</span> reads a repair invoice PDF
+      and matches the lines to your instruments. Check what it found before you
+      accept it.</li>
+    <li><span class="btn-ref">➕ Add Repair</span> records a repair by hand.</li>
+    <li><span class="btn-ref">🚚 Mark Out for Repair</span> flags an instrument as
+      away at the shop, so it is not offered to a student.</li>
+    <li><span class="btn-ref">✅ Mark Repaired</span> brings it back.</li>
+    <li><span class="btn-ref">📊 Export This View</span> saves whatever list you
+      are looking at.</li>
+  </ul>
+
+  <div class="tip"><p>Repair costs feed the Budget screen on their own, so what
+  you spend at the shop shows up in your year's spending without being typed
+  twice. The repair cost report is the argument for replacing an instrument:
+  it shows what each one has cost you over its life.</p></div>
+
+  <a class="top" href="#repairs">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="carryover">
+  <h2>Carry over instruments to a new year</h2>
+  <p class="lede">Most students keep the instrument they had, so the new year
+  starts from last year's list instead of an empty screen.</p>
+
+  <p><span class="btn-ref">🔁 Carry Over…</span> on the Equipment screen.</p>
+
+  <div class="warn"><p><b>Import this year's class lists first.</b> Carry over
+  only offers students it can confirm are on this year's roster. If you have not
+  imported yet, it will tell you there is nothing to carry forward, which is
+  correct rather than broken.</p></div>
+
+  <h3>What you see</h3>
+  <p>One row per instrument a student finished last year holding. For each row:
+  who they are, this year's grade, what they had, and what they will get.</p>
+  <ul>
+    <li><b>Students who graduated or did not come back are not listed at all.</b>
+      Your outgoing top year has moved on to the high school and their
+      instruments return to your shelf.</li>
+    <li><b>A repair or a swap counts once.</b> If a student went through two
+      clarinets last year because one went to the shop, that is one clarinet
+      here, not two.</li>
+    <li><b>A student who genuinely holds two instruments gets two rows</b>, and
+      owes two rental fees.</li>
+  </ul>
+
+  <h3>Changing what a student gets</h3>
+  <ul>
+    <li>The dropdown offers every free instrument of the same kind. If two look
+      identical, they are numbered, for example "Flute (2 of 3)".</li>
+    <li>An instrument already out to somebody else is marked with a ⚠ and offered
+      last. It is allowed, but look twice.</li>
+    <li>An instrument the student kept over the summer says "still has it". That
+      loan simply continues, so nothing is checked out twice.</li>
+    <li>String players who have grown get a <span class="btn-ref">⬆</span> button
+      on their row to move up a size. Orchestra teachers get it on every sized
+      instrument.</li>
+  </ul>
+
+  <h3>Fees</h3>
+  <p>Every ticked row is billed the school year rental, one per instrument.
+  Untick the fee box at the top if you have already billed these.</p>
+
+  <div class="tip"><p>Running the screen a second time is safe. Anything already
+  assigned this year comes up unticked, so nobody is charged twice.</p></div>
+
+  <a class="top" href="#carryover">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="music">
+  <h2>Sheet music</h2>
+  <p class="lede">Your library, and what you have performed.</p>
+
+  <h3>Adding music</h3>
+  <ul>
+    <li><span class="btn-ref">Add Music</span> types one piece in by hand.</li>
+    <li><span class="btn-ref">Import Music</span> reads photographs or PDFs. You
+      can photograph a stack of folder covers laid out on a table, or single
+      score pages, and it pulls out titles, composers and arrangers. Always look
+      over what it found before saving.</li>
+    <li><span class="btn-ref">📄 Import Program</span> reads an old concert
+      programme and adds everything on it to your performance history in one go.
+      This is the quick way to record years of past concerts.</li>
+  </ul>
+
+  <h3>Performances</h3>
+  <p>The <b>Performances</b> tab records when a piece was played and by which
+  ensemble, so you can see at a glance whether you have programmed something
+  recently. <span class="btn-ref">🎼 Performances by Ensemble</span> shows it
+  the other way round.</p>
+
+  <h3>The scanning tools</h3>
+  <p><span class="btn-ref">Process OMR</span> reads printed notation into a
+  MusicXML file, and <span class="btn-ref">Validate with LLM</span> checks the
+  result for the mistakes music scanning usually makes. These are for
+  digitising a score, not for cataloguing, and are slower than the rest of the
+  program.</p>
+
+  <div class="note"><p>If a description looks like it has code in it, see
+  <a href="#tidy">Tidy AI text</a>.</p></div>
+
+  <a class="top" href="#music">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="tidy">
+  <h2>Tidy AI text</h2>
+  <p class="lede"><span class="btn-ref">🧹 Tidy AI Text</span> on the Sheet Music
+  screen.</p>
+
+  <p>When the AI looks a piece up online, it marks which sentence came from
+  which source. Those marks are meant for a program that turns them into
+  footnotes at the bottom of a page. Roka puts the description straight into the
+  notes field instead, so for a while the marks came through as they were, and
+  a description read like this:</p>
+
+  <p><code>&lt;cite index="4-14"&gt;A Duke Ellington classic with limited
+  technical demands.&lt;/cite&gt; • &lt;cite index="7-1"&gt;Grade 2&lt;/cite&gt;
+  level</code></p>
+
+  <p>when what it should say is:</p>
+
+  <p><code>A Duke Ellington classic with limited technical demands. • Grade 2
+  level</code></p>
+
+  <h3>Fixing the ones already in your library</h3>
+  <ol class="steps">
+    <li>Open Sheet Music and press <span class="btn-ref">🧹 Tidy AI Text</span>.</li>
+    <li>You get a list of every affected piece, showing what it says now and
+      what it would say afterwards.</li>
+    <li>Everything starts ticked. Untick anything you would rather leave.</li>
+    <li>Press <span class="btn-ref">Tidy Ticked</span>.</li>
+  </ol>
+
+  <div class="tip"><p><b>Only the tags are removed.</b> Every word inside them
+  is kept exactly as it reads, so nothing you or the AI wrote is lost. If there
+  is nothing to fix, the tool says so and changes nothing.</p></div>
+
+  <p>Roka also offers this the first time you open Sheet Music after finding
+  affected pieces, so you do not have to know the button is there.</p>
+
+  <p>New imports no longer pick the tags up, so this is a one off for anything
+  brought in before. If you ever see them again, please
+  <a href="#support">report it</a>.</p>
+
+  <a class="top" href="#tidy">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="uniforms">
+  <h2>Uniforms and attire</h2>
+  <p class="lede">The same idea as instruments, for clothing.</p>
+
+  <p>You define your own garment types, so this works for concert dresses,
+  tuxedo jackets, marching bibbers, shakos, choir robes or anything else you
+  hand out. Use <span class="btn-ref">🏷️ Garment Types</span> to set them up.</p>
+
+  <ul>
+    <li><b>One piece goes to one student.</b> Unlike instruments, a garment
+      cannot be shared, and Roka will not let it be.</li>
+    <li><b>No fee is charged</b> when a uniform is checked out.</li>
+    <li><b>Sizing up</b> is suggested when a returning student needs the next
+      size.</li>
+    <li><span class="btn-ref">📥 Import</span> reads a spreadsheet of garments,
+      and will match any that are already assigned to a student.</li>
+  </ul>
+
+  <h3>The who has what chart</h3>
+  <p>One row per student, one column per garment type, showing the item number
+  they hold. Blanks are the missing pieces. This is the sheet to print and post
+  so students who forget their number can look it up instead of asking you.</p>
+
+  <div class="tip"><p>Uniform hand out is the job to give a parent volunteer.
+  See <a href="#helper">Helper Mode</a>.</p></div>
+
+  <a class="top" href="#uniforms">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="students">
+  <h2>Manage students</h2>
+  <p class="lede">Your roster, one school year at a time.</p>
+
+  <h3>Getting students in</h3>
+  <p><span class="btn-ref">📥 Import ▾</span> takes a district class roster CSV.
+  Import one class at a time and tell it the class and period. It also has an
+  option to update instruments from another school's CSV, for when a feeder
+  school sends you their outgoing students.</p>
+  <p><span class="btn-ref">➕ Add Student</span> types one in by hand.</p>
+
+  <h3>Working with the list</h3>
+  <ul>
+    <li><span class="btn-ref">🏷️ Assign</span> puts several selected students
+      into an ensemble or class period at once.</li>
+    <li><span class="btn-ref">✉️ Email List</span> builds an address list for
+      the students you have selected, ready to paste into Outlook.</li>
+    <li><span class="btn-ref">🗂️ Inactive Students</span> shows students you have
+      archived, and brings any of them back.</li>
+    <li>The <b>Instrument History</b> tab shows everything a student has ever had
+      out.</li>
+  </ul>
+
+  <h3>Exports</h3>
+  <ul>
+    <li>Student list, as Excel</li>
+    <li>Numbers per part, which tells you how many copies of each part to make.
+      Tick the classes that are playing the piece and read the count.</li>
+    <li>Outgoing students for high school directors, so the next school starts
+      the year knowing who is coming and what they play</li>
+    <li>Barcode sheet of student IDs, to print</li>
+  </ul>
+
+  <div class="note"><p>Students are never deleted when a year ends, only marked
+  inactive. Their history stays attached to them.</p></div>
+
+  <a class="top" href="#students">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="newyear">
+  <h2>Starting a new school year</h2>
+  <p class="lede"><span class="btn-ref">📦 New School Year…</span> on the main
+  screen. Do this once, in the autumn.</p>
+
+  <ol class="steps">
+    <li><b>Choose the new year.</b> It suggests the next one.</li>
+    <li><b>Import this year's class lists</b>, one CSV per class. Returning
+      students are rolled forward, keeping their instrument, contacts and
+      history, and move up a grade. Names it does not recognise become new
+      students.</li>
+    <li><b>Archive whoever is left.</b> This runs when you press Finish, after
+      the imports, so it only archives students who are not on any new class
+      list: your graduating year, and anyone who dropped. Nothing is deleted.</li>
+    <li><b>Roll uniforms forward.</b> Returning students keep the pieces they
+      had. The option only releases gear still held by students who did not come
+      back.</li>
+  </ol>
+
+  <p>Afterwards, go to <a href="#carryover">Carry Over</a> on the Equipment
+  screen to hand instruments back out.</p>
+
+  <div class="note"><p>Honours and Junior All State marks reset every year,
+  because they are earned again each year.</p></div>
+
+  <div class="note"><p>A student who is a year ahead of their classmates, for
+  example a sixth grader in the intermediate band, is normal and handled. They
+  simply appear on the class list you import them on.</p></div>
+
+  <a class="top" href="#newyear">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="budget">
+  <h2>Budget and student fees</h2>
+  <p class="lede">A school year runs 1 July to 30 June. The Budget window has
+  its own year selector.</p>
+
+  <h3>Money in and out</h3>
+  <p>Expenses and income are split by where the money comes from (Building, ASB,
+  Boosters or Other), and you can make your own categories with
+  <span class="btn-ref">🏷️ Categories</span>. Repair costs are pulled in
+  automatically, so you do not enter them twice.</p>
+  <p><span class="btn-ref">🚌 Field Trip</span> adds the costs of a trip as one
+  entry. <span class="btn-ref">📊 Export Excel</span> saves the whole year for
+  whoever asks for it.</p>
+
+  <h3>Student fees</h3>
+  <p><span class="btn-ref">🎽 Student Fees</span> is where instrument rentals,
+  polo shirts and anything else a student owes is tracked. You can:</p>
+  <ul>
+    <li>Mark fees <span class="btn-ref">✅ Paid</span>,
+      <span class="btn-ref">⛔ Unpaid</span> or
+      <span class="btn-ref">🚫 Waive</span> them</li>
+    <li>Add a fee to a whole class at once</li>
+    <li><span class="btn-ref">✉️ Email Unpaid</span> to build a reminder to the
+      families who still owe</li>
+    <li>Change what each fee type costs with
+      <span class="btn-ref">Manage Fee Types</span></li>
+  </ul>
+
+  <div class="note"><p>Instrument rentals appear here on their own when you check
+  an instrument out. If a student is playing their own instrument, waive or
+  remove the fee here.</p></div>
+
+  <a class="top" href="#budget">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="tools">
+  <h2>Teacher Tools</h2>
+  <p class="lede">The day to day teaching tools, in one window with tabs.</p>
+
+  <p>Everything here belongs to a school year. The <b>Year</b> box in the top
+  left switches between years, and each year keeps its own seating charts,
+  rotations, concerts, trips and agendas.</p>
+
+  <table>
+    <tr><th>Tab</th><th>What it is for</th></tr>
+    <tr><td>🪑 Seating Charts</td><td>Classroom and concert seating.
+      <a href="#seating">More</a></td></tr>
+    <tr><td>🥁 Percussion</td><td>Percussion rotation, and jazz rhythm section.
+      <a href="#percussion">More</a></td></tr>
+    <tr><td>🎪 Concerts</td><td>Concert planning, programmes and reminders.
+      <a href="#concerts">More</a></td></tr>
+    <tr><td>🚌 Field Trips</td><td>Trips, costs and chaperones.
+      <a href="#fieldtrips">More</a></td></tr>
+    <tr><td>📋 Agendas</td><td>What goes on the board each day.
+      <a href="#agendas">More</a></td></tr>
+  </table>
+
+  <p>The Percussion tab only appears if one of your classes uses a percussion
+  rotation or you run a jazz band, and never for choir or orchestra.</p>
+
+  <h3>The two buttons in the corner</h3>
+  <ul>
+    <li><span class="btn-ref">🗂 Manage Classes…</span> is the list of classes you
+      actually teach. Add, rename or remove them, and the tabs follow.</li>
+    <li><span class="btn-ref">🔢 Numbers Per Part…</span> answers the copier
+      question: how many flute parts does this class need. Tick more than one
+      class to get the combined count for a piece two groups are both playing.</li>
+  </ul>
+
+  <a class="top" href="#tools">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="seating">
+  <h2>Seating charts</h2>
+
+  <ol class="steps">
+    <li>Choose the class period, or combine ensembles for a concert.</li>
+    <li>Set how many seats are in each row and how you want students sorted.</li>
+    <li><span class="btn-ref">Save</span> the chart so it comes back next time.</li>
+  </ol>
+
+  <p>Rows are colour coded to match velcro carpet markers.
+  <span class="btn-ref">📋 Copy Image</span> and
+  <span class="btn-ref">💾 Save Image…</span> get the chart out for printing or
+  for a substitute.</p>
+
+  <h3>The set up buttons</h3>
+  <ul>
+    <li><span class="btn-ref">🎼 Concert Setup…</span> lays students out in
+      concert arcs instead of classroom rows.</li>
+    <li><span class="btn-ref">🎷 Jazz Setup…</span> uses a jazz stage layout.</li>
+    <li><span class="btn-ref">🚫 Keep-Apart Pairs…</span> keeps two students who
+      should not sit together apart, every time you reshuffle.</li>
+    <li><span class="btn-ref">♿ Special Accommodations…</span> holds a student to
+      the front or back row.</li>
+    <li><span class="btn-ref">🎺 Change a student's instrument…</span> fixes a
+      wrong instrument without leaving the chart.</li>
+    <li><span class="btn-ref">🔀 Shuffle…</span> gives you a fresh arrangement,
+      obeying everything above.</li>
+  </ul>
+
+  <a class="top" href="#seating">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="percussion">
+  <h2>Percussion rotation</h2>
+  <p class="lede">So the same student is not on the drum set every day.</p>
+
+  <p>Enter the percussionists in a class and Roka builds a balanced daily
+  rotation through the seats: mallets, snare, timpani and auxiliary, plus bass
+  drum and, for your older groups, drum set. Over a full cycle everybody gets a
+  fair share, with beginners starting on mallets.</p>
+
+  <ul>
+    <li><span class="btn-ref">🎓 From Student List…</span> pulls the
+      percussionists straight off your roster.</li>
+    <li><span class="btn-ref">🎛 Rotation Stations…</span> changes which seats are
+      in play.</li>
+    <li><span class="btn-ref">🎚 Limit Rotation…</span> keeps a particular student
+      off a particular station.</li>
+    <li><span class="btn-ref">⭐ Special Day…</span> overrides one day, for a
+      concert or an assembly.</li>
+    <li><span class="btn-ref">🗓 Full Grid</span> shows the whole cycle at once,
+      which is the version to print.</li>
+    <li><span class="btn-ref">🎵 Mallet Equipment…</span> records which mallets go
+      with which instrument.</li>
+  </ul>
+
+  <a class="top" href="#percussion">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="jazz">
+  <h2>Jazz rhythm section</h2>
+  <p class="lede">On the Percussion tab, if you run a jazz band.</p>
+
+  <p>A jazz rhythm section is not fixed the way a concert percussion section is,
+  so you tell Roka what it is: list the seats in play (drum set, piano, bass,
+  guitar, vibraphone, or anything else you want, including a doubled tenor sax),
+  then enter each player and tick which seats they can cover.</p>
+
+  <ul>
+    <li>You can run more than one jazz band, each with its own seats and players.</li>
+    <li><span class="btn-ref">🎛 Part limits…</span> caps how many players sit on
+      a part at once.</li>
+    <li><span class="btn-ref">🎼 Edit Lineup</span> sets who plays what on a
+      particular song.</li>
+  </ul>
+
+  <a class="top" href="#jazz">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="concerts">
+  <h2>Concerts</h2>
+  <p class="lede">One place to plan a concert cycle.</p>
+
+  <ol class="steps">
+    <li><span class="btn-ref">➕ New Concert</span>: date, time, place, and which
+      ensembles are playing.</li>
+    <li><span class="btn-ref">🎼 Repertoire</span>: what each ensemble is playing.
+      Fine to leave empty early on and fill in later.</li>
+    <li><span class="btn-ref">📄 Details Page</span>: the family handout with
+      attire, arrival time, required rehearsals and the itinerary.</li>
+    <li><span class="btn-ref">📖 Program (.pub)</span>: builds a real Publisher
+      document you can edit, not a locked PDF.</li>
+    <li><span class="btn-ref">✉ Reminders</span>: emails to families at two
+      weeks, one week and two days out. <span class="btn-ref">✉ Open in
+      Outlook</span> sends them straight from Roka, families in BCC. See
+      <a href="#emails">Sending emails</a>.</li>
+  </ol>
+
+  <ul>
+    <li><span class="btn-ref">🎖 Honors</span> records Honours and Junior All
+      State students for the programme.</li>
+    <li><span class="btn-ref">📊 Export Roster (Excel)…</span> gives the office a
+      simple who is out sheet for a school day performance.</li>
+    <li><span class="btn-ref">📋 Use as Template for a New Concert…</span> copies
+      last year's concert as the starting point for this year's.</li>
+  </ul>
+
+  <a class="top" href="#concerts">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="fieldtrips">
+  <h2>Field trips</h2>
+  <p class="lede">Laid out the way the district application asks for it.</p>
+
+  <ul>
+    <li><span class="btn-ref">➕ New Field Trip</span>: who, when, where, how, and
+      what it costs.</li>
+    <li><span class="btn-ref">👥 Roster &amp; Costs</span>: who is going, who has
+      opted out, and the cost per student worked out for you.</li>
+    <li><span class="btn-ref">🧑‍🤝‍🧑 Chaperones</span>: parent chaperones with
+      contacts filled in from your student data, and the one adult per ten
+      students count done for you.
+      <span class="btn-ref">⟳ Fill Missing Contacts</span> chases up the gaps.</li>
+    <li><span class="btn-ref">✉ Reminders</span>: emails for families, chaperones
+      and the teachers whose classes lose students that day, opened straight in
+      Outlook. See <a href="#emails">Sending emails</a>.</li>
+    <li><span class="btn-ref">📋 Copy From Previous…</span> starts from a trip you
+      have already run.</li>
+  </ul>
+
+  <p>Trip costs can be pushed into the <a href="#budget">Budget</a> so the money
+  side stays in one place.</p>
+
+  <a class="top" href="#fieldtrips">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="agendas">
+  <h2>Daily agendas</h2>
+  <p class="lede">What goes on the board, for each class, each day.</p>
+
+  <p>Pick the class and the date. Roka suggests a sensible agenda for that day
+  built around your concert dates and repertoire, with the warm up pitched at
+  the right level for how close the concert is. Change anything you like, and
+  what you change is what sticks.</p>
+
+  <ul>
+    <li><span class="btn-ref">🖥 Present</span> puts the agenda on the projector,
+      full screen, with a clock and a timer.</li>
+    <li><span class="btn-ref">⧉ Copy Previous Day</span> when today is yesterday
+      again.</li>
+    <li><span class="btn-ref">↺ Reset Day</span> throws away your edits and goes
+      back to the suggestion.</li>
+    <li><span class="btn-ref">📷 Paste Image</span> puts a picture on the board,
+      for example a fingering chart or a rhythm to clap.</li>
+    <li><span class="btn-ref">🎯 Assessments…</span> notes what you are assessing
+      that day.</li>
+    <li>Classes with a percussion rotation show today's rotation beside the
+      agenda, so the section can see where they are without asking.</li>
+  </ul>
+
+  <p>District no school days are already known, so holidays are skipped.</p>
+
+  <a class="top" href="#agendas">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="emails">
+  <h2>Sending emails</h2>
+  <p class="lede">Anywhere Roka writes an email for you, one button opens it in
+  Outlook, already addressed and filled in.</p>
+
+  <p>You will find <span class="btn-ref">✉ Open in Outlook</span> on the concert
+  reminders, the field trip reminders, the unpaid fee reminder, and the student
+  email list. There is nothing to copy and nothing to paste.</p>
+
+  <h3>Who it goes to</h3>
+  <table>
+    <tr><th>Line</th><th>Who</th></tr>
+    <tr><td>To</td><td><b>You.</b> So the message is addressed to somebody, you
+      get your own copy of exactly what went out, and if a parent hits Reply All
+      it comes back to you instead of to every family.</td></tr>
+    <tr><td>BCC</td><td><b>The families.</b> Always BCC, never To, so no family
+      sees any other family's address.</td></tr>
+  </table>
+  <p>Set your own address in <a href="#settings">Settings</a>, under Teacher.
+  The first time you send, Roka asks for it and remembers it.</p>
+  <p>The staff and facilities email is the exception: colleagues go in the To
+  line, where they can see each other and reply to the group.</p>
+
+  <h3>Your wording is kept</h3>
+  <p>This is the part worth knowing:</p>
+  <ul>
+    <li><b>Edit the wording in Roka, in the box on screen.</b> When you press
+      <span class="btn-ref">✉ Open in Outlook</span>, what is in that box is
+      saved as this concert's or trip's email, and the same text is what opens
+      in Outlook. There is no separate save step.</li>
+    <li><b>Next time starts from your version</b>, not from the generated one.
+      For a trip it is reused for both reminder stages and carried into next
+      year by <span class="btn-ref">📋 Copy From Previous</span>.</li>
+    <li><b>Changes you make in Outlook after it opens are for that one
+      message.</b> That is usually what you want, since a lot of last-minute
+      edits are one-offs. If you rewrite it properly in Outlook and want to keep
+      that version, paste it back into the Roka box and press the button again.</li>
+    <li><span class="btn-ref">↺ Reset to Auto</span> throws your version away
+      and goes back to the generated text.</li>
+  </ul>
+
+  <div class="tip"><p>Short version: <b>Roka is where the reusable wording
+  lives, Outlook is where the message goes out.</b> Reword it in Roka and it is
+  yours from then on.</p></div>
+
+  <h3>If Outlook is not on the computer</h3>
+  <p>Roka falls back to whatever mail program the computer uses. Those links
+  have a length limit, so with a very long address list the message still opens
+  but the addresses are copied to the clipboard instead, and Roka tells you to
+  paste them into BCC. The copy buttons are all still there either way.</p>
+
+  <a class="top" href="#emails">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="settings">
+  <h2>Settings</h2>
+  <p class="lede">The link at the bottom of the main screen.</p>
+
+  <table>
+    <tr><th>Tab</th><th>What is in it</th></tr>
+    <tr><td>Teacher</td><td>Your name as it prints on programmes and emails, your
+      own email address (see <a href="#emails">Sending emails</a>), your school,
+      your program type (band, choir, orchestra or elementary), and your Helper
+      Mode PIN.</td></tr>
+    <tr><td>Display</td><td>Colour scheme, and text size. Large and Extra Large
+      are there for anyone who wants bigger text.</td></tr>
+    <tr><td>LLM Configuration</td><td>The AI features. <a href="#ai">More</a></td></tr>
+    <tr><td>Backup</td><td>Where backups go, and a
+      <span class="btn-ref">Back Up Now</span> button. <a href="#backup">More</a></td></tr>
+    <tr><td>Sharing</td><td>Sharing an inventory with a co-director.
+      <a href="#sharing">More</a></td></tr>
+  </table>
+
+  <div class="warn"><p><b>Program type matters.</b> It decides which classes,
+  tabs and instrument lists you see. Changing it later changes what is on screen
+  but does not throw anything away.</p></div>
+
+  <a class="top" href="#settings">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="helper">
+  <h2>Helper Mode (for parent volunteers)</h2>
+  <p class="lede">Hand the computer to a volunteer without handing over your
+  students' information.</p>
+
+  <p>In Helper Mode everything is hidden except uniform check out, and student
+  contact details are hidden even there. To get back to full access you have to
+  enter the Helper PIN, which is why the volunteer must not know it.</p>
+
+  <ol class="steps">
+    <li>Set a Helper PIN in Settings, under Teacher.</li>
+    <li>Switch into Helper Mode from the main screen. Every open window closes.</li>
+    <li>The volunteer checks uniforms in and out.</li>
+    <li>Press <span class="btn-ref">🔒 Exit Helper Mode</span> and enter the PIN.</li>
+  </ol>
+
+  <a class="top" href="#helper">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="sharing">
+  <h2>Sharing with a co-director</h2>
+  <p class="lede">Off unless you turn it on. Most teachers never need this.</p>
+
+  <p>Some large high schools have two directors who keep separate class lists but
+  share one instrument inventory, check out log, repair log and music library.
+  This connects two computers to one shared copy of those, while each director's
+  students, seating charts, concerts and agendas stay their own.</p>
+
+  <ul>
+    <li>One director sets it up and gets a code.</li>
+    <li>The other enters that code in Settings, under Sharing.</li>
+    <li>You need to be online to make changes to shared items. Everything else
+      works offline as normal.</li>
+  </ul>
+
+  <a class="top" href="#sharing">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="ai">
+  <h2>Ask Reginald and the AI features</h2>
+
+  <p><span class="btn-ref">🎩 Ask Reginald</span>, on the Equipment and Sheet
+  Music screens, answers questions about your own inventory and library in plain
+  language. Reginald is a grumpy retired butler, and he knows it.</p>
+
+  <p>The AI is also what reads photographs of music, repair invoices and old
+  concert programmes.</p>
+
+  <div class="warn"><p><b>Always check what it produces before you save it.</b>
+  Reading a photograph of a handwritten folder label is a guess, and it is
+  quicker to correct one field now than to find a wrong title in your library in
+  two years.</p></div>
+
+  <p>These features need an internet connection. If they are not set up, or the
+  connection is out, the rest of the program carries on working normally.</p>
+
+  <a class="top" href="#ai">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="backup">
+  <h2>Backups and profiles</h2>
+
+  <h3>Backups</h3>
+  <p>Set an external backup folder in Settings, under Backup, and point it
+  somewhere that is not this computer: a OneDrive folder or a USB stick. Roka
+  backs up when you close it, and <span class="btn-ref">Back Up Now</span> does
+  it on demand.</p>
+
+  <div class="warn"><p>A backup folder on the same computer is not a backup. If
+  the laptop is lost or wiped, so is everything.</p></div>
+
+  <h3>Profiles</h3>
+  <p>Each teacher on a computer gets a profile, and each profile is a completely
+  separate set of data: its own instruments, students, music and settings.
+  <b>Switch Profile</b> at the bottom of the main screen moves between them.</p>
+
+  <a class="top" href="#backup">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="support">
+  <h2>Report a bug or ask for a feature</h2>
+
+  <div class="warn"><p><b>Please look through this guide first.</b> Use the
+  search box at the top left, or the list of sections. Most questions are
+  answered somewhere on this page, and checking first means the real problems
+  get attention sooner.</p></div>
+
+  <p>If it is not here, the buttons below open a new email in Outlook with the
+  right questions already in it. Fill in the blanks and send.</p>
+
+  <p>
+    <a class="mailbtn" id="bugbtn" href="#">Report a bug</a>
+    <a class="mailbtn alt" id="featbtn" href="#">Request a feature</a>
+  </p>
+
+  <h3>When reporting a bug</h3>
+  <p><b>A screenshot is worth more than a paragraph.</b> Press
+  <kbd>Windows</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd>, drag a box around the
+  problem, then press <kbd>Ctrl</kbd> + <kbd>V</kbd> in the email to paste it in.</p>
+  <p>Then say:</p>
+  <ul>
+    <li>Which screen you were on</li>
+    <li>What you did, step by step, so it can be repeated</li>
+    <li>What you expected to happen</li>
+    <li>What happened instead</li>
+    <li>Whether it happens every time, or only sometimes</li>
+  </ul>
+  <p>"The seating chart is broken" cannot be fixed. "On the Seating Charts tab,
+  I picked period 3, pressed Shuffle, and two students disappeared from the
+  chart, every time" can be fixed the same day.</p>
+
+  <h3>When asking for a feature</h3>
+  <p>Be as detailed as you can:</p>
+  <ul>
+    <li>What you want to be able to do</li>
+    <li>How you do it today, on paper, in a spreadsheet or in another program</li>
+    <li>Who would use it and how often</li>
+    <li>What it would save you</li>
+    <li>Anything that would help: a sample of the form you use now, or a
+      screenshot of how another program does it</li>
+  </ul>
+
+  <a class="top" href="#support">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="privacy">
+  <h2>Student privacy</h2>
+
+  <p>Roka holds the information a music teacher needs to run a music program:
+  names, grade, class, instrument, guardian contacts and what a family owes.</p>
+
+  <p><b>It is not going to be expanded to hold sensitive student data.</b> That
+  means no health information, no special education or 504 documentation, no
+  discipline records, no counselling notes, and no detailed instructional
+  modifications. Student privacy law is the reason, and it is not a matter of
+  effort or priority.</p>
+
+  <p>Where the program has to know something in this area, it is deliberately
+  kept shallow. A seating chart can be told that a student needs to sit at the
+  front, because that is a seating fact. It does not record why, and it should
+  not be told why.</p>
+
+  <p>Please keep that in mind when asking for features. A request for anything
+  that would put protected information into this program cannot be built, no
+  matter how useful it would be.</p>
+
+  <a class="top" href="#privacy">Back to top</a>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<section id="faq">
+  <h2>Common questions</h2>
+
+  <h4>My students have all disappeared.</h4>
+  <p>Almost always the year, not the data. Check which school year the screen is
+  showing. Manage Students and Teacher Tools each have their own year selector,
+  and the Budget window has another. Nothing is deleted when a year rolls over,
+  it is archived, and <span class="btn-ref">🗂️ Inactive Students</span> will show
+  you.</p>
+
+  <h4>Carry Over says there is nothing to carry forward.</h4>
+  <p>This year's class lists have not been imported yet. Carry over only offers
+  students it can confirm are on this year's roster. Import the class lists, then
+  come back. See <a href="#carryover">Carry over</a>.</p>
+
+  <h4>A student was charged twice for one instrument.</h4>
+  <p>Open Budget, then Student Fees, find the extra line and remove or waive it.
+  Fees are one per instrument, so a student holding two really does owe two.</p>
+
+  <h4>Two of my instruments look identical in the list.</h4>
+  <p>Give them a barcode, district number or serial number in
+  <span class="btn-ref">✏️ Edit</span>. Until then, Roka numbers them, for
+  example "Flute (2 of 3)", so you can still tell them apart when assigning.</p>
+
+  <h4>An instrument I do not want to lend keeps being offered.</h4>
+  <p>Put a word like "unrepairable", "lost", "missing", "stolen" or "retired" in
+  its condition or comments, and it will stop being offered.</p>
+
+  <h4>Can I use this at home and at school?</h4>
+  <p>Your data lives on the computer you are using. Set a backup folder in
+  OneDrive on both machines so the same data follows you. Do not run both at once
+  on the same folder.</p>
+
+  <h4>Something crashed and I lost my place.</h4>
+  <p>Reopen the program. Work is saved as you go, not when you close. Then please
+  report it: <a href="#support">Report a bug</a>.</p>
+
+  <a class="top" href="#faq">Back to top</a>
+</section>
+
+</main>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var SUPPORT_EMAIL = "MangumM@bsd405.org";
+
+  // ── the two Outlook buttons ────────────────────────────────────────────
+  var bugBody = [
+    "Please describe the problem, then attach your screenshot.","",
+    "WHAT SCREEN WERE YOU ON?","(for example: Equipment, Teacher Tools > Seating Charts)","",
+    "WHAT DID YOU DO, STEP BY STEP?","1.","2.","3.","",
+    "WHAT DID YOU EXPECT TO HAPPEN?","","",
+    "WHAT HAPPENED INSTEAD?","","",
+    "DOES IT HAPPEN EVERY TIME?","","",
+    "-- PLEASE ATTACH A SCREENSHOT --",
+    "Press the Windows key + Shift + S, drag a box around the problem, then",
+    "press Ctrl+V here to paste the picture into this email.",""
+  ].join("\n");
+
+  var featBody = [
+    "Please describe what you need, in as much detail as you can.","",
+    "WHAT DO YOU WANT TO BE ABLE TO DO?","","",
+    "HOW DO YOU DO IT TODAY (on paper, in a spreadsheet, in another program)?","","",
+    "WHO WOULD USE IT, AND HOW OFTEN?","","",
+    "WHAT WOULD IT SAVE YOU?","","",
+    "ANYTHING ELSE THAT WOULD HELP (examples, a sample of the form or sheet",
+    "you use now, a screenshot of how another program does it):","","",
+    "Please note: to stay within student privacy law, Roka is not going to hold",
+    "sensitive student data or detailed instructional modifications. Anything in",
+    "that area can only ever be handled in a very general way.",""
+  ].join("\n");
+
+  function mailto(subject, body){
+    return "mailto:" + SUPPORT_EMAIL +
+           "?subject=" + encodeURIComponent(subject) +
+           "&body=" + encodeURIComponent(body);
+  }
+  document.getElementById("bugbtn").href  = mailto("Roka's Resonance: bug report", bugBody);
+  document.getElementById("featbtn").href = mailto("Roka's Resonance: feature request", featBody);
+
+  // ── search ─────────────────────────────────────────────────────────────
+  var sections = [].slice.call(document.querySelectorAll("main section"));
+  var index = sections.map(function(sec){
+    var h = sec.querySelector("h2");
+    return {
+      id: sec.id,
+      title: h ? h.textContent.trim() : sec.id,
+      text: sec.textContent.replace(/\s+/g, " ").trim()
+    };
+  });
+
+  var q = document.getElementById("q");
+  var out = document.getElementById("results");
+  var clear = document.getElementById("qclear");
+  var toc = document.getElementById("toc");
+
+  function esc(s){
+    return s.replace(/[&<>"]/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];
+    });
+  }
+
+  function snippet(text, term){
+    var i = text.toLowerCase().indexOf(term);
+    if (i < 0) return "";
+    var from = Math.max(0, i - 42), to = Math.min(text.length, i + term.length + 78);
+    return (from ? "..." : "") + text.slice(from, to) + (to < text.length ? "..." : "");
+  }
+
+  function highlight(text, term){
+    var i = text.toLowerCase().indexOf(term.toLowerCase());
+    if (i < 0) return esc(text);
+    return esc(text.slice(0, i)) + "<b>" + esc(text.slice(i, i + term.length)) +
+           "</b>" + esc(text.slice(i + term.length));
+  }
+
+  function search(){
+    var term = q.value.trim().toLowerCase();
+    clear.style.display = term ? "block" : "none";
+    if (term.length < 2){
+      out.innerHTML = "";
+      toc.style.display = "";
+      return;
+    }
+    toc.style.display = "none";
+    var hits = index.filter(function(s){
+      return s.title.toLowerCase().indexOf(term) >= 0 ||
+             s.text.toLowerCase().indexOf(term) >= 0;
+    }).sort(function(a, b){
+      // a match in the heading beats a match in the body
+      var at = a.title.toLowerCase().indexOf(term) >= 0 ? 0 : 1;
+      var bt = b.title.toLowerCase().indexOf(term) >= 0 ? 0 : 1;
+      return at - bt;
+    });
+
+    if (!hits.length){
+      out.innerHTML = '<div class="none">Nothing found for "' + esc(q.value) +
+        '".<br><br>If it is not in the guide, please ' +
+        '<a href="#support">report it or ask for it</a>.</div>';
+      return;
+    }
+    out.innerHTML = hits.map(function(s){
+      var snip = snippet(s.text, term);
+      return '<a class="hit" href="#' + s.id + '" data-term="' + esc(term) + '">' +
+             highlight(s.title, term) +
+             (snip ? '<span class="snip">' + highlight(snip, term) + '</span>' : '') +
+             '</a>';
+    }).join("");
+  }
+
+  function clearMarks(){
+    [].slice.call(document.querySelectorAll("main mark")).forEach(function(m){
+      var t = document.createTextNode(m.textContent);
+      m.parentNode.replaceChild(t, m);
+    });
+  }
+
+  function markWithin(section, term){
+    clearMarks();
+    if (!term) return;
+    var walker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT, null, false);
+    var nodes = [], n;
+    while ((n = walker.nextNode())) nodes.push(n);
+    var lower = term.toLowerCase();
+    nodes.forEach(function(node){
+      var idx = node.nodeValue.toLowerCase().indexOf(lower);
+      if (idx < 0 || !node.parentNode || node.parentNode.tagName === "SCRIPT") return;
+      var after = node.splitText(idx);
+      after.splitText(term.length);
+      var mark = document.createElement("mark");
+      mark.appendChild(document.createTextNode(after.nodeValue));
+      after.parentNode.replaceChild(mark, after);
+    });
+  }
+
+  q.addEventListener("input", search);
+  q.addEventListener("keydown", function(e){
+    if (e.key === "Escape"){ q.value = ""; search(); clearMarks(); q.blur(); }
+    if (e.key === "Enter"){
+      var first = out.querySelector(".hit");
+      if (first) first.click();
+    }
+  });
+  clear.addEventListener("click", function(){
+    q.value = ""; search(); clearMarks(); q.focus();
+  });
+  out.addEventListener("click", function(e){
+    var hit = e.target.closest ? e.target.closest(".hit") : null;
+    if (!hit) return;
+    var sec = document.getElementById(hit.getAttribute("href").slice(1));
+    if (sec) setTimeout(function(){ markWithin(sec, hit.dataset.term); }, 60);
+  });
+
+  // "/" from anywhere jumps into the search box
+  document.addEventListener("keydown", function(e){
+    if (e.key === "/" && document.activeElement !== q){
+      e.preventDefault(); q.focus(); q.select();
+    }
+  });
+
+  // ── highlight the section you are reading in the sidebar ───────────────
+  var links = {};
+  [].slice.call(toc.querySelectorAll("a")).forEach(function(a){
+    links[a.getAttribute("href").slice(1)] = a;
+  });
+  if ("IntersectionObserver" in window){
+    var seen = new Set();
+    var obs = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if (en.isIntersecting) seen.add(en.target.id); else seen.delete(en.target.id);
+      });
+      var top = sections.filter(function(s){ return seen.has(s.id); })[0];
+      for (var id in links) links[id].classList.remove("on");
+      if (top && links[top.id]) links[top.id].classList.add("on");
+    }, {rootMargin: "-10% 0px -70% 0px"});
+    sections.forEach(function(s){ obs.observe(s); });
+  }
+})();
+</script>
+</body>
+</html>

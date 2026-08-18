@@ -1078,6 +1078,7 @@ class _RemindersDialog(ttk.Toplevel):
         self.trip = trip
         self.attending = attending
         self.school, self.director = teacher
+        self.base_dir = getattr(parent, "base_dir", "")
         self.title(f"Reminders — {trip['name']}")
         self.resizable(True, True)
         self.grab_set()
@@ -1202,9 +1203,11 @@ class _RemindersDialog(ttk.Toplevel):
         ttk.Label(win, text=f"✉  {audience.title()} — {label} reminder",
                   font=("Segoe UI", 12, "bold"),
                   bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(12, 2))
-        ttk.Label(win, text="Copying saves your edits as this trip's email — "
-                            "reused for both reminder stages, and carried "
-                            "into next year via “Copy From Previous”.",
+        from ui.email_compose import add_send_button, add_send_hint
+        add_send_hint(win, "so reword it here, not there").pack(anchor=W, padx=16)
+        ttk.Label(win, text="Saved as this trip's email, reused for both "
+                            "reminder stages and carried into next year via "
+                            "“Copy From Previous”.",
                   font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W, padx=16)
         srow = ttk.Frame(win)
         srow.pack(fill=X, padx=16, pady=(6, 2))
@@ -1249,13 +1252,24 @@ class _RemindersDialog(ttk.Toplevel):
         b.pack(fill=X, padx=16, pady=(4, 12))
         ttk.Button(b, text="Close", bootstyle=(SECONDARY, OUTLINE),
                    command=win.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(b, text="📋 Copy Subject + Body", bootstyle=PRIMARY,
+        ttk.Button(b, text="📋 Copy Subject + Body", bootstyle=(PRIMARY, OUTLINE),
                    command=copy_all).pack(side=RIGHT, padx=4)
         ttk.Button(b, text="📋 Copy Body Only", bootstyle=(PRIMARY, OUTLINE),
                    command=copy_body).pack(side=RIGHT, padx=4)
+        # The addresses this audience gets.  Teachers and admin are chased up
+        # individually rather than from a stored list, so that one goes out
+        # with no BCC and the teacher adds who it needs to reach.
+        bcc = {"families": self._family_addrs,
+               "chaperones": self._chap_addrs}.get(audience, [])
+        add_send_button(b, win, self.base_dir,
+                        subj_var.get, lambda: box.get("1.0", "end"),
+                        lambda: bcc,
+                        on_before_send=lambda s, t: self._persist_email(audience, t),
+                        flash=flash,
+                        saved_note="Saved with this trip.")
         ttk.Button(b, text="↺ Reset to Auto", bootstyle=(SECONDARY, OUTLINE),
                    command=reset_auto).pack(side=LEFT, padx=4)
-        fit_window(win, 640, 560)
+        fit_window(win, 700, 580)
 
     def _mark(self, key):
         self.db.mark_trip_reminder(self.trip["id"], key,
