@@ -950,6 +950,24 @@ class Database:
         except Exception:
             return True
 
+    @staticmethod
+    def _site_scope(alias: str, site_id=None, level: str = None):
+        """(sql, params) restricting a query to one school, or to one level.
+
+        Rows with no site are treated as belonging to the level being asked
+        for, never excluded.  A profile part-way through the migration, or one
+        whose owner has not opened the Schools tab, still has unstamped rows;
+        dropping those would empty the inventory list, which is a far worse
+        failure than showing one row too many.
+        """
+        col = f"{alias}.site_id"
+        if site_id:
+            return f" AND {col} = ?", [site_id]
+        if level:
+            return (f" AND ({col} IS NULL OR {col} IN "
+                    f"(SELECT id FROM sites WHERE level = ?))", [level])
+        return "", []
+
     def _assert_same_site(self, conn, instrument_id: int, student_id: int):
         """Refuse to lend one school's instrument to another school's child.
 
@@ -1231,11 +1249,16 @@ class Database:
             ).fetchone()
         return "Checked Out" if row else "Available"
 
-    def get_instruments_with_status(self, include_inactive=False):
+    def get_instruments_with_status(self, include_inactive=False,
+                                    site_id=None, level=None):
         """Return instruments with computed status, handling several active
         checkouts per instrument and out-on-loan instruments.  Uses scalar
         subqueries so an instrument is never duplicated in the result."""
         active_filter = "" if include_inactive else "AND i.is_active=1"
+        # One school's instruments never appear in another's list -- that is
+        # what stops a Sherwood Forest trumpet being offered to a high schooler
+        # in the first place, rather than only refusing at the last moment.
+        site_filter, site_params = self._site_scope("i", site_id, level)
         sql = f"""
             SELECT
                 i.*,
@@ -1253,11 +1276,11 @@ class Database:
                     WHERE l.instrument_id = i.id AND l.date_returned IS NULL
                     ORDER BY l.id LIMIT 1) AS loan_school
             FROM instruments i
-            WHERE 1=1 {active_filter}
+            WHERE 1=1 {active_filter} {site_filter}
             ORDER BY i.category, i.description
         """
         with self._connect() as conn:
-            rows = conn.execute(sql).fetchall()
+            rows = conn.execute(sql, site_params).fetchall()
 
         out = []
         for r in rows:
@@ -1874,7 +1897,16 @@ class Database:
 
     # ─── Student CRUD ──────────────────────────────────────────────────────────
 
-    def get_all_students(self, school_year=None, include_inactive=False):
+    def get_all_students(self, school_year=None, include_inactive=False,
+                         site_id=None, level=None):
+        """The roster.  ``site_id`` narrows to one school; ``level`` narrows to
+        secondary or elementary.
+
+        Both default to off, so every existing caller keeps seeing what it saw.
+        Screens that must not show 5th graders -- the concert and trip mailing
+        lists above all -- ask for level="secondary" rather than filtering
+        afterwards, so the children are not in the result to be missed.
+        """
         with self._connect() as conn:
             conditions = []
             params = []
@@ -1883,9 +1915,11 @@ class Database:
             if school_year:
                 conditions.append("school_year=?")
                 params.append(school_year)
-            where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+            where = ("WHERE " + " AND ".join(conditions)) if conditions else "WHERE 1=1"
+            scope, sp = self._site_scope("students", site_id, level)
             return conn.execute(
-                f"SELECT * FROM students {where} ORDER BY last_name, first_name", params
+                f"SELECT * FROM students {where}{scope} "
+                f"ORDER BY last_name, first_name", params + sp
             ).fetchall()
 
     def get_student(self, student_id: int):
@@ -2389,9 +2423,21 @@ class Database:
                 )
 
     def get_students_for_email(self, school_year=None, ensemble=None, period=None,
-                               instrument=None, include_inactive=False):
+                               instrument=None, include_inactive=False,
+                               site_id=None, level="secondary"):
         """Return active student rows matching the given filters.  Multi-value
-        fields (ensembles, class_periods) are matched by membership."""
+        fields (ensembles, class_periods) are matched by membership.
+
+        Scoped to secondary students by DEFAULT, unlike every other query here.
+        This one builds the lists people are actually contacted from -- concert
+        and field trip mail, seating charts, percussion rotations, ensembles --
+        and every one of those is a secondary idea. A 5th grader has no seating
+        chart and must never turn up on a marching band trip email, so the safe
+        default is the one where they are absent unless asked for.
+
+        The 5th grade screens pass site_id for their own school, which takes
+        precedence; level=None returns everybody.
+        """
         sql = "SELECT * FROM students WHERE 1=1"
         params = []
         if not include_inactive:
@@ -2399,6 +2445,9 @@ class Database:
         if school_year:
             sql += " AND school_year=?"
             params.append(school_year)
+        scope, sp = self._site_scope("students", site_id, level)
+        sql += scope
+        params += sp
         sql += " ORDER BY last_name, first_name"
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()

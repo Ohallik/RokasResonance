@@ -514,8 +514,11 @@ class InventoryManager(ttk.Frame):
 
     def refresh(self):
         """Reload all data from DB."""
+        # This is the secondary inventory.  A 5th grade school's instruments
+        # live at that school and are managed from the 5th Grade window, so
+        # they are not in this list to be checked out to the wrong child.
         self._all_rows = list(self.db.get_instruments_with_status(
-            include_inactive=self._show_inactive.get()
+            include_inactive=self._show_inactive.get(), level="secondary"
         ))
         self._update_category_filter()
         self._apply_filters()

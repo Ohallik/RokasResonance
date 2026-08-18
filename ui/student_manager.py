@@ -434,8 +434,11 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
     def refresh(self):
         year = self._year_var.get() or None
         include_inactive = self._show_inactive_var.get()
+        # 5th graders are managed in the 5th Grade window, not here -- keeping
+        # them out of this roster is what keeps them off secondary mailings.
         self._all_students = list(self.db.get_all_students(
-            school_year=year, include_inactive=include_inactive))
+            school_year=year, include_inactive=include_inactive,
+            level="secondary"))
         # Keep only ticks for students still in the loaded roster
         loaded_ids = {s["id"] for s in self._all_students}
         self._checked &= loaded_ids
@@ -1029,7 +1032,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
 
         year = None if scope_var.get() == "all" else (self._year_var.get() or None)
         students = list(self.db.get_all_students(
-            school_year=year, include_inactive=inactive_var.get()))
+            school_year=year, include_inactive=inactive_var.get(),
+            level="secondary"))
         if not students:
             Messagebox.show_info("No students match that scope.", title="Nothing to Export")
             return
