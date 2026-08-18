@@ -1157,14 +1157,25 @@ class InventoryManager(ttk.Frame):
             from pdf_generator import generate_form_for_checkout
             path = generate_form_for_checkout(self.db, chosen["id"], self.base_dir)
             self.db.mark_form_generated(chosen["id"])
-            Messagebox.show_info(
-                f"Loan form generated!\n\n{path}\n\nOpening now...",
-                title="Form Generated", parent=self.winfo_toplevel()
-            )
-            os.startfile(path)
         except Exception as e:
             Messagebox.show_error(f"Failed to generate form:\n{e}", title="Error",
                                   parent=self.winfo_toplevel())
+            return
+
+        # Straight to the PDF.  There used to be a "Loan form generated!
+        # ... Opening now..." box here, which announced what was about to
+        # happen and then made her click OK before it happened -- an extra
+        # click on the one action she repeats for every child in the room.
+        # Nothing is said on success now; the PDF opening is the receipt.
+        try:
+            os.startfile(path)
+        except Exception as e:
+            # It was written, it just would not open.  Say where it is,
+            # rather than leave her wondering if the form exists at all.
+            Messagebox.show_warning(
+                "The form was saved, but it could not be opened "
+                f"automatically.\n\n{path}\n\n({e})",
+                title="Form Saved", parent=self.winfo_toplevel())
 
     def _upload_invoice(self):
         from tkinter import filedialog
