@@ -663,8 +663,16 @@ class InventoryManager(ttk.Frame):
             row = self.db.get_instrument(self._selected_id)
             if row:
                 instrument = dict(row)
+        # Pass the program type through: without it an orchestra or choir
+        # teacher got the band persona, and was told they run "the band program".
+        try:
+            from ui.settings_dialog import load_settings
+            mode = (load_settings(self.base_dir).get("teacher") or {}).get(
+                "program_type", "band")
+        except Exception:
+            mode = "band"
         self._chat_window = ChatDialog(
-            self.winfo_toplevel(), self.db, self.base_dir, instrument
+            self.winfo_toplevel(), self.db, self.base_dir, instrument, mode=mode
         )
 
     def _load_detail(self, instrument_id: int):

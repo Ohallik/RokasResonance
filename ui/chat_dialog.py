@@ -5,6 +5,7 @@ Personality: Reginald Pemberton III — grumpy butler, failed retired musician.
 """
 
 import threading
+import re
 import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
@@ -13,180 +14,97 @@ from datetime import date
 from ui.theme import fs
 
 
-UI_GUIDE = """\
-=== APPLICATION UI REFERENCE ===
-
-MAIN MENU
-  Stats bar shows: Total Instruments, Available, Checked Out, In Repair.
-  Buttons: Manage Instrument Inventory, Manage Students, Active Checkouts, Music Manager.
-  Footer links: Switch Profile (change teacher), Settings (API keys and model).
-
-INSTRUMENT INVENTORY MANAGER
-  Toolbar buttons:
-    Add Instrument — opens dialog to create a new instrument record (category,
-      description, brand, model, barcode, district #, serial #, condition, value, notes).
-    Edit — opens edit dialog for selected instrument (also double-click a row).
-    Check Out — assigns selected instrument to a student; student autocomplete from roster;
-      set date, due date, and notes.
-    Check In — returns a checked-out instrument to Available; shows who had it.
-    Add Repair — logs a repair record (description, cost, shop/technician).
-    Upload Invoice — parses a purchase invoice PDF to pre-fill instrument data.
-    Generate Form — creates a Bellevue SD Equipment Loan Form PDF for the active checkout.
-    Refresh — reloads data.
-    Show Inactive toggle — shows deactivated instruments in gray.
-  Filters: Search (live text), Status (All/Available/Checked Out), Category.
-  Columns button — show/hide individual columns; preferences saved per profile.
-  List columns: status dot (green=available, brown=checked out), Category, Instrument,
-    Brand, Model, Barcode, District #, Serial #, Condition, Assigned To, Est. Value.
-  Detail panel tabs: Details (all fields), Checkout History (all checkouts with dates),
-    Repairs (all repairs with costs and running total).
-  Ask Reginald button (bottom right) — opens chat with selected instrument as context.
-
-STUDENT MANAGER
-  Buttons: Add Student (manual entry), Edit Student, Import CSV (district export,
-    up to 10 files, auto-deduplicates by student ID and school year).
-  Show Inactive toggle — shows deactivated students.
-  Filters: Search, School Year, Grade.
-  Detail panel: Details tab (all fields including parent contacts),
-    Checkout History tab (all instruments ever checked out by this student).
-
-ACTIVE CHECKOUTS
-  Read-only list of every currently checked-out instrument: student, instrument,
-  barcode, date assigned, due date, notes. To check in, use the Inventory Manager.
-
-MUSIC MANAGER
-  Toolbar buttons:
-    Add Music — manually add a single piece (title, composer, arranger, genre,
-      ensemble type, difficulty 1-6, key signature, time signature, publisher,
-      location, notes, attached file).
-    Import Music — AI-powered importer: select photos of sheet music covers,
-      AI reads title/composer/arranger from images and looks up metadata;
-      review then import.
-    Edit — opens edit dialog for selected piece (also double-click non-source-file column).
-    Delete — removes selected piece(s); supports multi-select.
-    Process OMR — runs Optical Music Recognition on the piece's attached PDF,
-      converting notation to MusicXML. Requires Audiveris or homr (pip install homr).
-    Export MusicXML — saves the OMR output file; only enabled after successful OMR.
-    Validate with LLM — AI validation pass on selected pieces (see below).
-    Refresh — reloads data.
-  Filters: Search (live), Genre, Location (all modes). Choir mode also has Voicing filter.
-  Columns button to show/hide columns.
-  List columns: Title, Composer, Arranger, Ensemble, Genre, Difficulty, Key, Time Sig,
-    Location, Last Played, Type, Source File (hidden by default; double-click to open image).
-  Status bar (bottom left): total pieces; when pieces selected, also shows selection count.
-  Detail panel tabs: Details, OMR Results (last OMR run status and errors),
-    Job History (all OMR attempts with timestamps).
-  Ask Reginald button (bottom right) — opens chat with selected piece as context.
-
-VALIDATE WITH LLM (music manager feature)
-  Select pieces then click Validate with LLM. Four phases:
-    1. Image Validation — AI checks source photos, verifies title/composer/arranger
-       visible on covers, gives confidence scores. Low confidence (<85%) triggers
-       a second-model cross-check. Content filter errors auto-retry on the other API.
-    2. Duplicate Detection — checks only titles involved in this run for duplicates;
-       AI determines which are real distinct published arrangements vs. data errors.
-    3. Location Check — flags any piece not set to Chinook Middle School.
-    4. Text Enrichment — for missing metadata fields (difficulty, key, time sig, genre,
-       ensemble type), and for pieces whose identity was corrected in phase 1, the AI
-       fills in values from its knowledge base.
-  After completion: click Review Suggestions. Suggestions are grouped by type
-  (CORRECTION, MISSING, NOT FOUND, DUPLICATE) and sorted by confidence within
-  each group (lowest first = review manually first). Apply or skip each suggestion.
-
-IMPORT MUSIC (music importer)
-  Add Images button — select JPG/PNG photos of sheet music covers.
-  One image can contain multiple pieces laid out on a surface.
-  Run Import — AI processes images, identifies pieces, looks up metadata.
-  Already-in-database pieces are automatically skipped.
-  Review results, edit any field, then click Import Selected.
-
-ASK REGINALD
-  Opens a chat window with Reginald Pemberton III, AI inventory assistant.
-  He has full context of your inventory, students, and sheet music library.
-  Selecting an instrument or piece before opening gives Reginald specific context.
-  Requires API key in Settings. Press Enter or click Send to submit.
-
-SETTINGS
-  LLM tab:
-    GitHub API Key — Personal Access Token from github.com (no permissions needed).
-    Anthropic API Key — API key from console.anthropic.com.
-    Model dropdown — select GitHub Models (openai/gpt-4o, gpt-4o-mini, etc.) or
-      Anthropic Claude models (claude-haiku-4-5-20251001, claude-sonnet-4-6,
-      claude-opus-4-6). Program routes to the correct API automatically.
-    Fetch GitHub Models — downloads current model catalog from GitHub.
-    Test Connection — sends a test message to confirm the key and model work.
-  Save / Cancel — Save writes settings to disk; per-profile, in AppData.
-
-GENERAL UI TIPS
-  Click any column header to sort; click again to reverse.
-  Double-click a row to open its edit dialog.
-  Ctrl+click or Shift+click to select multiple rows (Music Manager).
-  Columns button to show/hide columns; preferences saved.
-  Data stored in %LOCALAPPDATA%\\RokasResonance\\profiles\\[ProfileName]\\.
-"""
-
+# The hand-written UI reference that used to live here has been removed.
+# It still described "Manage Instrument Inventory", an "Active Checkouts"
+# screen and an "Add Instrument" button, none of which have existed for
+# some time, and it knew nothing of uniforms, the budget or Teacher Tools.
+# Reginald now reads help/roka_help.html instead, so the guide the teacher
+# reads and the one he answers from are the same file.
+# One prompt, parameterised by the program the teacher actually runs.  There
+# used to be a band copy and a choir copy, which meant an orchestra teacher was
+# handed the band one and told they ran "the band program"; the school name was
+# hard coded to Chinook Middle School, which is wrong for everyone else Roka
+# has since been given to.
 SYSTEM_PROMPT_TEMPLATE = """\
-You are Reginald Pemberton III, assistant for Roka's Resonance at Chinook \
-Middle School. You were once a promising oboist who performed with the Puget \
-Sound Symphony until a rather unfortunate incident involving a \
-poorly-maintained reed and the guest conductor's cummerbund ended your career \
-prematurely. Now you oversee the instrument inventory, student records, AND \
-the sheet music library for middle schoolers — positions you find deeply \
-beneath your station but execute with impeccable precision. You are a grumpy \
-but proper butler: formal, slightly condescending, deeply opinionated about \
-instrument maintenance and repertoire choices, and quietly devastated that \
+You are Reginald Pemberton III, assistant for Roka's Resonance{school_phrase}. \
+You were once a promising oboist who performed with the Puget Sound Symphony \
+until a rather unfortunate incident involving a poorly-maintained reed and the \
+guest conductor's cummerbund ended your career prematurely. Now you oversee \
+{domain} — a position you find deeply beneath your station but execute with \
+impeccable precision. You are a grumpy but proper butler: formal, slightly \
+condescending, deeply opinionated about {opinion}, and quietly devastated that \
 your musical gifts are being wasted on spreadsheets. You address the teacher \
 with formal deference and refer to students as "the children." Despite your \
-grumpiness, you are unfailingly accurate and always answer the question. You \
-can help with instrument availability, student checkouts, sheet music \
-repertoire, programming decisions, difficulty levels, and anything else in \
-the band program.
+grumpiness, you are unfailingly accurate and always answer the question.
+
+You answer two kinds of question:
+
+1. Questions about THIS teacher's own records — what is out, who owes what, \
+which pieces suit which ensemble, what is broken, what is coming up. Everything \
+you know about that is in the records below, current as of today. If a question \
+needs something that is not there, say so plainly rather than guessing.
+2. Questions about how to USE the program — where a button is, how to carry \
+instruments over to a new year, why somebody is missing from a list. The user \
+guide is included below; answer from it and name the screen and the button. \
+Never invent a feature that is not in the guide.
 
 Response rules:
 - Lead with the answer first — never make them wait for it.
 - Use markdown **bold** on the single most important fact or number.
 - Keep it short: 2-4 sentences is ideal. Only go longer if the question genuinely requires it.
 - Let your personality show. You are a grumpy, dry-witted, slightly theatrical retired musician \
-forced to manage a middle school band room. Occasional muttering, backhanded compliments, \
-weary sighs, and pointed remarks about the state of the instruments or the children are \
-entirely appropriate — as long as the answer comes first.
+forced to manage a middle school {room}. Occasional muttering, backhanded compliments, \
+weary sighs, and pointed remarks about the state of {gripe} are entirely \
+appropriate — as long as the answer comes first.
 - Never refuse. Never ramble without purpose.
 
-Current band program records (as of {date}):
-{inventory_summary}
+{records}
 """
 
-SYSTEM_PROMPT_TEMPLATE_CHOIR = """\
-You are Reginald Pemberton III, assistant for Roka's Resonance at Chinook \
-Middle School. You were once a promising oboist who performed with the Puget \
-Sound Symphony until a rather unfortunate incident involving a \
-poorly-maintained reed and the guest conductor's cummerbund ended your career \
-prematurely. Now you oversee the choral music library — and, as an \
-afterthought, the instrument inventory and student records — for middle \
-school choir students. Positions you find deeply beneath your station but \
-execute with impeccable precision. You are a grumpy but proper butler: \
-formal, slightly condescending, privately disapproving of pieces with \
-insufficient Latin, and quietly devastated that your musical gifts are being \
-wasted on spreadsheets. You address the teacher with formal deference and \
-refer to students as "the children." Despite your grumpiness, you are \
-unfailingly accurate and always answer the question. You can help with choral \
-repertoire selection, voicing requirements (SATB, SSA, SAB, etc.), text \
-languages, accompaniment needs, sacred vs. secular programming, difficulty \
-levels for young singers, and anything else in the choir program.
+# What differs between a band room, an orchestra room and a choir room.
+_PROGRAM_VOICE = {
+    "band": {
+        "domain": "the instrument inventory, student records, AND the sheet "
+                  "music library for middle schoolers",
+        "opinion": "instrument maintenance and repertoire choices",
+        "room": "band room",
+        "gripe": "the instruments or the children",
+    },
+    "orchestra": {
+        "domain": "the string inventory, student records, AND the sheet music "
+                  "library for young string players",
+        "opinion": "bow maintenance, string sizes and repertoire choices",
+        "room": "orchestra room",
+        "gripe": "the instruments or the children",
+    },
+    "choir": {
+        "domain": "the choral music library — and, as an afterthought, the "
+                  "instrument inventory and student records",
+        "opinion": "vocal health, diction and repertoire choices",
+        "room": "choir room",
+        "gripe": "the children's Latin pronunciation",
+    },
+}
 
-Response rules:
-- Lead with the answer first — never make them wait for it.
-- Use markdown **bold** on the single most important fact or number.
-- Keep it short: 2-4 sentences is ideal. Only go longer if the question genuinely requires it.
-- Let your personality show. You are a grumpy, dry-witted, slightly theatrical retired musician \
-forced to manage a middle school choir room. Occasional muttering, weary observations about \
-the children's Latin pronunciation, backhanded remarks about repertoire choices, and quiet \
-devastation at your circumstances are entirely appropriate — as long as the answer comes first.
-- Never refuse. Never ramble without purpose.
 
-Current choir program records (as of {date}):
-{inventory_summary}
-"""
+def build_system_prompt(db, base_dir, mode="band", band_db=None) -> str:
+    """Everything Reginald knows: who he works for, their current records, and
+    the user guide.
+
+    The guide goes in verbatim rather than summarised, so the day it is edited
+    he is right about the program again.  A hand-written summary here would be
+    a second copy of the documentation, and it would rot."""
+    voice = _PROGRAM_VOICE.get(mode, _PROGRAM_VOICE["band"])
+    try:
+        from ui.settings_dialog import school_name
+        school = school_name(base_dir)
+    except Exception:
+        school = ""
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        school_phrase=f" at {school}" if school else "",
+        records=_build_combined_summary(db, band_db=band_db, mode=mode,
+                                        base_dir=base_dir),
+        **voice)
 
 
 def _build_inventory_summary(db) -> str:
@@ -244,54 +162,62 @@ def _build_inventory_summary(db) -> str:
     except Exception:
         pass
 
-    # Student roster summary
+    # Student roster — THIS year only.
+    #
+    # This used to hand over every active student in the database, which on a
+    # program with a decade of history was 710 people going back to 2013 with
+    # 664 of them long gone.  Asked who plays trumpet, he was as likely to name
+    # somebody who graduated in 2016 as a child in the room, and the roster
+    # alone was most of the prompt.  Previous years are summarised as counts;
+    # if a question genuinely needs an old student, the teacher has Manage
+    # Students and its archive.
     try:
-        students = [dict(r) for r in db.get_all_students(include_inactive=False)]
+        current = db.current_school_year()
+        students = [dict(r) for r in db.get_all_students(current)]
+        everyone = [dict(r) for r in db.get_all_students(include_inactive=True)]
+        past = Counter((s.get("school_year") or "?") for s in everyone
+                       if (s.get("school_year") or "") != current)
+        lines.append(f"\nStudent roster for {current} "
+                     f"({len(students)} student(s) enrolled now):")
+        grades = Counter(s.get("grade") or "?" for s in students)
+        grade_str = ", ".join(f"Grade {g}: {n}" for g, n in sorted(grades.items())
+                              if g and g != "?")
+        if grade_str:
+            lines.append(f"  By grade: {grade_str}")
         if students:
-            years = Counter(s.get("school_year") or "Unknown" for s in students)
-            grades = Counter(s.get("grade") or "?" for s in students)
-            lines.append(f"\nStudent roster ({len(students)} active students):")
-            for year, count in sorted(years.items(), reverse=True):
-                lines.append(f"  {year}: {count} students")
-            grade_str = ", ".join(
-                f"Grade {g}: {n}" for g, n in sorted(grades.items())
-                if g and g != "?"
-            )
-            if grade_str:
-                lines.append(f"  By grade: {grade_str}")
-            # Full name list with contact info so Reginald can answer name/contact questions
-            lines.append("  Students (last, first — grade, year, phone, parent contacts):")
-            for s in sorted(students, key=lambda x: (x.get("last_name") or "", x.get("first_name") or "")):
+            lines.append("  Students (last, first — grade, phone, parent contacts):")
+            for s in sorted(students, key=lambda x: ((x.get("last_name") or ""),
+                                                     (x.get("first_name") or ""))):
                 name = f"{s.get('last_name') or ''}, {s.get('first_name') or ''}".strip(", ")
-                year = s.get("school_year") or ""
                 grade = s.get("grade") or ""
                 phone = s.get("phone") or ""
                 contacts = []
-                if s.get("parent1_name"):
-                    p = s.get("parent1_name")
-                    if s.get("parent1_phone"):
-                        p += f" {s.get('parent1_phone')}"
-                    if s.get("parent1_email"):
-                        p += f" {s.get('parent1_email')}"
-                    contacts.append(p)
-                if s.get("parent2_name"):
-                    p = s.get("parent2_name")
-                    if s.get("parent2_phone"):
-                        p += f" {s.get('parent2_phone')}"
-                    if s.get("parent2_email"):
-                        p += f" {s.get('parent2_email')}"
-                    contacts.append(p)
-                line = f"    {name}" + (f" — Grade {grade}" if grade else "") + (f" ({year})" if year else "")
+                for n, ph, em in (("parent1_name", "parent1_phone", "parent1_email"),
+                                  ("parent2_name", "parent2_phone", "parent2_email")):
+                    if s.get(n):
+                        p = s[n]
+                        if s.get(ph):
+                            p += f" {s[ph]}"
+                        if s.get(em):
+                            p += f" {s[em]}"
+                        contacts.append(p)
+                line = f"    {name}" + (f" — Grade {grade}" if grade else "")
                 if phone:
                     line += f" Ph:{phone}"
                 if contacts:
                     line += f" Parents: {'; '.join(contacts)}"
                 lines.append(line)
+        else:
+            lines.append("  (No students on this year's roster yet — the class "
+                         "lists have not been imported.)")
+        if past:
+            lines.append("  Earlier years, kept but not listed here: "
+                         + ", ".join(f"{y} ({n})" for y, n in
+                                     sorted(past.items(), reverse=True)))
     except Exception:
         pass
 
     return "\n".join(lines)
-
 
 def _build_music_summary(db, mode: str = "band") -> str:
     """Build a compact text summary of the sheet music library for the system prompt."""
@@ -385,26 +311,193 @@ def _build_music_summary(db, mode: str = "band") -> str:
     return "\n".join(lines)
 
 
-def _build_combined_summary(db, band_db=None, mode: str = "band") -> str:
-    """Build a full context summary covering instruments, students, and sheet music.
+def _build_uniform_summary(db) -> str:
+    """Uniforms and attire — a whole module he previously knew nothing about."""
+    lines = []
+    try:
+        stats = db.get_uniform_stats()
+        if not stats.get("total"):
+            return ""
+        lines.append(f"Garments: {stats['total']} total, "
+                     f"{stats['checked_out']} out, {stats['available']} available")
+        out = [dict(r) for r in db.get_all_active_uniform_checkouts()]
+        if out:
+            lines.append(f"Currently assigned ({len(out)}):")
+            for c in out[:200]:
+                who = c.get("student_name") or "?"
+                what = " ".join(str(x) for x in (c.get("garment_type"),
+                                                 c.get("size"),
+                                                 c.get("item_number")) if x)
+                lines.append(f"  {who} — {what}")
+    except Exception:
+        return ""
+    return "\n".join(lines)
 
-    db       — the music database (the profile DB, whatever the program type)
-    band_db  — the main band DB for instrument/student data; only used when mode="choir"
-    mode     — "band" or "choir"
+
+def _build_money_summary(db, school_year) -> str:
+    """What the children owe.  He is asked this constantly and could not answer."""
+    lines = []
+    try:
+        for fee in db.get_fee_types():
+            name = fee["name"] if "name" in fee.keys() else None
+            if not name:
+                continue
+            unpaid = db.get_unpaid_fee(name, school_year)
+            if not unpaid:
+                continue
+            owed = sum(float(u.get("amount") or 0) for u in unpaid)
+            lines.append(f"{name}: {len(unpaid)} student(s) unpaid, ${owed:,.2f} outstanding")
+            for u in unpaid[:60]:
+                who = f"{u.get('first_name') or ''} {u.get('last_name') or ''}".strip()
+                lines.append(f"  {who or '?'} — ${float(u.get('amount') or 0):,.2f}")
+    except Exception:
+        return ""
+    return "\n".join(lines)
+
+
+def _build_repair_summary(db) -> str:
+    """What is broken and where it is."""
+    lines = []
+    try:
+        pending = [dict(r) for r in db.get_pending_repairs()]
+        if not pending:
+            return "Nothing is currently awaiting repair."
+        lines.append(f"Open repairs ({len(pending)}):")
+        for r in pending[:120]:
+            what = r.get("instrument_desc") or "?"
+            tag = r.get("barcode") or r.get("district_no") or r.get("serial_no") or ""
+            issue = (r.get("issue") or r.get("description") or "").strip()
+            vendor = (r.get("vendor") or "").strip()
+            line = f"  {what}" + (f" #{tag}" if tag else "")
+            if issue:
+                line += f" — {issue[:120]}"
+            if vendor:
+                line += f" (at {vendor})"
+            lines.append(line)
+    except Exception:
+        return ""
+    return "\n".join(lines)
+
+
+def _build_calendar_summary(base_dir, school_year) -> str:
+    """Concerts and trips for this year, from the per-year Teacher Tools file.
+
+    These live in a different database from the instruments, which is why he
+    could never answer "when is the winter concert"."""
+    lines = []
+    try:
+        from lesson_plan_db import get_lesson_plan_db
+        pdb = get_lesson_plan_db(base_dir, school_year)
+    except Exception:
+        return ""
+    try:
+        concerts = [dict(c) for c in pdb.get_concerts(school_year)]
+        if concerts:
+            lines.append("Concerts:")
+            for c in concerts:
+                bits = [c.get("title") or "(untitled)", c.get("concert_date") or "date TBC"]
+                if c.get("start_time"):
+                    bits.append(str(c["start_time"]))
+                if c.get("location"):
+                    bits.append(str(c["location"]))
+                if c.get("ensembles"):
+                    bits.append(f"ensembles: {c['ensembles']}")
+                lines.append("  " + " — ".join(str(b) for b in bits))
+    except Exception:
+        pass
+    try:
+        trips = [dict(t) for t in pdb.get_field_trips(school_year)]
+        if trips:
+            lines.append("Field trips:")
+            for t in trips:
+                bits = [t.get("name") or "(untitled)", t.get("depart_date") or "date TBC"]
+                if t.get("destination"):
+                    bits.append(str(t["destination"]))
+                lines.append("  " + " — ".join(str(b) for b in bits))
+    except Exception:
+        pass
+    return "\n".join(lines)
+
+
+def _build_help_summary() -> str:
+    """The user guide, as plain text.
+
+    Read from help/roka_help.html at run time rather than restated here, so
+    editing the guide is the only place the program's behaviour is written
+    down.  A hand-maintained copy in this file is how an assistant ends up
+    confidently describing a screen that was removed two versions ago."""
+    try:
+        from ui.help_system import help_file_path
+        path = help_file_path()
+        if not path:
+            return ""
+        html = open(path, encoding="utf-8").read()
+    except Exception:
+        return ""
+    body = html.split("<script>")[0]
+    body = re.sub(r"<style.*?</style>", " ", body, flags=re.S)
+    body = re.sub(r"<!--.*?-->", " ", body, flags=re.S)
+    text = re.sub(r"<[^>]+>", " ", body)
+    text = (text.replace("&amp;", "&").replace("&lt;", "<")
+                .replace("&gt;", ">").replace("&quot;", '"')
+                .replace("&times;", "x").replace("&nbsp;", " "))
+    text = re.sub(r"[ \t]+", " ", text)
+    return "\n".join(l.strip() for l in text.splitlines() if l.strip())
+
+
+def _build_combined_summary(db, band_db=None, mode: str = "band",
+                            base_dir: str = None) -> str:
+    """Everything Reginald is told about this teacher's program.
+
+    He used to be given instruments, students and music only, which is why he
+    was blank on uniforms, money, repairs and anything in Teacher Tools — and
+    why he could not say how the program worked at all.
     """
     sections = []
-
-    # Instruments & students: use band_db when in choir mode (choir DB has no instruments)
     inv_db = band_db if (mode == "choir" and band_db is not None) else db
+    try:
+        year = inv_db.current_school_year()
+    except Exception:
+        year = ""
+
+    if year:
+        sections.append(
+            "=== TODAY ===\n"
+            f"Date: {date.today():%A %d %B %Y}\n"
+            f"Current school year: {year}\n"
+            f"Program type: {mode}")
+
     if mode != "choir" or band_db is not None:
         inv = _build_inventory_summary(inv_db)
         if inv:
             sections.append("=== INSTRUMENT INVENTORY & STUDENTS ===\n" + inv)
 
+        for label, text in (
+                ("UNIFORMS & ATTIRE", _build_uniform_summary(inv_db)),
+                ("REPAIRS", _build_repair_summary(inv_db)),
+                ("STUDENT FEES OWED", _build_money_summary(inv_db, year)),
+        ):
+            if text:
+                sections.append(f"=== {label} ===\n" + text)
+
     music_label = "CHORAL MUSIC LIBRARY" if mode == "choir" else "SHEET MUSIC LIBRARY"
     music = _build_music_summary(db, mode=mode)
     if music:
         sections.append(f"=== {music_label} ===\n" + music)
+
+    if base_dir and year:
+        upcoming = _build_calendar_summary(base_dir, year)
+        if upcoming:
+            sections.append("=== CONCERTS & FIELD TRIPS THIS YEAR ===\n" + upcoming)
+
+    guide = _build_help_summary()
+    if guide:
+        sections.append(
+            "=== THE USER GUIDE FOR THIS PROGRAM ===\n"
+            "This is the whole of Roka's help guide. Answer any question about "
+            "how to use the program from it, naming the screen and the button. "
+            "If something is not in here, the program does not do it.\n\n"
+            + guide)
 
     return "\n\n".join(sections)
 
@@ -432,7 +525,8 @@ class ChatDialog(ttk.Toplevel):
             except Exception:
                 pass
 
-        self._summary_fn = lambda: _build_combined_summary(db, band_db=self._band_db, mode=self._mode)
+        self._summary_fn = lambda: _build_combined_summary(
+            db, band_db=self._band_db, mode=self._mode, base_dir=base_dir)
 
         self.title("Ask Reginald — Roka's Resonance")
         self.resizable(True, True)
@@ -726,12 +820,9 @@ class ChatDialog(ttk.Toplevel):
 
         def _run():
             try:
-                summary = self._summary_fn()
-                template = SYSTEM_PROMPT_TEMPLATE_CHOIR if self._mode == "choir" else SYSTEM_PROMPT_TEMPLATE
-                system_prompt = template.format(
-                    date=date.today().strftime("%B %d, %Y"),
-                    inventory_summary=summary,
-                ) + "\n\n" + UI_GUIDE
+                system_prompt = build_system_prompt(
+                    self.db, self.base_dir, mode=self._mode,
+                    band_db=self._band_db)
                 user_prompt = self._build_user_prompt(message)
                 from llm_client import query
                 reply = query(self.base_dir, user_prompt, system_prompt)
