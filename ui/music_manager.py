@@ -2783,11 +2783,19 @@ class _LLMValidateDialog(ttk.Toplevel):
                        f"Found {dup_count} duplicate/invalid entry(s) — see suggestions")
         self.after(0, self._log_msg, "")
 
-        # Location: always "Chinook Middle School" — only ever changed manually.
+        # Location: the teacher's own school — only ever changed manually.
         # Suggest correction for any piece not already set to this value.
-        _DEFAULT_LOCATION = "Chinook Middle School"
+        #
+        # This used to be the literal string "Chinook Middle School", which
+        # meant that for any other teacher the validator looked at a correctly
+        # filled library and proposed rewriting every single location to a
+        # school they have never worked at.  If we do not know where they are,
+        # we have nothing to compare against, so skip the check entirely
+        # rather than guess.
+        from ui.settings_dialog import school_name
+        _DEFAULT_LOCATION = school_name(self.base_dir)
         loc_count = 0
-        for p in self.pieces:
+        for p in (self.pieces if _DEFAULT_LOCATION else []):
             if (p.get("location") or "").strip() != _DEFAULT_LOCATION:
                 all_suggestions.append({
                     "type": "correction",
@@ -2801,14 +2809,15 @@ class _LLMValidateDialog(ttk.Toplevel):
                     "current_difficulty": p.get("difficulty", ""),
                     "current_ensemble_type": p.get("ensemble_type", ""),
                     "suggested_location": _DEFAULT_LOCATION,
-                    "note": "Location auto-filled (all music is at Chinook Middle School)",
+                    "note": f"Location auto-filled (all music is at {_DEFAULT_LOCATION})",
                     "confidence": 1.0,
                     "image": "",
                 })
                 loc_count += 1
         if loc_count:
             self.after(0, self._log_msg,
-                       f"Location: {loc_count} piece(s) not set to 'Chinook Middle School' — will suggest correction")
+                       f"Location: {loc_count} piece(s) not set to "
+                       f"'{_DEFAULT_LOCATION}' — will suggest correction")
 
         # Text-based enrichment: for pieces missing metadata fields OR whose identity
         # (title/composer/arranger) was corrected by image validation — re-verify all

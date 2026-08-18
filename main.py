@@ -1,6 +1,6 @@
 """
 main.py - Entry point for Roka's Resonance
-Chinook Middle School Band Instrument Inventory Manager
+Roka's Resonance - music program manager
 """
 
 import os
@@ -517,9 +517,8 @@ def _load_profile(app, profile_name: str):
         # Fold "Chinook Jazz 1"-style names (imported from joint-concert
         # programs) into the teacher's own cohorts ("Jazz 1").
         try:
-            from ui.settings_dialog import load_settings
-            school = ((load_settings(data_dir).get("teacher") or {})
-                      .get("school_name") or "")
+            from ui.settings_dialog import school_name
+            school = school_name(data_dir)
             if school.strip():
                 db.normalize_performance_ensembles(school)
         except Exception:

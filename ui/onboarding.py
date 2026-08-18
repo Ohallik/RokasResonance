@@ -259,7 +259,11 @@ class OnboardingWizard(ttk.Toplevel):
         s = load_settings(self.base_dir) or {}
         s.setdefault("teacher", {})
         s["teacher"]["name"] = self._name_var.get().strip()
-        s["teacher"]["school"] = self._school.get().strip()
+        # "school_name" is the key every other screen reads (Settings, the
+        # loan forms, the concert programs, Reginald).  This wrote "school",
+        # so a teacher who finished setup and never opened Settings had no
+        # school name anywhere in the program.
+        s["teacher"]["school_name"] = self._school.get().strip()
         s["teacher"]["program_type"] = self._focus.get()
         backup = self._backup.get().strip()
         if backup:

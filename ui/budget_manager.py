@@ -1232,9 +1232,8 @@ class _FeesDialog(ttk.Toplevel):
         # School name from teacher settings (falls back to "the main")
         school = "the"
         try:
-            from ui.settings_dialog import load_settings
-            school = (load_settings(self.base_dir).get("teacher") or {}).get(
-                "school_name") or "the"
+            from ui.settings_dialog import school_name
+            school = school_name(self.base_dir) or "the"
         except Exception:
             pass
 

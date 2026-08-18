@@ -1423,6 +1423,16 @@ def main():
     school_days = get_school_days()
     print(f"School year: {SCHOOL_START} to {SCHOOL_END}")
     print(f"Total school days: {len(school_days)}")
+
+    # Concert venue: this teacher's own school, read from the profile the db
+    # lives in.  It was hard coded to Chinook's gymnasium, which is not where
+    # anybody else's concerts happen.
+    try:
+        from ui.settings_dialog import school_name
+        _school = school_name(os.path.dirname(db_path))
+    except Exception:
+        _school = ""
+    home_venue = f"{_school} Gymnasium" if _school else "School Gymnasium"
     if replace_mode:
         print("Mode: --replace (will clear and re-seed existing curriculum items)")
 
@@ -1524,7 +1534,7 @@ def main():
                     "class_id": class_id,
                     "concert_date": concert_date.isoformat(),
                     "event_name": event_name,
-                    "location": "Chinook Middle School Gymnasium" if "Concert" in event_name else "District Venue",
+                    "location": home_venue if "Concert" in event_name else "District Venue",
                     "notes": "",
                 })
             print(f"   Added {len(CONCERTS)} concert dates")

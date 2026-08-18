@@ -677,9 +677,9 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
     school_name = district_name = None
     program_type = "band"
     try:
-        from ui.settings_dialog import load_settings
+        from ui.settings_dialog import load_settings, school_name as _school
         teacher = (load_settings(base_dir).get("teacher") or {})
-        school_name = teacher.get("school_name")
+        school_name = _school(base_dir)
         district_name = teacher.get("school_district")
         program_type = teacher.get("program_type") or "band"
     except Exception:
@@ -710,9 +710,8 @@ def generate_uniform_chart(db, base_dir: str, output_path: str = None) -> str:
 
     school_name = ""
     try:
-        from ui.settings_dialog import load_settings
-        teacher = (load_settings(base_dir).get("teacher") or {})
-        school_name = (teacher.get("school_name") or "").strip()
+        from ui.settings_dialog import school_name as _school
+        school_name = _school(base_dir)
     except Exception:
         pass
 

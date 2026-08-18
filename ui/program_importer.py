@@ -264,9 +264,8 @@ class ProgramImportDialog(ttk.Toplevel):
         self._items = []          # parsed rows (dicts, augmented with match info)
         self._failed = []         # (filename, reason)
         self._library = db.get_music_for_matching()
-        from ui.settings_dialog import load_settings
-        self._school = ((load_settings(base_dir).get("teacher") or {})
-                        .get("school_name") or "").strip()
+        from ui.settings_dialog import school_name
+        self._school = school_name(base_dir)
         self._known = None        # lazy: lowercased own-ensemble vocabulary
 
         self.title("Import Concert Program(s)")

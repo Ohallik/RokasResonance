@@ -84,7 +84,9 @@ class MusicDialog(ttk.Toplevel):
             self._load(music_id)
         else:
             # Defaults for new entries
-            self._vars["location"].set("Chinook Middle School")
+            # Where the teacher's music lives, not where Roka was written.
+            from ui.settings_dialog import school_name
+            self._vars["location"].set(school_name(self.base_dir))
             if prefill_data:
                 self._prefill(prefill_data)
 

@@ -9,7 +9,7 @@ from datetime import datetime
 from database import Database
 
 
-SKIP_VALUES = {"category", "chinook", "prepared", "description", ""}
+SKIP_VALUES = {"category", "prepared", "description", ""}
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PARENT_DIR = os.path.dirname(BASE_DIR)
@@ -21,11 +21,21 @@ def _open_csv(path: str):
 
 
 def _is_header_or_junk(row: list) -> bool:
-    """Return True if the row should be skipped."""
+    """Return True if the row should be skipped.
+
+    These exports carry a banner row naming the school the report was run for
+    ("Chinook Middle School Band Inventory", "Prepared 4/12/24", ...).  That
+    used to be matched by looking for the literal "chinook", which only ever
+    worked for the one school Roka was written at; every other teacher's
+    banner row was read in as an instrument.  Match the word "school"
+    instead, which no real instrument, student or repair row starts with.
+    """
     if not row:
         return True
     first = str(row[0]).strip().lower()
-    return first in SKIP_VALUES or first.startswith("prepared") or first.startswith("chinook")
+    if first in SKIP_VALUES or first.startswith("prepared"):
+        return True
+    return "school" in first and not any(str(c).strip() for c in row[1:])
 
 
 def _normalize_instrument_row(data: dict):

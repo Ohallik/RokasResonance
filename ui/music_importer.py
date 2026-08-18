@@ -606,7 +606,8 @@ def _norm_title(t: str) -> str:
     return re.sub(r"[^a-z0-9]", "", t.lower())
 
 
-def _dict_to_prefill(d: dict, existing_titles: set[str] | None = None) -> dict:
+def _dict_to_prefill(d: dict, existing_titles: set[str] | None = None,
+                     location: str = "") -> dict:
     def _s(*keys):
         for k in keys:
             v = d.get(k)
@@ -630,7 +631,7 @@ def _dict_to_prefill(d: dict, existing_titles: set[str] | None = None) -> dict:
         "difficulty":     diff,
         "key_signature":  _s("key_signature"),
         "time_signature": _s("time_signature"),
-        "location":       "Chinook Middle School",
+        "location":       location,
         "notes":          _s("comments", "visible_notes", "notes"),
         "_duplicate":     False,
         "_source_file":   d.get("_source_file", ""),
@@ -932,7 +933,8 @@ def _enrich_piece_choir(piece: dict, base_dir: str, on_retry=None) -> dict:
 
 # ── Choir prefill normalisation ────────────────────────────────────────────────
 
-def _dict_to_prefill_choir(d: dict, existing_titles: set[str] | None = None) -> dict:
+def _dict_to_prefill_choir(d: dict, existing_titles: set[str] | None = None,
+                           location: str = "") -> dict:
     def _s(*keys):
         for k in keys:
             v = d.get(k)
@@ -956,7 +958,7 @@ def _dict_to_prefill_choir(d: dict, existing_titles: set[str] | None = None) -> 
         "accompaniment":  _s("accompaniment"),
         "difficulty":     diff,
         "key_signature":  _s("key_signature"),
-        "location":       "Chinook Middle School",
+        "location":       location,
         "notes":          _s("comments", "visible_notes", "notes"),
         "_duplicate":     False,
         "_source_file":   d.get("_source_file", ""),
@@ -1098,6 +1100,9 @@ class BatchImportDialog(ttk.Toplevel):
     def _start_analysis(self):
         enrich = self._enrich_var.get()
         _prefill_fn = _dict_to_prefill_choir if self._mode == "choir" else _dict_to_prefill
+        # Imported music sits at the teacher's own school, not at Chinook.
+        from ui.settings_dialog import school_name
+        _where = school_name(self.base_dir)
 
         def _run():
             try:
@@ -1109,7 +1114,8 @@ class BatchImportDialog(ttk.Toplevel):
                     results_list=self._partial_pieces,
                     mode=self._mode,
                 )
-                prefills = [_prefill_fn(p, self.existing_titles) for p in raw]
+                prefills = [_prefill_fn(p, self.existing_titles, _where)
+                            for p in raw]
                 self.after(0, self._analysis_done, prefills)
             except Exception as e:
                 self.after(0, self._analysis_error, str(e))
@@ -1124,7 +1130,9 @@ class BatchImportDialog(ttk.Toplevel):
             self._log_line("No pieces found yet — nothing to import.")
             return
         _prefill_fn = _dict_to_prefill_choir if self._mode == "choir" else _dict_to_prefill
-        prefills = [_prefill_fn(p, self.existing_titles) for p in pieces]
+        from ui.settings_dialog import school_name
+        _where = school_name(self.base_dir)
+        prefills = [_prefill_fn(p, self.existing_titles, _where) for p in pieces]
         self._log_line(f"\nStopped early — {len(prefills)} piece(s) ready to review.")
         self._prefills = prefills
         self._in_review = True

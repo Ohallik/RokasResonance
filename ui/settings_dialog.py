@@ -55,6 +55,21 @@ def load_settings(base_dir: str) -> dict:
         return {}
 
 
+def school_name(base_dir: str) -> str:
+    """The school this teacher actually works at, or "" if they have not said.
+
+    Read it from here rather than hard coding a name.  Roka was written at
+    Chinook and for a while said so in a dozen places, which meant every other
+    teacher who opened it was told they worked somewhere they did not.
+
+    The onboarding wizard used to write this under "school" while everything
+    that reads it looks for "school_name", so profiles set up before that was
+    fixed still have the old key; fall back to it rather than losing the name.
+    """
+    teacher = (load_settings(base_dir) or {}).get("teacher") or {}
+    return ((teacher.get("school_name") or teacher.get("school") or "")).strip()
+
+
 def save_settings(base_dir: str, settings: dict):
     path = os.path.join(base_dir, SETTINGS_FILE)
     with open(path, "w") as f:

@@ -180,9 +180,8 @@ class ConcertsView(ttk.Frame):
 
     def _teacher(self):
         """(school_name, director_name) from Settings / the profile."""
-        from ui.settings_dialog import load_settings
-        teacher = (load_settings(self.base_dir).get("teacher") or {})
-        school = (teacher.get("school_name") or "").strip()
+        from ui.settings_dialog import school_name
+        school = school_name(self.base_dir)
         # First + last only ("Meagan Mangum") — programs and emails never get
         # the profile folder's middle initial.  Settings can override.
         from ui.names import director_name
