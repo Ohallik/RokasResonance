@@ -769,6 +769,221 @@ class Database:
             except Exception:
                 pass
 
+            # ── Migrate: school sites ──────────────────────────────────────
+            # A teacher is not necessarily posted to one building.  Itinerant
+            # elementary specialists carry up to six schools, and some
+            # secondary directors hold a high school, a middle school and two
+            # elementaries between them.  Each building owns its own
+            # instruments, so an instrument and the child borrowing it have to
+            # belong to the same place -- see _assert_same_site.
+            #
+            # "level" is secondary or elementary; it decides which tools a site
+            # is shown, not how its rows are stored.  "program" is band or
+            # orchestra and belongs here rather than in a class name, because
+            # one teacher cannot run both at one school: the sections meet in
+            # the same slot and nobody is in two rooms at once.
+            try:
+                conn.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS sites (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        level TEXT DEFAULT 'secondary',
+                        program TEXT,
+                        charges_fees INTEGER DEFAULT 1,
+                        is_active INTEGER DEFAULT 1,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_sites_active ON sites(is_active);
+                    """
+                )
+                conn.commit()
+            except Exception:
+                pass
+            for _t in ("instruments", "students"):
+                try:
+                    conn.execute(f"ALTER TABLE {_t} ADD COLUMN site_id INTEGER")
+                    conn.commit()
+                except Exception:
+                    pass  # Column already exists
+                try:
+                    conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{_t}_site "
+                                 f"ON {_t}(site_id)")
+                    conn.commit()
+                except Exception:
+                    pass
+
+            # First run on an existing profile: the teacher already has a
+            # school, so turn it into their one site rather than asking again.
+            try:
+                if not conn.execute("SELECT 1 FROM sites LIMIT 1").fetchone():
+                    name, level, program = self._school_from_settings()
+                    if name:
+                        conn.execute(
+                            "INSERT INTO sites (name, level, program, charges_fees) "
+                            "VALUES (?, ?, ?, 1)", (name, level, program))
+                        conn.commit()
+            except Exception:
+                pass
+
+            # Stamp anything unassigned -- but only when there is exactly one
+            # site to stamp it with.  With one school there is no ambiguity;
+            # with several there is nothing to infer from, and a wrong guess
+            # here is what puts one school's trumpet in another school's list.
+            try:
+                sites = conn.execute(
+                    "SELECT id FROM sites WHERE is_active = 1").fetchall()
+                if len(sites) == 1:
+                    only = sites[0]["id"]
+                    for _t in ("instruments", "students"):
+                        conn.execute(
+                            f"UPDATE {_t} SET site_id = ? WHERE site_id IS NULL",
+                            (only,))
+                    conn.commit()
+            except Exception:
+                pass
+
+    # ─── Sites (the schools this teacher is posted to) ─────────────────────────
+
+    def _school_from_settings(self):
+        """(name, level, program) for the school already in Settings.
+
+        Used once, to turn an existing single-school profile into its first
+        site without asking the teacher to type anything she has typed before.
+        """
+        import os as _os
+        base_dir = _os.path.dirname(self.db_path)
+        try:
+            from ui.settings_dialog import school_name, load_settings
+            name = school_name(base_dir)
+            teacher = (load_settings(base_dir) or {}).get("teacher") or {}
+            program = (teacher.get("program_type") or "").strip() or None
+        except Exception:
+            return ("", "secondary", None)
+        if program == "elementary":
+            # The old single "elementary" focus never recorded band or
+            # orchestra, so there is nothing truthful to put here.  Left unset
+            # for the teacher to choose; guessing "band" is the assumption
+            # that sent orchestra teachers a band class list.
+            return (name, "elementary", None)
+        return (name, "secondary", program)
+
+    ELEMENTARY = "elementary"
+    SECONDARY = "secondary"
+
+    def get_sites(self, include_inactive: bool = False, level: str = None):
+        sql = "SELECT * FROM sites"
+        where, params = [], []
+        if not include_inactive:
+            where.append("is_active = 1")
+        if level:
+            where.append("level = ?")
+            params.append(level)
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY level DESC, name"
+        with self._connect() as conn:
+            return conn.execute(sql, params).fetchall()
+
+    def get_site(self, site_id: int):
+        if not site_id:
+            return None
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM sites WHERE id = ?",
+                                (site_id,)).fetchone()
+
+    def add_site(self, name: str, level: str = "secondary", program: str = None,
+                 charges_fees: bool = None) -> int:
+        """Add a school.  Elementary loans carry no fee unless told otherwise --
+        the district's elementary form says so in as many words."""
+        if charges_fees is None:
+            charges_fees = (level != self.ELEMENTARY)
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO sites (name, level, program, charges_fees) "
+                "VALUES (?, ?, ?, ?)",
+                ((name or "").strip(), level, program, 1 if charges_fees else 0))
+            conn.commit()
+            return cur.lastrowid
+
+    def update_site(self, site_id: int, **fields):
+        allowed = ("name", "level", "program", "charges_fees", "is_active")
+        sets = [(k, v) for k, v in fields.items() if k in allowed]
+        if not sets:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE sites SET " + ", ".join(f"{k} = ?" for k, _ in sets)
+                + " WHERE id = ?", [v for _, v in sets] + [site_id])
+            conn.commit()
+
+    def deactivate_site(self, site_id: int):
+        """Retire a school without deleting it.  An assignment ending does not
+        make last year's checkout history untrue, and the handoff export still
+        needs to read it."""
+        self.update_site(site_id, is_active=0)
+
+    def default_site_id(self):
+        """The site to assume when nothing says otherwise -- only meaningful
+        for a teacher at one school.  None once there is a choice to make, so
+        callers are forced to ask rather than quietly pick the first."""
+        rows = self.get_sites()
+        return rows[0]["id"] if len(rows) == 1 else None
+
+    def site_charges_fees(self, site_id) -> bool:
+        site = self.get_site(site_id)
+        return bool(site["charges_fees"]) if site else True
+
+    def _student_site_charges_fees(self, student_id) -> bool:
+        """Does this child's school charge for an instrument loan?  Unknown
+        sites keep the old behaviour and charge, so nothing silently stops
+        billing on a profile that has not set its schools up yet."""
+        if not student_id:
+            return True
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT s.charges_fees AS cf FROM students st "
+                    "JOIN sites s ON s.id = st.site_id WHERE st.id = ?",
+                    (student_id,)).fetchone()
+            return bool(row["cf"]) if row else True
+        except Exception:
+            return True
+
+    def _assert_same_site(self, conn, instrument_id: int, student_id: int):
+        """Refuse to lend one school's instrument to another school's child.
+
+        This lives here rather than in a screen on purpose.  A filter left on
+        the wrong setting is how the mistake happens, and no dialog can be
+        relied on to be the only route to a checkout -- the bulk scanner and
+        the carry-over both write straight through.
+
+        A site that is not yet known is not treated as a mismatch: profiles
+        mid-migration have unstamped rows, and refusing those would break
+        checkouts that are perfectly fine today.
+        """
+        if not student_id or not instrument_id:
+            return
+        row = conn.execute(
+            "SELECT (SELECT site_id FROM instruments WHERE id = ?) AS i_site, "
+            "       (SELECT site_id FROM students    WHERE id = ?) AS s_site",
+            (instrument_id, student_id)).fetchone()
+        if not row:
+            return
+        i_site, s_site = row["i_site"], row["s_site"]
+        if i_site is None or s_site is None or i_site == s_site:
+            return
+        names = {}
+        for sid in (i_site, s_site):
+            got = conn.execute("SELECT name FROM sites WHERE id = ?",
+                               (sid,)).fetchone()
+            names[sid] = (got["name"] if got else None) or f"site {sid}"
+        raise ValueError(
+            f"That instrument belongs to {names[i_site]}, and this student is "
+            f"at {names[s_site]}. Each school's instruments stay with that "
+            f"school."
+        )
+
     # ─── Backup ────────────────────────────────────────────────────────────────
 
     def _companion_files(self):
@@ -2218,6 +2433,10 @@ class Database:
                             charge_fee: bool = True,
                             fee_per_instrument: bool = False) -> int:
         with self._connect() as conn:
+            # Both schools' instruments are in one list; only one of them is
+            # this child's.  Checked before the row is written, so a refused
+            # checkout leaves nothing behind.
+            self._assert_same_site(conn, instrument_id, student_id)
             cur = conn.execute(
                 """INSERT INTO checkouts
                    (instrument_id, student_id, student_name, date_assigned, notes, due_date)
@@ -2232,7 +2451,11 @@ class Database:
         # The rental fee is an annual charge every student renting an instrument
         # is expected to pay, so it is added by default.  charge_fee=False is
         # only for re-recording assignments that were already billed.
-        if student_id and charge_fee:
+        # Elementary loans are free -- the district's own elementary form says
+        # so -- so the site has the final word over whatever the caller asked
+        # for.  Otherwise every 5th grade checkout would raise a $75 charge
+        # that somebody then has to find and waive.
+        if student_id and charge_fee and self._student_site_charges_fees(student_id):
             try:
                 self._auto_add_rental_fee(student_id, date_assigned, rental_type,
                                           per_instrument=fee_per_instrument)
