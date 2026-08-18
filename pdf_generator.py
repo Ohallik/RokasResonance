@@ -241,14 +241,14 @@ def _row_student(student_name, grade, s, school_name=SCHOOL_NAME):
 
 
 def _row_address(address, phone, parent, s, parent_style="n10"):
-    # Address ___  Phone ___  Parent's Name ___
+    # Address ___  Phone ___  Parent/Guardian Name ___
     cw = [0.65*inch, 1.9*inch, 0.55*inch, 1.25*inch, 1.1*inch, 1.55*inch]
     return _tbl([
         _p("<b>Address</b>",         s["b10"]),
         _p(address,                   s["n8"]),
         _p("<b>Phone</b>",           s["b10"]),
         _p(phone,                     s["n10"]),
-        _p("<b>Parent's Name</b>",   s["b10"]),
+        _p("<b>Parent/Guardian Name</b>", s["b10"]),
         _p(parent,                    s[parent_style]),
     ], cw, underline_cols=(1, 3, 5), top_pad=5)
 
@@ -578,7 +578,9 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     # ── Signatures ────────────────────────────────────────────────────────
     story.append(_sig_line("Student's Signature", s))
     story.append(Spacer(1, 6))
-    story.append(_sig_line("Parent's Signature", s))
+    # The district's own elementary form says Parent/Guardian, and plenty of
+    # the children are signed for by somebody who is not a parent.
+    story.append(_sig_line("Parent/Guardian Signature", s))
     story.append(Spacer(1, 10))
 
     # ── Footer ────────────────────────────────────────────────────────────
