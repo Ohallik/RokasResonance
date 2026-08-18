@@ -1007,7 +1007,8 @@ class MainMenu(ttk.Frame):
 
     def _open_settings(self):
         from ui.settings_dialog import SettingsDialog
-        dlg = SettingsDialog(self.winfo_toplevel(), self.base_dir, app_dir=self.app_dir)
+        dlg = SettingsDialog(self.winfo_toplevel(), self.base_dir,
+                             app_dir=self.app_dir, db=self.db)
         self.winfo_toplevel().wait_window(dlg)  # block until Save/Cancel closes dialog
         self._refresh_stats()
 

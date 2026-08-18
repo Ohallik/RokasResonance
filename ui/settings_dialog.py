@@ -80,10 +80,13 @@ def save_settings(base_dir: str, settings: dict):
 
 
 class SettingsDialog(ttk.Toplevel):
-    def __init__(self, parent, base_dir: str, app_dir: str = None):
+    def __init__(self, parent, base_dir: str, app_dir: str = None, db=None):
         super().__init__(parent)
         self.base_dir = base_dir
         self._app_dir = app_dir
+        # Sites live in the database, not in settings.json.  Without a db the
+        # Schools tab is simply not offered, rather than half-working.
+        self.db = db
         self._settings = load_settings(base_dir)
         self._show_key = False
         self._show_anthropic_key = False
@@ -132,6 +135,11 @@ class SettingsDialog(ttk.Toplevel):
         teacher_tab = ttk.Frame(nb)
         nb.add(teacher_tab, text="  Teacher  ")
 
+        schools_tab = None
+        if self.db is not None:
+            schools_tab = ttk.Frame(nb)
+            nb.add(schools_tab, text="  Schools  ")
+
         display_tab = ttk.Frame(nb)
         nb.add(display_tab, text="  Display  ")
 
@@ -148,6 +156,11 @@ class SettingsDialog(ttk.Toplevel):
         # screen or with large font scaling every field (and the pinned Save bar
         # below) stays reachable — controls can never be clipped off-screen.
         self._build_teacher_tab(self._make_scrollable(teacher_tab))
+        if schools_tab is not None:
+            from ui.sites_view import SitesPanel
+            self._sites_panel = SitesPanel(self._make_scrollable(schools_tab),
+                                           self.db)
+            self._sites_panel.pack(fill=BOTH, expand=True)
         self._build_display_tab(self._make_scrollable(display_tab))
         self._build_llm_tab(self._make_scrollable(llm_tab))
         self._build_backup_tab(self._make_scrollable(backup_tab))
@@ -805,6 +818,19 @@ class SettingsDialog(ttk.Toplevel):
             Messagebox.show_error(f"Failed to save settings:\n{e}", title="Error",
                                   parent=self)
             return
+
+        # A teacher with one school should not have to rename it twice.  The
+        # site was created from this field in the first place, so renaming the
+        # school here renames it there.  With several schools there is no
+        # single one to rename, and the Schools tab is where they are edited.
+        try:
+            if self.db is not None:
+                sites = [dict(x) for x in self.db.get_sites()]
+                new_name = self._settings["teacher"].get("school_name", "").strip()
+                if len(sites) == 1 and new_name and sites[0]["name"] != new_name:
+                    self.db.update_site(sites[0]["id"], name=new_name)
+        except Exception:
+            pass
 
         # Apply theme change immediately
         try:
