@@ -421,8 +421,7 @@ def _sig_line(label, s):
 def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: str,
                        school_name: str = None, district_name: str = None,
                        program_type: str = "band",
-                       charges_fees: bool = True,
-                       elementary: bool = False) -> str:
+                       charges_fees: bool = True) -> str:
     """
     Generate a Bellevue School District Equipment Loan Form PDF matching
     the Charms single-page layout.
@@ -441,10 +440,12 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     or tell a family to make a check payable to the school.  Sending home a
     bill that does not exist is worse than sending home nothing.
 
-    elementary: print the district's ELEMENTARY loan form rather than the
-    secondary one.  They are different documents: the elementary one says
-    Parent's Name, carries one fixed accessory list for every instrument, and
-    addresses students and parents rather than students and parents/guardians.
+    The district publishes a separate elementary form.  Roka prints one form
+    for both, because the only real difference is the fee -- and where it
+    differs on wording we keep ours: Parent/Guardian throughout, since plenty
+    of these children are signed for by somebody who is not a parent, and the
+    instrument's own accessories rather than the paper form's fixed list,
+    since Roka knows what is being loaned and the paper cannot.
     """
     school_name = (school_name or "").strip() or SCHOOL_NAME
     district_name = (district_name or "").strip() or DISTRICT_NAME
@@ -537,9 +538,7 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
 
     # ── Student / Instrument Info ──────────────────────────────────────────
     story.append(_row_student(student_name, grade, s, school_name=school_name))
-    story.append(_row_address(
-        full_address, phone, parent, s, parent_style,
-        parent_label="Parent's Name" if elementary else "Parent/Guardian Name"))
+    story.append(_row_address(full_address, phone, parent, s, parent_style))
     story.append(_row_instrument(printed_name, serial_no, barcode, s))
     story.append(_row_make(brand, condition, est_value, s))
     story.append(_row_describe(s))
@@ -564,9 +563,8 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     story.append(Spacer(1, 8))
 
     # ── To Students and Parents/Guardians ──────────────────────────────────
-    story.append(_p(
-        "<u><b>To Students and Parents:</b></u>" if elementary
-        else "<u><b>To Students and Parents/Guardians:</b></u>", s["b10"]))
+    story.append(_p("<u><b>To Students and Parents/Guardians:</b></u>",
+                    s["b10"]))
     story.append(Spacer(1, 2))
     if charges_fees:
         story.append(_p(
@@ -587,8 +585,7 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
         "We expect normal wear, but we also expect that the instrument will be returned "
         "in as good a condition as it was when you checked it out.",
         "<u>Any repairs necessary due to accident or misuse are you and your "
-        + ("parents' responsibility.</u>" if elementary
-           else "parents/guardians' responsibility.</u>"),
+        "parents/guardians' responsibility.</u>",
         "Should you leave Bellevue, you must return the instrument to your music instructor.",
         "You may keep the instrument out over the summer provided you make arrangements "
         "with your instructor.",
@@ -605,9 +602,8 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
         "When the instrument is stored in a school building and it is damaged by fire, "
         "the school district insurance will cover its loss or damage. There is no school "
         "district insurance in effect to cover losses due to damage by accidents, "
-        "mistreatment, and loss by theft. It is you and your "
-        + ("parents' responsibility." if elementary
-           else "parents/guardians' responsibility."),
+        "mistreatment, and loss by theft. It is you and your parents/guardians' "
+        "responsibility.",
         s["n9"]
     ))
     story.append(Spacer(1, 8))
@@ -727,7 +723,6 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
     school_name = district_name = None
     program_type = "band"
     charges_fees = True          # a program with no school on the instrument
-    elementary = False
     try:
         from ui.settings_dialog import load_settings, school_name as _school
         teacher = (load_settings(base_dir).get("teacher") or {})
@@ -740,10 +735,8 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
             if site:
                 school_name = (dict(site).get("name") or "").strip()
                 # The school that owns the instrument decides whether there
-                # is a fee and which of the district's two forms to print,
-                # the same way it decides the name on the form.
+                # is a fee, the same way it decides the name on the form.
                 charges_fees = bool(dict(site).get("charges_fees"))
-                elementary = (dict(site).get("level") == "elementary")
         if not school_name:
             school_name = _school(base_dir)
     except Exception:
@@ -761,8 +754,7 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
     return generate_loan_form(dict(checkout), dict(instrument), out_path,
                               school_name=school_name, district_name=district_name,
                               program_type=program_type,
-                              charges_fees=charges_fees,
-                              elementary=elementary)
+                              charges_fees=charges_fees)
 
 
 def generate_uniform_chart(db, base_dir: str, output_path: str = None) -> str:
