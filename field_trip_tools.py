@@ -353,10 +353,14 @@ def teacher_email(trip, attending, stage_label, teacher_name=""):
 
 
 def family_addresses(attending):
-    """De-duplicated parent emails for the attending students."""
+    """De-duplicated family addresses for the attending students.
+
+    Guardians and the student. A trip is the student's day out; they should
+    get the departure time as directly as their parents do.
+    """
     seen, out = set(), []
     for s in attending:
-        for key in ("parent1_email", "parent2_email"):
+        for key in ("parent1_email", "parent2_email", "student_email"):
             addr = (s.get(key) or "").strip()
             if addr and "@" in addr and addr.lower() not in seen:
                 seen.add(addr.lower())

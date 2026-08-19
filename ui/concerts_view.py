@@ -1378,7 +1378,7 @@ class _RemindersDialog(ttk.Toplevel):
                   bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(12, 2))
 
         ens = ct.ensembles_list(concert)
-        self._addresses = ct.parent_addresses(students, ens)
+        self._addresses = ct.family_addresses(students, ens)
         ttk.Label(self, text=f"{len(self._addresses)} parent email address(es) "
                              f"found for: {', '.join(ens) or '—'}",
                   font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W, padx=16)

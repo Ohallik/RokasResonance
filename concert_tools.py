@@ -581,15 +581,24 @@ def reminder_email(concert, stage_label: str, teacher_name: str = "",
     return subject, "\n".join(lines)
 
 
-def parent_addresses(students, ensembles):
-    """De-duplicated parent email addresses for members of these ensembles."""
+def family_addresses(students, ensembles):
+    """De-duplicated family addresses for members of these ensembles.
+
+    The family, not just the adults: guardians and the student. Concert details
+    are as much the player's business as their parents', and an older student
+    who reads their own email should not have to hear it second hand.
+    """
     seen, out = set(), []
     for s in students:
         if not any(_member_of(s, e) for e in ensembles):
             continue
-        for key in ("parent1_email", "parent2_email"):
+        for key in ("parent1_email", "parent2_email", "student_email"):
             addr = (s.get(key) or "").strip()
             if addr and "@" in addr and addr.lower() not in seen:
                 seen.add(addr.lower())
                 out.append(addr)
     return out
+
+
+# Old name, kept so nothing calling it breaks.
+parent_addresses = family_addresses

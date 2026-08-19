@@ -2311,10 +2311,12 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
         self.site_id = site_id
         self._group_vars = {}
         self.base_dir = getattr(parent, "base_dir", "")
-        # A 10-year-old usually has no school email address, so writing to the
-        # children by default gives an empty list and a puzzled teacher.
-        # Families is the only sensible default for a 5th grade school.
-        self._recip_var = tk.StringVar(value="parents" if site_id else "students")
+        # The whole family by default, everywhere.  Writing to the students
+        # alone was the old default and it is the wrong one twice over: a
+        # 10-year-old has no school email at all, so a 5th grade send reached
+        # nobody, and even at high school the people who need to know about a
+        # concert are the ones driving to it.
+        self._recip_var = tk.StringVar(value="everyone")
         self._ens_var = tk.StringVar(value="All")
         self._per_var = tk.StringVar(value="All")
         self._instr_var = tk.StringVar(value="All")
@@ -2342,8 +2344,9 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
         ttk.Label(body, text="Recipients:", font=("Segoe UI", 9, "bold")).grid(
             row=0, column=0, sticky=W, pady=4)
         rr = ttk.Frame(body); rr.grid(row=0, column=1, columnspan=3, sticky=W)
-        for val, lbl in [("everyone", "Everyone"), ("students", "Students only"),
-                         ("parents", "Parents only")]:
+        for val, lbl in [("everyone", "Students & guardians"),
+                         ("students", "Students only"),
+                         ("parents", "Guardians only")]:
             ttk.Radiobutton(rr, text=lbl, value=val, variable=self._recip_var,
                             bootstyle=INFO, command=self._generate).pack(side=LEFT, padx=4)
 
