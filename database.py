@@ -2314,16 +2314,24 @@ class Database:
             ).fetchall()
         return [r["school_year"] for r in rows]
 
-    def archive_school_year(self, school_year: str) -> int:
+    def archive_school_year(self, school_year: str, level: str = None) -> int:
         """Close out a school year: mark its active students inactive.  Their
         records stay in the database and can be reactivated (or picked up by
         the New School Year class-list import).  Honors / Jr. All-State marks
         are cleared — they must be earned again each year.  Returns the
-        count archived."""
+        count archived.
+
+        ``level`` limits it to one kind of school.  Every 5th grader leaves for
+        middle school at the end of every year without exception, so their
+        archiving is not a decision anybody needs to be asked about; a
+        secondary roster is a different matter and keeps its checkbox.
+        """
+        scope, params = self._site_scope("students", None, level)
         with self._connect() as conn:
             cur = conn.execute(
                 "UPDATE students SET is_active=0, honors=0, all_state=0 "
-                "WHERE school_year=? AND is_active=1", (school_year,))
+                f"WHERE school_year=? AND is_active=1{scope}",
+                [school_year] + params)
             return cur.rowcount
 
     def set_student_honors(self, student_id: int, honors=None, all_state=None):

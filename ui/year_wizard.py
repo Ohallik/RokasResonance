@@ -352,11 +352,13 @@ class NewSchoolYearWizard(ttk.Toplevel):
                                          foreground=muted_fg(), justify=LEFT)
             self._export_log.pack(anchor=W)
 
-            nstep("Your schools for next year",
-                  "Assignments move around every summer. Add the schools you "
-                  "are picking up, archive the ones you are handing on. "
-                  "Archiving keeps all their instruments, children and history, "
-                  "and a school can be restored later exactly as it was.")
+            nstep("Your schools for the incoming year",
+                  "Staff often do not know in spring where they will be in "
+                  "the autumn, so this is here for whenever you do find out. "
+                  "Add the schools you are picking up, archive the ones you are "
+                  "handing on. Archiving keeps all their instruments, children "
+                  "and history, and a school can be restored later exactly as "
+                  "it was.")
             from ui.sites_view import SitesPanel
             self._sites_panel = SitesPanel(body, self.main_db)
             self._sites_panel.pack(fill=X, pady=(4, 2))
@@ -387,20 +389,18 @@ class NewSchoolYearWizard(ttk.Toplevel):
                             text="Release uniforms held by students who didn't "
                                  "return").pack(anchor=W, pady=(2, 0))
         else:
-            # An itinerant's 5th graders all leave for middle school, every one
-            # of them, every year, so the same tidy-up applies even though
-            # there are no class lists in this window to compare against.
+            # No checkbox, and no uniforms.  Every 5th grader leaves for middle
+            # school at the end of every year, without exception, so archiving
+            # them is not a decision to put to anybody -- and an itinerant has
+            # no uniform cupboard to roll forward.
             self._archive_var = tk.BooleanVar(value=True)
             self._release_uniforms_var = tk.BooleanVar(value=False)
-            nstep("Archive last year's children",
-                  "Your 5th graders have all moved on to middle school. This "
-                  "archives anyone not on a class list you import for the new "
-                  "year. Nothing is deleted, and an instrument's history stays "
-                  "with the instrument.")
-            ttk.Checkbutton(body, variable=self._archive_var, bootstyle=PRIMARY,
-                            text="Archive " + current_year + " children who "
-                                 "aren't on a new class list"
-                            ).pack(anchor=W, pady=(2, 0))
+            nstep("Last year's children",
+                  "Your 5th graders have all moved on to middle school, so "
+                  "they are archived when you finish. Nothing is deleted: "
+                  "their records stay searchable, and an instrument's history "
+                  "stays with the instrument. Anyone who turns up on a new "
+                  "class list comes straight back.")
 
         after = []
         if self._has_secondary:
@@ -537,12 +537,17 @@ class NewSchoolYearWizard(ttk.Toplevel):
                                     title="No Year", parent=self)
             return
         archived = 0
-        if self._archive_var.get():
-            archived = self.main_db.archive_school_year(self.current_year)
+        if self._has_secondary and self._archive_var.get():
+            archived += self.main_db.archive_school_year(
+                self.current_year, level="secondary")
+        if self._elem_sites or not self._has_secondary:
+            # Always, and without asking.  See the step text above.
+            archived += self.main_db.archive_school_year(
+                self.current_year, level="elementary")
         # Release uniforms held by students who didn't return (now inactive after
         # archiving).  Returning students keep theirs untouched.
         released = 0
-        if self._release_uniforms_var.get():
+        if self._has_secondary and self._release_uniforms_var.get():
             from datetime import datetime as _dt
             try:
                 released = self.main_db.checkin_uniforms_for_inactive_students(
