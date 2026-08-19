@@ -765,3 +765,64 @@ def suggested_permission_filename(trip):
     name = "".join(c for c in (trip.get("name") or "Field Trip")
                    if c.isalnum() or c in " -_").strip() or "Field Trip"
     return f"{name} - Permission Forms.pdf"
+
+
+
+# ── The student list, as a spreadsheet ───────────────────────────────────────
+# A list of names belongs in a grid, not in the body of an email.  The office
+# sorts it by grade, the attendance secretary filters it, and a teacher looking
+# for their own period stops reading forty-seven other names to find three.
+
+def build_student_list(trip, students, path, teacher_name="", school_name=""):
+    """Write the attending students to an .xlsx and return the path."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    import field_trip_tools as _ft
+    rows = _ft.attending_rows(students)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Students"
+
+    name = (trip.get("name") or "Field trip").strip()
+    when = fmt_date(trip.get("depart_date")) or ""
+    ws.append([name])
+    ws.append([f"{when}"
+               + (f", leaving {trip.get('depart_time')}"
+                  if trip.get("depart_time") else "")
+               + (f", back {trip.get('return_time')}"
+                  if trip.get("return_time") else "")])
+    ws.append([f"{len(rows)} student(s)"
+               + (f"   ·   {trip.get('groups_list')}"
+                  if trip.get("groups_list") else "")])
+    if teacher_name or school_name:
+        ws.append([("   ·   ".join(x for x in (teacher_name, school_name) if x))])
+    ws.append([])
+    ws["A1"].font = Font(bold=True, size=14)
+
+    head_at = ws.max_row + 1
+    ws.append(["Last Name", "First Name", "Grade", "Student ID", "Class"])
+    for c in ws[head_at]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="2E5FA3")
+        c.alignment = Alignment(horizontal="left")
+    for r in rows:
+        ws.append([r["last_name"], r["first_name"], r["grade"],
+                   r["student_id"], r["ensembles"]])
+
+    for col, width in zip("ABCDE", (20, 18, 8, 14, 34)):
+        ws.column_dimensions[col].width = width
+    # Frozen under the header, so the names stay labelled on a long list.
+    ws.freeze_panes = ws.cell(row=head_at + 1, column=1)
+    ws.auto_filter.ref = (f"A{head_at}:E{head_at + len(rows)}")
+
+    wb.save(path)
+    return path
+
+
+def suggested_student_list_filename(trip):
+    name = "".join(c for c in (trip.get("name") or "Field Trip")
+                   if c.isalnum() or c in " -_").strip() or "Field Trip"
+    when = (trip.get("depart_date") or "").strip()
+    return f"{name} - Student List{(' - ' + when) if when else ''}.xlsx"

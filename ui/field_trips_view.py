@@ -362,13 +362,26 @@ class FieldTripsView(ttk.Frame):
                 if left is not None and left >= 0:
                     text += f"  ({left:.0f} school week(s) away)"
                 color = muted_fg()
-            elif missing_anchor:
-                text = ("District deadlines: set the board meeting date to "
-                        "work them out.")
-                color = "#B45309"
             else:
                 text = ""
                 color = muted_fg()
+            if missing_anchor:
+                # Reported whatever else is on the line.  For an overnight trip
+                # the approval deadlines are the ones that matter, and a nurse
+                # deadline that HAPPENS to be computable was hiding the fact
+                # that they could not be worked out at all.
+                needs_board = any(x["anchor"] == "board" for x in missing_anchor)
+                needs_trip = any(x["anchor"] == "trip" for x in missing_anchor)
+                if needs_trip and needs_board:
+                    what = "a date for the trip and the board meeting date"
+                elif needs_board:
+                    what = "the board meeting date"
+                else:
+                    what = "a date for the trip"
+                note = f"set {what} to work the rest out"
+                text = (f"{text}   ·   {note}" if text
+                        else f"District deadlines: {note}.")
+                color = "#B45309"
             if text:
                 lbl = ttk.Label(card, text=text, font=("Segoe UI", fs(9)),
                                 foreground=color, cursor="hand2")
@@ -377,6 +390,13 @@ class FieldTripsView(ttk.Frame):
 
         # ── Paper forms outstanding ──
         forms = ft.required_forms(t, elementary)
+        if forms and not n:
+            ttk.Label(card,
+                      text="Paper forms:  "
+                           + ", ".join(ft.FORM_SHORT[f] for f in forms)
+                           + ", once there is a roster to chase.",
+                      font=("Segoe UI", fs(9)),
+                      foreground=muted_fg()).pack(anchor=W, pady=(0, 2))
         if forms and n:
             have = self.db.get_trip_forms(t["id"])
             missing = sum(1 for stu in attending for f in forms
@@ -815,6 +835,24 @@ class _TripDialog(ttk.Toplevel):
                              "work from the district packet for those.",
                   font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W)
 
+        # Roka guesses this from the groups attending, and the guess is right
+        # nearly always -- but it has nothing to go on before the roster is
+        # imported, and it is what decides whether permission is FinalForms or
+        # paper.  So it is a box, pre-ticked from the guess, and the teacher's
+        # answer is the one that counts.
+        self._elem_var = tk.BooleanVar(value=bool(elementary))
+        self._elem_touched = bool(seed.get("elementary") is not None
+                                  and str(seed.get("elementary")).strip() != "")
+        ttk.Checkbutton(
+            body, text="This is an elementary school trip",
+            variable=self._elem_var, bootstyle=PRIMARY,
+            command=self._elem_ticked).pack(anchor=W, pady=(8, 0))
+        ttk.Label(body, text="      Elementary trips collect paper permission "
+                             "forms; middle and high school day trips are on "
+                             "FinalForms.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=560, justify=LEFT).pack(anchor=W)
+
         # Groups
         ttk.Label(body, text="Class or group(s) attending",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(8, 2))
@@ -997,15 +1035,17 @@ class _TripDialog(ttk.Toplevel):
         """Show only what this procedure asks for.  An overnight trip needs a
         board meeting date, four times and an itinerary; a day trip does not,
         and showing them anyway is five more fields to skip past."""
-        # Which groups are ticked decides whether this is a 5th grade trip, so
-        # it is re-read here rather than fixed when the window opened.
+        # Groups drive the guess, and the guess drives the box -- until the
+        # teacher touches the box, after which it is theirs.
         try:
-            picked = [g for g, bv in self._grp_vars.items() if bv.get()]
-            picked += [x.strip() for x in self._extra_grp.get().split(",")
-                       if x.strip()]
-            self._elementary = ft.trip_is_elementary(
-                self._main_db, {"groups_list": ", ".join(picked)},
-                fallback=self._profile_elementary)
+            if not self._elem_touched:
+                picked = [g for g, bv in self._grp_vars.items() if bv.get()]
+                picked += [x.strip() for x in self._extra_grp.get().split(",")
+                           if x.strip()]
+                self._elem_var.set(ft.trip_is_elementary(
+                    self._main_db, {"groups_list": ", ".join(picked)},
+                    fallback=self._profile_elementary))
+            self._elementary = bool(self._elem_var.get())
         except Exception:
             pass
         overnight = self._trip_type.get() == ft.TRIP_OVERNIGHT
@@ -1119,6 +1159,11 @@ class _TripDialog(ttk.Toplevel):
                                 foreground="#B45309" if "None of" in advice
                                 or "no school board" in advice else muted_fg())
 
+    def _elem_ticked(self):
+        """Once she has answered, stop overruling her with the guess."""
+        self._elem_touched = True
+        self._type_changed()
+
     def _date_changed(self):
         self._check_blackout()
         if self._trip_type.get() == ft.TRIP_OVERNIGHT:
@@ -1172,6 +1217,7 @@ class _TripDialog(ttk.Toplevel):
         data["groups_list"] = ", ".join(groups)
         data["notes"] = self._notes.get("1.0", "end").strip()
         data["trip_type"] = self._trip_type.get()
+        data["elementary"] = 1 if self._elem_var.get() else 0
         # A day trip returns the day it left.  Leaving it blank printed a blank
         # Return Date on the district form, which is a question the form asks.
         if (data["trip_type"] == ft.TRIP_DAY and data.get("depart_date")
@@ -2365,6 +2411,46 @@ class _RemindersDialog(ttk.Toplevel):
         _copy(self, "; ".join(addrs))
         self._flash(f"✓ {len(addrs)} address(es) copied — paste into BCC.")
 
+    def _export_student_list(self):
+        """The attending students as a spreadsheet, to attach to the staff
+        email.  Forty-eight names in the body of a message is a wall nobody
+        scrolls; in a grid the office can sort it, and a teacher can filter to
+        their own period instead of reading forty-seven other names."""
+        import field_trip_pdf as fp
+        from tkinter import filedialog
+
+        if not self.attending:
+            Messagebox.show_info(
+                "Nobody is on this trip yet, so there is nothing to list.",
+                title="No students", parent=self)
+            return
+        try:
+            from ui.settings_dialog import load_settings
+            who = ((load_settings(self.base_dir).get("teacher") or {})
+                   .get("display_name") or "").strip()
+        except Exception:
+            who = ""
+        path = filedialog.asksaveasfilename(
+            parent=self, defaultextension=".xlsx",
+            initialfile=fp.suggested_student_list_filename(self.trip),
+            title="Save the student list", filetypes=[("Excel", "*.xlsx")])
+        if not path:
+            return
+        try:
+            fp.build_student_list(self.trip, self.attending, path,
+                                  teacher_name=who or self.director,
+                                  school_name=self.school)
+        except ImportError:
+            Messagebox.show_error(
+                "Writing a spreadsheet needs openpyxl:  pip install openpyxl",
+                title="Missing Dependency", parent=self)
+            return
+        except Exception as e:
+            Messagebox.show_error(f"Could not write the list.\n\n{e}",
+                                  title="Not saved", parent=self)
+            return
+        _open_file(path, self)
+
     def _email_for(self, audience, label):
         """(subject, body) — a saved per-trip template wins over the
         auto-generated body (so a rich hand-written chaperone email is
@@ -2452,6 +2538,13 @@ class _RemindersDialog(ttk.Toplevel):
                    command=copy_all).pack(side=RIGHT, padx=4)
         ttk.Button(b, text="📋 Copy Body Only", bootstyle=(PRIMARY, OUTLINE),
                    command=copy_body).pack(side=RIGHT, padx=4)
+        if audience == "teachers":
+            # The list the email refers to.  Written on demand rather than
+            # every time the window opens: most visits are to reword a
+            # sentence, not to send.
+            ttk.Button(b, text="📊 Student list (Excel)…",
+                       bootstyle=(INFO, OUTLINE),
+                       command=self._export_student_list).pack(side=LEFT)
         # The addresses this audience gets.  Teachers and admin are chased up
         # individually rather than from a stored list, so that one goes out
         # with no BCC and the teacher adds who it needs to reach.

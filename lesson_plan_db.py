@@ -475,6 +475,9 @@ class LessonPlanDatabase:
                         # interest survey, a deposit, a signed code of conduct
                         # -- whatever this trip actually chases.
                         "custom_forms TEXT",
+                        # NULL = work it out from the groups; 0/1 = the
+                        # teacher has said, and what they said wins.
+                        "elementary INTEGER",
                         "board_approved INTEGER DEFAULT 0",
                         "carrier_profile INTEGER DEFAULT 0",
                         "asb_minutes INTEGER DEFAULT 0"):
@@ -1638,7 +1641,7 @@ class LessonPlanDatabase:
                   "assignments", "missed_work", "affordability",
                   "health_review", "advisor_phone", "dest_address",
                   "arrive_dest_time", "depart_dest_time", "itinerary",
-                  "sub_rate", "supervision", "custom_forms",
+                  "sub_rate", "supervision", "custom_forms", "elementary",
                   "board_approved", "carrier_profile", "asb_minutes"]
 
     def get_field_trips(self, school_year=None):

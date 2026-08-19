@@ -121,6 +121,12 @@ def trip_is_elementary(main_db, trip, fallback=False):
     School: Section 1"), so the groups answer it.  ``fallback`` is used only
     when the trip has no groups yet and there is nothing to read.
     """
+    # An explicit answer beats a clever one.  Inference off the groups is a
+    # good default and a bad certainty: a trip whose roster has not been
+    # imported yet has nothing to infer from, and the teacher knows.
+    said = trip.get("elementary")
+    if said is not None and str(said).strip() != "":
+        return bool(int(said))
     groups = groups_list(trip)
     if not groups:
         return fallback
@@ -510,6 +516,7 @@ TEMPLATE_FIELDS = ["name", "groups_list", "destination", "travel_method",
                    "trip_type", "budget_code", "educational_objective",
                    "supervision", "activities", "assignments", "missed_work",
                    "affordability", "health_review", "custom_forms",
+                   "elementary",
                    # overnight only
                    "advisor_phone", "dest_address", "arrive_dest_time",
                    "depart_dest_time", "itinerary"]
@@ -799,29 +806,37 @@ def teacher_email(trip, attending, stage_label, teacher_name=""):
              "Students have been told to be in communication with their "
              "teachers about any missed work. Please let me know if anyone "
              "isn't holding up their end.", "",
-             f"Students attending ({len(attending)}):"]
+             # The names used to be typed out here, one line each.  At 48
+             # students that is a wall of text nobody scrolls through and
+             # nobody can sort, and a teacher looking for their own period has
+             # to read all of it.  A spreadsheet is the right shape for a list
+             # of names, so the email points at one.
+             f"The full list of the {len(attending)} student(s) attending is "
+             f"attached as a spreadsheet, with grade and student ID.",
+             "",
+             "Thank you!", "", teacher_name or "Your music teacher"]
+    return subject, "\n".join(lines)
 
+
+def attending_rows(attending):
+    """The attending students as spreadsheet rows, sorted the way a register
+    is: surname first."""
     def sort_key(s):
         return ((s.get("last_name") or "").lower(),
                 (s.get("first_name") or "").lower())
 
+    rows = []
     for s in sorted(attending, key=sort_key):
-        last = (s.get("last_name") or "").strip()
         first = ((s.get("preferred_name") or "").strip()
                  or (s.get("first_name") or "").strip())
-        entry = f"  {last}, {first}"
-        bits = []
-        grade = str(s.get("grade") or "").strip()
-        if grade:
-            bits.append(f"Grade {grade}")
-        sid = str(s.get("student_id") or "").strip()
-        if sid:
-            bits.append(f"ID {sid}")
-        if bits:
-            entry += f"  ({', '.join(bits)})"
-        lines.append(entry)
-    lines += ["", "Thank you!", "", teacher_name or "Your music teacher"]
-    return subject, "\n".join(lines)
+        rows.append({
+            "last_name": (s.get("last_name") or "").strip(),
+            "first_name": first,
+            "grade": str(s.get("grade") or "").strip(),
+            "student_id": str(s.get("student_id") or "").strip(),
+            "ensembles": (s.get("ensembles") or "").strip(),
+        })
+    return rows
 
 
 def family_addresses(attending):
