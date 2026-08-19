@@ -234,6 +234,24 @@ def add_custom_form(trip, label):
     return _custom_json(items), key
 
 
+def rename_custom_form(trip, key, label):
+    """Give a column a new name.  Returns (json, True) or (json, False) when
+    the name is already taken.
+
+    The KEY does not change, which is the whole point: every tick recorded
+    against this column stays attached to it.  Deleting and re-adding would
+    lose them, and a teacher renaming "Interest form" to "Interest survey"
+    does not expect to lose forty ticks.
+    """
+    label = (label or "").strip()
+    items = custom_forms(trip)
+    if not label:
+        return _custom_json(items), False
+    if any(l.lower() == label.lower() and k != key for k, l in items):
+        return _custom_json(items), False
+    return _custom_json([(k, label if k == key else l) for k, l in items]), True
+
+
 def remove_custom_form(trip, key):
     return _custom_json([(k, l) for k, l in custom_forms(trip) if k != key])
 

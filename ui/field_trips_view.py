@@ -279,27 +279,26 @@ class FieldTripsView(ttk.Frame):
         when = ct.fmt_date(t.get("depart_date")) if t.get("depart_date") else "no date yet"
         title = f" {when}: {t['name']} "
 
-        card = tk.LabelFrame(self._cards, text=title,
-                             font=("Segoe UI", fs(11), "bold"),
-                             padx=10, pady=6, bd=2, relief="groove")
-        card.pack(fill=X, padx=6, pady=6)
-
-        # ── Info line + countdown ──
         collapsed = self._collapsed(t["id"])
-        top = ttk.Frame(card)
-        top.pack(fill=X)
 
-        # The section chevron, the way Word and PowerPoint draw one: a solid
-        # triangle in the heading's own blue, pointing down when the section is
-        # open and right when it is folded.  The first version was a small grey
-        # arrow, which is the same control nobody can see -- the whole point is
-        # that a teacher recognizes it without being told.
-        _BLUE = "#4582EC"
-        _BLUE_HOVER = "#1B4FC4"
-        fold = ttk.Label(top, text="\u25ba " if collapsed else "\u25bc ",
-                         font=("Segoe UI", fs(13), "bold"),
+        # A LabelFrame will take a WIDGET as its title, which is the only way
+        # to get the chevron onto the heading line itself rather than floating
+        # a row below it.  Word puts it immediately left of the heading text,
+        # and that is where a teacher's eye goes looking for it.
+        card = tk.LabelFrame(self._cards, padx=10, pady=6, bd=2,
+                             relief="groove")
+        head = ttk.Frame(card)
+        _BLUE, _BLUE_HOVER = "#4582EC", "#1B4FC4"
+        fold = ttk.Label(head, text="\u25ba" if collapsed else "\u25bc",
+                         font=("Segoe UI", fs(12), "bold"),
                          foreground=_BLUE, cursor="hand2")
-        fold.pack(side=LEFT, padx=(0, 4))
+        fold.pack(side=LEFT, padx=(0, 6))
+        head_lbl = ttk.Label(head, text=title.strip(),
+                             font=("Segoe UI", fs(11), "bold"),
+                             cursor="hand2")
+        head_lbl.pack(side=LEFT)
+        card.configure(labelwidget=head)
+        card.pack(fill=X, padx=6, pady=6)
 
         def _toggle(_e=None, i=t["id"]):
             self._toggle_collapsed(i)
@@ -310,9 +309,15 @@ class FieldTripsView(ttk.Frame):
             except tk.TclError:
                 pass
 
-        fold.bind("<Button-1>", _toggle)
-        fold.bind("<Enter>", lambda e: _hover(on=True))
-        fold.bind("<Leave>", lambda e: _hover(on=False))
+        # The chevron and the heading both fold it, as they do in Word.
+        for w in (fold, head_lbl):
+            w.bind("<Button-1>", _toggle)
+            w.bind("<Enter>", lambda e: _hover(on=True))
+            w.bind("<Leave>", lambda e: _hover(on=False))
+
+        # ── Info line + countdown ──
+        top = ttk.Frame(card)
+        top.pack(fill=X)
         attending = ft.roster(students, t,
                               self.db.get_trip_exclusions(t["id"]))
         n = len(attending)
@@ -329,15 +334,11 @@ class FieldTripsView(ttk.Frame):
         rt = (t.get("return_time") or "").strip()
         if dt or rt:
             bits.append(f"{dt or '?'} to {rt or '?'}")
-        info = ttk.Label(top, text="  ·  ".join(bits),
-                         font=("Segoe UI", fs(9)), foreground=muted_fg(),
-                         cursor="hand2")
-        info.pack(side=LEFT)
-        # Clicking the summary folds it too, so the target is the whole line
-        # rather than one glyph.
-        info.bind("<Button-1>", _toggle)
-        info.bind("<Enter>", lambda e: _hover(on=True))
-        info.bind("<Leave>", lambda e: _hover(on=False))
+        # Not clickable: the heading is the control now, and a summary line
+        # that folds the card when read is a surprise rather than a shortcut.
+        ttk.Label(top, text="  ·  ".join(bits),
+                  font=("Segoe UI", fs(9)), foreground=muted_fg()
+                  ).pack(side=LEFT)
         if days is None:
             badge, style = "set a date", SECONDARY
         elif days < 0:
@@ -1470,7 +1471,7 @@ class _DeadlinesDialog(ttk.Toplevel):
         fit_window(self, 620, 620)
 
 
-def _ask_text(parent, title, prompt, hint=""):
+def _ask_text(parent, title, prompt, hint="", initial="", ok="Add"):
     """One line of text.  Returns the text, or None if cancelled."""
     win = ttk.Toplevel(master=parent)
     win.title(title)
@@ -1480,23 +1481,24 @@ def _ask_text(parent, title, prompt, hint=""):
     if hint:
         ttk.Label(win, text=hint, font=("Segoe UI", 8), foreground=muted_fg(),
                   wraplength=380, justify=LEFT).pack(anchor=W, padx=16)
-    var = tk.StringVar()
+    var = tk.StringVar(value=initial or "")
     entry = ttk.Entry(win, textvariable=var, width=44)
     entry.pack(anchor=W, padx=16, pady=(8, 4))
     entry.focus_set()
+    entry.selection_range(0, END)     # so typing replaces the old name
     out = {"v": None}
 
-    def ok(_e=None):
+    def _ok(_e=None):
         out["v"] = var.get().strip() or None
         win.destroy()
 
-    entry.bind("<Return>", ok)
+    entry.bind("<Return>", _ok)
     bar = ttk.Frame(win)
     bar.pack(fill=X, padx=16, pady=12)
     ttk.Button(bar, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
                command=win.destroy).pack(side=RIGHT, padx=4)
-    ttk.Button(bar, text="Add", bootstyle=SUCCESS, command=ok).pack(side=RIGHT,
-                                                                    padx=4)
+    ttk.Button(bar, text=ok, bootstyle=SUCCESS,
+               command=_ok).pack(side=RIGHT, padx=4)
     fit_window(win, 440, 220)
     parent.wait_window(win)
     return out["v"]
@@ -1953,9 +1955,9 @@ class _RosterFormsDialog(ttk.Toplevel):
         ttk.Button(bar, text="\u2795 Add checklist item",
                    bootstyle=(PRIMARY, OUTLINE),
                    command=self._add_column).pack(side=LEFT)
-        self._del_btn = ttk.Button(bar, text="Remove checklist item",
+        self._del_btn = ttk.Button(bar, text="\u270e Edit checklist items…",
                                    bootstyle=(SECONDARY, OUTLINE),
-                                   command=self._remove_column)
+                                   command=self._manage_columns)
         ttk.Label(bar, text="  Track anything you chase per student: an "
                             "interest survey, a deposit, a signed code of "
                             "conduct.",
@@ -2062,33 +2064,103 @@ class _RosterFormsDialog(ttk.Toplevel):
         self._build_tree()
         self._reload()
 
-    def _remove_column(self):
-        customs = ft.custom_forms(self.trip)
-        if not customs:
+    def _manage_columns(self):
+        """Rename or remove the columns the teacher added.
+
+        One window rather than a button each: renaming and removing are the
+        same errand -- "this column is wrong" -- and a row of buttons for every
+        variation of it is how a simple thing stops looking simple.
+        """
+        if not ft.custom_forms(self.trip):
             return
-        labels = [l for _k, l in customs]
-        chosen = _pick_one(self, "Remove checklist item",
-                           "Which column should go?", labels)
-        if not chosen:
-            return
-        key = customs[labels.index(chosen)][0]
-        if Messagebox.yesno(
-                f"Remove “{chosen}” and everything ticked in it?\n\nThe "
-                f"students and their other columns are not affected.",
-                title="Remove column", parent=self) != "Yes":
-            return
-        raw = ft.remove_custom_form(self.trip, key)
-        self.trip["custom_forms"] = raw
-        self.db.update_field_trip(self.trip["id"], {"custom_forms": raw})
-        for stu in self._students:
-            self._have.pop((stu["id"], key), None)
-        try:
-            self.db.clear_trip_form(self.trip["id"], key)
-        except Exception:
-            pass
-        self._recount_columns()
-        self._build_tree()
-        self._reload()
+        win = ttk.Toplevel(master=self)
+        win.title("Edit checklist items")
+        win.grab_set()
+        ttk.Label(win, text="Your checklist items",
+                  font=("Segoe UI", 10, "bold")).pack(anchor=W, padx=16,
+                                                      pady=(14, 2))
+        ttk.Label(win, text="Renaming keeps everything already ticked. "
+                            "Removing takes its ticks with it. The district's "
+                            "own forms are not listed: those are set by the "
+                            "kind of trip.",
+                  font=("Segoe UI", 8), foreground=muted_fg(), wraplength=400,
+                  justify=LEFT).pack(anchor=W, padx=16)
+        box = tk.Listbox(win, height=7, width=46, font=("Segoe UI", 10))
+        box.pack(fill=BOTH, expand=True, padx=16, pady=8)
+
+        def fill(select=0):
+            box.delete(0, END)
+            for _k, label in ft.custom_forms(self.trip):
+                box.insert(END, label)
+            if box.size():
+                box.selection_set(min(select, box.size() - 1))
+
+        def chosen():
+            sel = box.curselection()
+            if not sel:
+                Messagebox.show_info("Pick an item first.", title="Nothing "
+                                     "chosen", parent=win)
+                return None, None
+            return ft.custom_forms(self.trip)[sel[0]] + (sel[0],)
+
+        def apply(raw, keep=0):
+            self.trip["custom_forms"] = raw
+            self.db.update_field_trip(self.trip["id"], {"custom_forms": raw})
+            self._recount_columns()
+            self._build_tree()
+            self._reload()
+            fill(keep)
+            if not ft.custom_forms(self.trip):
+                win.destroy()
+
+        def rename():
+            got = chosen()
+            if got[0] is None:
+                return
+            key, label, idx = got
+            new = _ask_text(win, "Rename checklist item",
+                            "What should this column be called?",
+                            "Everything already ticked stays ticked.",
+                            initial=label, ok="Rename")
+            if not new or new == label:
+                return
+            raw, ok = ft.rename_custom_form(self.trip, key, new)
+            if not ok:
+                Messagebox.show_warning(f"There is already a column called "
+                                        f"“{new}”.", title="Already there",
+                                        parent=win)
+                return
+            apply(raw, idx)
+
+        def remove():
+            got = chosen()
+            if got[0] is None:
+                return
+            key, label, idx = got
+            if Messagebox.yesno(
+                    f"Remove “{label}” and everything ticked in it?\n\nThe "
+                    f"students and their other columns are not affected.",
+                    title="Remove column", parent=win) != "Yes":
+                return
+            for stu in self._students:
+                self._have.pop((stu["id"], key), None)
+            try:
+                self.db.clear_trip_form(self.trip["id"], key)
+            except Exception:
+                pass
+            apply(ft.remove_custom_form(self.trip, key), idx)
+
+        box.bind("<Double-1>", lambda e: rename())
+        bar = ttk.Frame(win)
+        bar.pack(fill=X, padx=16, pady=12)
+        ttk.Button(bar, text="Close", bootstyle=(SECONDARY, OUTLINE),
+                   command=win.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(bar, text="\U0001F5D1 Remove", bootstyle=(DANGER, OUTLINE),
+                   command=remove).pack(side=LEFT)
+        ttk.Button(bar, text="\u270e Rename", bootstyle=PRIMARY,
+                   command=rename).pack(side=LEFT, padx=6)
+        fill()
+        fit_window(win, 460, 340)
 
     # ── data ────────────────────────────────────────────────────────────
 
