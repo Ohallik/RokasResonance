@@ -340,3 +340,28 @@ def _num(v):
         return float(v)
     except (TypeError, ValueError):
         return 0.0
+
+
+def export_year_end_pack(db, sites, out_dir):
+    """One folder holding every school's year-end paperwork.
+
+    A teacher with six schools should not have to run twelve exports and name
+    twelve files to tell the curriculum coordinator what they are holding and
+    what is broken. One click, one folder, two files per school.
+    """
+    import os
+
+    os.makedirs(out_dir, exist_ok=True)
+    done, failed = [], []
+    for site in sites:
+        site = dict(site)
+        for kind, fn in (("inventory", export_handoff),
+                         ("needs_repair", export_needs_repair)):
+            path = os.path.join(out_dir, suggested_filename(site, kind))
+            try:
+                res = fn(db, site, path)
+                done.append((site["name"], kind, path, res))
+            except Exception as e:
+                failed.append((site["name"], kind, str(e)))
+    return {"folder": out_dir, "written": done, "failed": failed,
+            "schools": len(sites)}

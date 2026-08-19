@@ -255,6 +255,17 @@ class NewSchoolYearWizard(ttk.Toplevel):
         self.current_year = current_year
         self.new_year = None            # set on Finish
         self._imports = []              # (filename, ensemble, added, updated)
+        # Which halves of this wizard apply.  Paul Gillespie holds a high
+        # school, a middle school and two elementaries, so he gets both -- and
+        # an itinerant with no secondary program should not be walked through
+        # class lists and uniforms that do not exist for him.
+        try:
+            _sites = [dict(x) for x in main_db.get_sites()]
+        except Exception:
+            _sites = []
+        self._elem_sites = [x for x in _sites if x["level"] == "elementary"]
+        self._has_secondary = (any(x["level"] != "elementary" for x in _sites)
+                               or not _sites)
 
         self.title("New School Year")
         self.resizable(True, True)
@@ -297,63 +308,153 @@ class NewSchoolYearWizard(ttk.Toplevel):
                   font=("Segoe UI", fs(8)), foreground=muted_fg()
                   ).pack(side=LEFT, padx=8)
 
-        # ── Step 2: class lists ──
-        step(2, "Import this year's class lists (CSV)",
-             "One CSV per class: everyone on the list is assigned to the "
-             "ensemble and class period(s) you choose. Returning students "
-             "are rolled into the new year automatically (keeping their "
-             "instrument, contacts, and history); new names become new "
-             "records. Columns just need a first/last name (or one 'Name' "
-             "column); an Instrument column is used for new students. "
-             "Honors / Jr. All-State marks reset — they're earned fresh "
-             "each year.")
-        ttk.Button(body, text="➕ Import a Class List…",
-                   bootstyle=(PRIMARY, OUTLINE),
-                   command=self._import_list).pack(anchor=W, pady=(4, 2))
-        self._import_log = ttk.Label(body, text="No class lists imported yet "
-                                                "(you can also do this later "
-                                                "from Manage Students).",
-                                     font=("Segoe UI", fs(8)),
-                                     foreground=muted_fg(), justify=LEFT)
-        self._import_log.pack(anchor=W)
+        self._n = 1
 
-        # ── Step 3: archive whoever's left ──
-        step(3, "Archive the students who didn't move forward",
-             "Runs when you click Finish — AFTER the imports above — so it "
-             "only archives students who aren't on any new class list "
-             "(graduating 8th graders, kids who dropped). Returning students "
-             "are already in the new year and are not touched. Nothing is "
-             "deleted; anyone can be reactivated later from Manage Students "
-             "or by a later class-list import.")
-        self._archive_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(body, variable=self._archive_var, bootstyle=PRIMARY,
-                        text=f"Archive {current_year} students who aren't on "
-                             "a new class list"
-                        ).pack(anchor=W, pady=(2, 0))
+        def nstep(title, hint=""):
+            self._n += 1
+            step(self._n, title, hint)
 
-        # ── Step 3.5: uniforms ──
-        step("3½", "Roll uniforms forward",
-             "Returning students KEEP the uniform pieces they had last year — "
-             "those stay assigned and won't show as available, so you don't "
-             "re-issue everyone from scratch. The option below only releases "
-             "gear still held by students who did NOT return (graduated / "
-             "dropped), so those pieces free up for reassignment. Runs on "
-             "Finish, after archiving. Nothing else about uniforms changes.")
-        self._release_uniforms_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(body, variable=self._release_uniforms_var, bootstyle=PRIMARY,
-                        text="Release uniforms held by students who didn't return"
-                        ).pack(anchor=W, pady=(2, 0))
+        if self._has_secondary:
+            nstep("Import this year's class lists (CSV)",
+                  "One CSV per class: everyone on the list is assigned to the "
+                  "ensemble and class period(s) you choose. Returning students "
+                  "are rolled into the new year automatically (keeping their "
+                  "instrument, contacts, and history); new names become new "
+                  "records. Columns just need a first/last name (or one 'Name' "
+                  "column); an Instrument column is used for new students. "
+                  "Honors / Jr. All-State marks reset, they are earned fresh "
+                  "each year.")
+            ttk.Button(body, text="➕ Import a Class List…",
+                       bootstyle=(PRIMARY, OUTLINE),
+                       command=self._import_list).pack(anchor=W, pady=(4, 2))
+            self._import_log = ttk.Label(
+                body, text="No class lists imported yet (you can also do this "
+                           "later from Manage Students).",
+                font=("Segoe UI", fs(8)), foreground=muted_fg(), justify=LEFT)
+            self._import_log.pack(anchor=W)
 
-        # ── Step 4: what happens next ──
-        step(4, "After you finish",
-             "• Teacher Tools switches to the new year — add concert and "
-             "field-trip dates in the Concerts tab.\n"
-             "• The Budget window has its own year selector — switch it to "
-             "the new year to start the new budget.\n"
-             "• Seating charts and percussion rotations start fresh for the "
-             "new year; last year's stay saved under its year.")
+        # 5th grade class lists are imported per school, inside that school's
+        # own tab, so they are not repeated here: there is one right place to
+        # do it and this is not it.
+        if self._elem_sites:
+            names = ", ".join(x["name"].replace(" Elementary School", "")
+                              for x in self._elem_sites)
+            nstep("Send your elementary inventories to the coordinator",
+                  "One folder holding, for every school you teach at, what you "
+                  "are currently holding and what is waiting on a repair. Six "
+                  "schools should not mean twelve exports and twelve filenames."
+                  + "\n\nSchools: " + names)
+            ttk.Button(body, text="📤 Export Every School's Inventory & Repairs…",
+                       bootstyle=(SUCCESS, OUTLINE),
+                       command=self._export_year_end).pack(anchor=W, pady=(4, 2))
+            self._export_log = ttk.Label(body, text="Nothing exported yet.",
+                                         font=("Segoe UI", fs(8)),
+                                         foreground=muted_fg(), justify=LEFT)
+            self._export_log.pack(anchor=W)
+
+            nstep("Your schools for next year",
+                  "Assignments move around every summer. Add the schools you "
+                  "are picking up, archive the ones you are handing on. "
+                  "Archiving keeps all their instruments, children and history, "
+                  "and a school can be restored later exactly as it was.")
+            from ui.sites_view import SitesPanel
+            self._sites_panel = SitesPanel(body, self.main_db)
+            self._sites_panel.pack(fill=X, pady=(4, 2))
+
+        if self._has_secondary:
+            nstep("Archive the students who didn't move forward",
+                  "Runs when you click Finish, AFTER the imports above, so it "
+                  "only archives students who aren't on any new class list "
+                  "(graduating 8th graders, kids who dropped). Returning "
+                  "students are already in the new year and are not touched. "
+                  "Nothing is deleted; anyone can be reactivated later from "
+                  "Manage Students or by a later class-list import.")
+            self._archive_var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(body, variable=self._archive_var, bootstyle=PRIMARY,
+                            text="Archive " + current_year + " students who "
+                                 "aren't on a new class list"
+                            ).pack(anchor=W, pady=(2, 0))
+
+            nstep("Roll uniforms forward",
+                  "Returning students KEEP the uniform pieces they had last "
+                  "year, so you don't re-issue everyone from scratch. The "
+                  "option below only releases gear still held by students who "
+                  "did NOT return (graduated / dropped), so those pieces free "
+                  "up for reassignment. Runs on Finish, after archiving.")
+            self._release_uniforms_var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(body, variable=self._release_uniforms_var,
+                            bootstyle=PRIMARY,
+                            text="Release uniforms held by students who didn't "
+                                 "return").pack(anchor=W, pady=(2, 0))
+        else:
+            # An itinerant's 5th graders all leave for middle school, every one
+            # of them, every year, so the same tidy-up applies even though
+            # there are no class lists in this window to compare against.
+            self._archive_var = tk.BooleanVar(value=True)
+            self._release_uniforms_var = tk.BooleanVar(value=False)
+            nstep("Archive last year's children",
+                  "Your 5th graders have all moved on to middle school. This "
+                  "archives anyone not on a class list you import for the new "
+                  "year. Nothing is deleted, and an instrument's history stays "
+                  "with the instrument.")
+            ttk.Checkbutton(body, variable=self._archive_var, bootstyle=PRIMARY,
+                            text="Archive " + current_year + " children who "
+                                 "aren't on a new class list"
+                            ).pack(anchor=W, pady=(2, 0))
+
+        after = []
+        if self._has_secondary:
+            after.append("• Teacher Tools switches to the new year: add concert "
+                         "and field-trip dates in the Concerts tab.")
+        if self._elem_sites:
+            after.append("• Import each school's new class list from its own "
+                         "tab in the 5th Grade window.")
+        if self._has_secondary:
+            after.append("• The Budget window has its own year selector: switch "
+                         "it to the new year to start the new budget.")
+            after.append("• Seating charts and percussion rotations start fresh "
+                         "for the new year; last year's stay saved under its year.")
+        nstep("After you finish", "\n".join(after))
 
         fit_window(self, 640, 620)
+
+    def _export_year_end(self):
+        """Every school's inventory and open repairs, in one folder."""
+        from tkinter import filedialog
+        import site_export as SE
+
+        folder = filedialog.askdirectory(
+            parent=self, title="Where should the coordinator's files go?")
+        if not folder:
+            return
+        try:
+            res = SE.export_year_end_pack(self.main_db, self._elem_sites, folder)
+        except ImportError:
+            Messagebox.show_error(
+                "Writing a spreadsheet needs openpyxl:  pip install openpyxl",
+                title="Missing Dependency", parent=self)
+            return
+        except Exception as e:
+            Messagebox.show_error(f"Could not write the files:\n{e}",
+                                  title="Export failed", parent=self)
+            return
+
+        n = len(res["written"])
+        msg = (f"{n} file(s) for {res['schools']} school(s) written to:\n"
+               f"{folder}")
+        if res["failed"]:
+            msg += ("\n\nThese could not be written: "
+                    + ", ".join(f"{name} ({kind})"
+                                for name, kind, _e in res["failed"]))
+        Messagebox.show_info(msg, title="Exported", parent=self)
+        self._export_log.config(
+            text=f"{n} file(s) written to {folder}"
+                 + (f"  ({len(res['failed'])} failed)" if res["failed"] else ""))
+        try:
+            import os
+            os.startfile(folder)
+        except Exception:
+            pass
 
     def _import_list(self):
         year = self._year_var.get().strip()
