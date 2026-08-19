@@ -2385,18 +2385,41 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
                          values=["All"] + PERIOD_OPTIONS).grid(row=1, column=3, sticky=W, padx=4)
             self._per_var.trace_add("write", lambda *_: self._generate())
 
+        # Instruments are a long list, so this is a multi-select rather than a
+        # grid of eighteen tickboxes.  "The low brass" is trombone, baritone and
+        # tuba; sending that message three separate times is how one of the
+        # three ends up not being told.
         ttk.Label(body, text="Instrument:", font=("Segoe UI", 9, "bold")).grid(
-            row=2, column=0, sticky=W, pady=4)
+            row=2, column=0, sticky=NW, pady=4)
         _instr = (fifth_grade_instruments(self.program_type) if self.site_id
                   else instruments_for(self.program_type))
-        ttk.Combobox(body, textvariable=self._instr_var, state="readonly", width=20,
-                     values=["All"] + _instr).grid(
-            row=2, column=1, sticky=W, padx=4)
-        self._instr_var.trace_add("write", lambda *_: self._generate())
+        ibox = ttk.Frame(body)
+        ibox.grid(row=2, column=1, columnspan=2, sticky=W, padx=4)
+        isb = ttk.Scrollbar(ibox, orient=VERTICAL)
+        self._instr_list = tk.Listbox(
+            ibox, selectmode="extended", exportselection=False,
+            height=min(6, max(3, len(_instr))), width=24,
+            yscrollcommand=isb.set, font=("Segoe UI", 9),
+            activestyle="none")
+        isb.config(command=self._instr_list.yview)
+        for name in _instr:
+            self._instr_list.insert("end", name)
+        self._instr_list.pack(side=LEFT)
+        isb.pack(side=LEFT, fill=Y)
+        self._instr_list.bind("<<ListboxSelect>>", lambda e: self._generate())
 
-        ttk.Label(body, text="School year: " + (self.school_year or "all"),
-                  font=("Segoe UI", 8), foreground=muted_fg()).grid(
-            row=2, column=2, columnspan=2, sticky=W, padx=(10, 0))
+        side = ttk.Frame(body)
+        side.grid(row=2, column=3, sticky=NW, padx=(10, 0), pady=4)
+        ttk.Label(side, text="Ctrl+click for several.\n"
+                             "None selected = every "
+                             "instrument.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  justify=LEFT).pack(anchor=W)
+        ttk.Button(side, text="Clear", bootstyle=(SECONDARY, OUTLINE),
+                   command=self._clear_instruments).pack(anchor=W, pady=(4, 0))
+        ttk.Label(side, text="School year: " + (self.school_year or "all"),
+                  font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W,
+                                                                    pady=(6, 0))
 
         # Output
         out_frame = ttk.Frame(self)
@@ -2441,12 +2464,27 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
                     seen.append(p)
         return sorted(seen)
 
+    def _clear_instruments(self):
+        self._instr_list.selection_clear(0, "end")
+        self._generate()
+
+    def _chosen_instruments(self):
+        """The ticked instruments, or None meaning every one of them.
+
+        Selecting nothing is the same as selecting everything, which is what a
+        teacher means when they have not narrowed it -- rather than an empty
+        list that silently emails nobody.
+        """
+        picked = [self._instr_list.get(i)
+                  for i in self._instr_list.curselection()]
+        return picked or None
+
     def _generate(self):
-        instr = self._instr_var.get()
+        instr = self._chosen_instruments()
         if self.site_id:
             students = list(self.db.get_students_for_email(
                 school_year=self.school_year, site_id=self.site_id,
-                instrument=None if instr == "All" else instr))
+                instrument=instr))
             wanted = {g.lower() for g, v in self._group_vars.items() if v.get()}
             picked = []
             for s in students:
@@ -2462,7 +2500,7 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
                 school_year=self.school_year,
                 ensemble=None if ens == "All" else ens,
                 period=None if per == "All" else per,
-                instrument=None if instr == "All" else instr,
+                instrument=instr,
             )
 
         recip = self._recip_var.get()

@@ -2511,7 +2511,14 @@ class Database:
             if period and not _has(r["class_periods"], str(period)):
                 continue
             if instrument:
-                if not any(instrument_matches(instrument, r[c])
+                # One instrument or several.  A teacher writing to "the low
+                # brass" means trombone AND baritone AND tuba, and asking them
+                # to send the same message three times is how one of the three
+                # gets forgotten.
+                wanted = ([instrument] if isinstance(instrument, str)
+                          else list(instrument))
+                if not any(instrument_matches(w, r[c])
+                           for w in wanted
                            for c in ("primary_instrument", "secondary_instrument")):
                     continue
             out.append(r)
