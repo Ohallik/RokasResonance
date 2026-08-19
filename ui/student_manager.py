@@ -215,7 +215,25 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         # elementary school by "Advanced"; and elementary has no class periods
         # at all -- the group is a pullout on the specialist rotation.  Two
         # sections and a search box is the whole of what is needed here.
-        if not self.site_id:
+        if self.site_id:
+            # Section, not "Ensemble" -- and never the secondary class list that
+            # was offering to filter an elementary school by "Advanced".  Both
+            # sections are always here, even before the roster lands; choir
+            # appears once a single child is in it.
+            ttk.Label(filter_bar, text="Section:").pack(side=LEFT, padx=(12, 4))
+            # The box shows "Section 1"; the record says "Clyde Hill Elementary
+            # School: Section 1".  Keep the map, or the filter matches nothing
+            # and the roster silently empties.
+            self._section_full = {_short_group(g): g for g in self._roster_groups()}
+            self._section_filter_combo = ttk.Combobox(
+                filter_bar, textvariable=self._filter_ensemble_var,
+                state="readonly", width=14,
+                values=["All"] + list(self._section_full),
+            )
+            self._section_filter_combo.pack(side=LEFT)
+            self._filter_ensemble_var.trace_add(
+                "write", lambda *_: self._apply_filter())
+        else:
             ttk.Label(filter_bar, text="Ensemble:").pack(side=LEFT, padx=(12, 4))
             self._ensemble_filter_combo = ttk.Combobox(
                 filter_bar, textvariable=self._filter_ensemble_var,
@@ -264,7 +282,24 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         list_frame = ttk.Frame(paned)
         paned.add(list_frame, weight=2)
 
-        cols = ("check", "Name", "Grade", "Ensembles", "Period", "Instrument", "Parent", "Active Instruments")
+        # An elementary roster has no class periods, and its one grouping is the
+        # section -- so it says Class Section rather than Ensembles, and the
+        # Period column is not there to be sorted by something that cannot vary.
+        if self.site_id:
+            cols = ("check", "Name", "Grade", "Class Section", "Instrument",
+                    "Parent", "Active Instruments")
+            widths = [34, 190, 60, 150, 130, 160, 90]
+            _stretch = {"Name", "Class Section", "Parent"}
+        else:
+            cols = ("check", "Name", "Grade", "Ensembles", "Period", "Instrument",
+                    "Parent", "Active Instruments")
+            widths = [34, 170, 60, 150, 70, 110, 150, 90]
+            _stretch = {"Name", "Ensembles", "Parent"}
+        # Scaled, because a width that fits "Grade" at Normal shows "Grad" at
+        # Large -- the font grows and a raw pixel column does not.
+        from ui.theme import px
+        widths = [px(w) for w in widths]
+
         sb = ttk.Scrollbar(list_frame, orient=VERTICAL)
         self.tree = ttk.Treeview(list_frame, columns=cols, show="headings",
                                   yscrollcommand=sb.set, selectmode="extended",
@@ -273,8 +308,6 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         sb.pack(side=RIGHT, fill=Y)
         self.tree.pack(fill=BOTH, expand=True)
 
-        widths = [34, 170, 50, 150, 55, 100, 140, 70]
-        _stretch = {"Name", "Ensembles", "Parent"}
         for col, w in zip(cols, widths):
             heading = "" if col == "check" else col
             self.tree.heading(col, text=heading, anchor=W,
@@ -282,7 +315,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                                        else (lambda c=col: self._sort_by(c))))
             self.tree.column(col, width=w, anchor=(CENTER if col == "check" else W),
                              stretch=col in _stretch,
-                             minwidth=(34 if col == "check" else 40))
+                             minwidth=(px(34) if col == "check" else px(50)))
 
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.tree.bind("<Button-1>", self._on_tree_click, add="+")
@@ -534,10 +567,19 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                 if search not in haystack:
                     continue
             if ens_filter and ens_filter != "All":
-                # Identity match ("Entry" ≡ "Entry Band" ≡ "MS Band (Entry)")
-                import class_registry as cr
-                if not cr.csv_has_class(self._sval(s, "ensembles"), ens_filter):
-                    continue
+                held = self._sval(s, "ensembles")
+                if self.site_id:
+                    # Elementary groups are exact strings, not class identities
+                    # -- "Section 1" is not a level the class parser knows.
+                    want = self._section_full.get(ens_filter, ens_filter).lower()
+                    if not any(p.strip().lower() == want
+                               for p in (held or "").split(",")):
+                        continue
+                else:
+                    # Identity match ("Entry" ≡ "Entry Band" ≡ "MS Band (Entry)")
+                    import class_registry as cr
+                    if not cr.csv_has_class(held, ens_filter):
+                        continue
             if per_filter and per_filter != "All":
                 if per_filter not in _csv_to_list(self._sval(s, "class_periods")):
                     continue
@@ -631,21 +673,28 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             # Ensembles show their short display form ("Entry, Jazz 2") — the
             # full canonical names stay on the record and in the detail pane.
             import class_registry as cr
-            ensembles = cr.display_csv(self._sval(s, "ensembles"))
+            if self.site_id:
+                # "Section 2", not "Jing Mei Elementary School: Section 2".  The
+                # window is one school; repeating its name in every cell of
+                # every row pushes the part that differs off the edge.
+                ensembles = ", ".join(
+                    _short_group(p.strip())
+                    for p in (self._sval(s, "ensembles") or "").split(",")
+                    if p.strip())
+            else:
+                ensembles = cr.display_csv(self._sval(s, "ensembles"))
             periods = self._sval(s, "class_periods") or ""
             prim = self._sval(s, "primary_instrument") or ""
             sec = self._sval(s, "secondary_instrument") or ""
             instr_display = prim + (f" / {sec}" if sec else "")
-            self.tree.insert("", "end", iid=iid, tags=tags, values=(
-                "☑" if s["id"] in self._checked else "☐",
-                name_display,
-                s["grade"] or "",
-                ensembles,
-                periods,
-                instr_display,
-                s["parent1_name"] or "",
-                active_str,
-            ))
+            row = ["☑" if s["id"] in self._checked else "☐",
+                   name_display,
+                   s["grade"] or "",
+                   ensembles]
+            if not self.site_id:
+                row.append(periods)
+            row += [instr_display, s["parent1_name"] or "", active_str]
+            self.tree.insert("", "end", iid=iid, tags=tags, values=tuple(row))
         self._update_sel_count()
 
     def _update_sort_indicator(self):
@@ -850,6 +899,17 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         self.wait_window(dlg)
         self._claim_new_students(high_water)
         self.refresh()
+
+    def _roster_groups(self):
+        """This school's sections (and its choir, if anybody is in it)."""
+        if not self.site_id:
+            return []
+        try:
+            from ui.ensembles import site_groups
+            site = self.db.get_site(self.site_id)
+            return site_groups(self.db, site, self._year_var.get() or None) if site else []
+        except Exception:
+            return []
 
     def _site(self):
         """The school this roster belongs to, or None for the secondary one."""
@@ -2448,21 +2508,10 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
                    command=self._send).pack(side=RIGHT, padx=4)
 
     def _site_groups(self):
-        """The groups this school's children are actually in.
-
-        Read off the roster rather than a configured list: a section nobody is
-        in cannot be emailed, and offering it only invites the question of why
-        that send reached nobody.
-        """
-        seen = []
-        for s in self.db.get_students_for_email(school_year=self.school_year,
-                                                site_id=self.site_id):
-            held = (s["ensembles"] if "ensembles" in s.keys() else "") or ""
-            for part in held.split(","):
-                p = part.strip()
-                if p and p not in seen:
-                    seen.append(p)
-        return sorted(seen)
+        """The groups this school can offer: both sections, plus choir if used."""
+        from ui.ensembles import site_groups
+        site = self.db.get_site(self.site_id)
+        return site_groups(self.db, site, self.school_year) if site else []
 
     def _clear_instruments(self):
         self._instr_list.selection_clear(0, "end")

@@ -87,6 +87,44 @@ FIFTH_GRADE_STRINGS_COMMON = ["Violin", "Viola", "Cello", "String Bass"]
 CHOIR_SUFFIX = "Choir"
 
 
+SECTION_NUMBERS = (1, 2)
+
+
+def site_sections(site_name: str):
+    """The two sections every elementary school runs, named after the school."""
+    name = (site_name or "").strip()
+    return [f"{name}: Section {n}" for n in SECTION_NUMBERS]
+
+
+def site_groups(db, site, school_year=None):
+    """Every group a 5th grade school can offer.
+
+    Section 1 and Section 2 always, whether or not anybody is in them yet --
+    at the start of the year nobody is, and a picker that is empty until the
+    roster arrives is a picker that looks broken on the day it is first opened.
+
+    Choir only when at least one child is actually in it. Most schools do not
+    run one, and offering an empty choir everywhere would be the same mistake
+    in the other direction.
+    """
+    site = dict(site)
+    name = site.get("name") or ""
+    groups = site_sections(name)
+    choir = choir_ensemble(name)
+    try:
+        rows = db.get_students_for_email(school_year=school_year,
+                                         site_id=site.get("id"))
+    except Exception:
+        rows = []
+    lower = choir.lower()
+    for r in rows:
+        held = (r["ensembles"] if "ensembles" in r.keys() else "") or ""
+        if any(p.strip().lower() == lower for p in held.split(",")):
+            groups.append(choir)
+            break
+    return groups
+
+
 def fifth_grade_instruments(program_type: str):
     """What a 5th grader can be recorded as playing.
 
