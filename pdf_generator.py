@@ -294,16 +294,6 @@ def _row_describe(s):
     ], cw, underline_cols=(1,), top_pad=5)
 
 
-# The elementary form prints one fixed list for every instrument, in two
-# columns, and the teacher circles what went out with it.  Straight off the
-# district's own form -- it is not derived from the instrument the way the
-# secondary form's list is.
-ELEM_ACCESSORIES = (
-    ["Bow", "Case Bag", "Gooseneck/Bocal", "Ligature"],
-    ["Mouthpiece", "Neck/Seat Strap", "Shoulder Rest"],
-)
-
-
 # ── Accessories & Condition table ─────────────────────────────────────────────
 
 def _accessories_table(accessories, s):
@@ -349,30 +339,6 @@ def _accessories_table(accessories, s):
         ])
 
     tbl = Table(rows, colWidths=cw)
-    tbl.setStyle(TableStyle([
-        ("TOPPADDING",    (0, 0), (-1, -1), 1),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 1),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 1),
-        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
-    ]))
-    return tbl
-
-
-def _elem_accessories_table(s):
-    """The district elementary list: names only, no per-item rating, because
-    the teacher circles the ones that went out rather than grading each."""
-    left, right = ELEM_ACCESSORIES
-    rows_n = max(len(left), len(right))
-    left = list(left) + [None] * (rows_n - len(left))
-    right = list(right) + [None] * (rows_n - len(right))
-
-    def item_p(name):
-        return _p(f"<u><b>{name}</b></u>", s["b9"]) if name else _p("", s["n9"])
-
-    rows = [[item_p(l), _p("", s["n9"]), item_p(r)]
-            for l, r in zip(left, right)]
-    tbl = Table(rows, colWidths=[2.2*inch, 0.4*inch, 4.4*inch])
     tbl.setStyle(TableStyle([
         ("TOPPADDING",    (0, 0), (-1, -1), 1),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
@@ -582,8 +548,12 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     # ── Accessories & Condition ────────────────────────────────────────────
     story.append(_p("<u><b>Accessories &amp; Condition</b></u> (circle)", s["n10"]))
     story.append(Spacer(1, 3))
-    story.append(_elem_accessories_table(s) if elementary
-                 else _accessories_table(accessories, s))
+    # The instrument's own accessories, on both forms.  The district's paper
+    # elementary form prints one fixed list because a printed form cannot know
+    # what is being loaned; Roka does know, so a violin gets case, bow and
+    # shoulder rest, an oboe gets case and swab, and a trumpet gets valve oil
+    # and slide grease as Yes/No rather than a condition to grade.
+    story.append(_accessories_table(accessories, s))
     story.append(Spacer(1, 7))
 
     # ── Date / Return / Repair Fields ─────────────────────────────────────
