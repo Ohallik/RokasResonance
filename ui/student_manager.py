@@ -960,37 +960,76 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         self.refresh()
         self._load_detail(sid)
 
+    def _name_of(self, sid):
+        st = self.db.get_student(sid)
+        if not st:
+            return ""
+        return f"{st['first_name']} {st['last_name']}".strip()
+
     def _delete_student(self):
-        sid = self._get_selected()
-        if sid is None:
-            return
-        student = self.db.get_student(sid)
-        if not student:
-            return
-        name = f"{student['first_name']} {student['last_name']}".strip()
+        """Remove the ticked students, or the highlighted one if none are ticked.
 
-        # Block deletion if student has active checkouts
-        active = self.db.get_student_active_checkout_count(sid)
-        if active > 0:
+        This used to read only the highlighted row, so ticking a whole roster
+        and pressing Delete did nothing at all, and then deleted exactly the
+        one student who happened to be highlighted.  Silence is the worst
+        possible answer to a bulk action: it reads as a broken button, and the
+        obvious next move (click a name and press it again) is the one that
+        does damage.
+        """
+        ids = [i for i in self._selected_ids() if i]
+        if not ids:
             Messagebox.show_warning(
-                f"{name} currently has {active} instrument(s) checked out.\n\n"
-                f"Please check in all instruments before deleting this student.",
-                title="Cannot Delete"
-            )
+                "Tick the boxes next to the students you want to remove "
+                "(or use 'Select All Shown'), then press Delete.",
+                title="No Students Selected")
             return
 
-        # Confirm deletion
-        answer = Messagebox.yesno(
-            f"Are you sure you want to delete {name}?\n\n"
-            f"This will remove them from the student list.",
-            title="Confirm Delete"
-        )
-        if answer != "Yes":
+        # An instrument out on loan is the one thing that has to be settled
+        # first; those students are kept rather than the whole action refused,
+        # so one unreturned trumpet does not block a roster of thirty.
+        held = [i for i in ids if self.db.get_student_active_checkout_count(i)]
+        deletable = [i for i in ids if i not in held]
+        if not deletable:
+            who = (self._name_of(held[0]) if len(held) == 1
+                   else f"All {len(held)} of them")
+            Messagebox.show_warning(
+                f"{who} still {'has' if len(held) == 1 else 'have'} "
+                f"instruments checked out.\n\nCheck the instruments in first, "
+                f"then delete.",
+                title="Cannot Delete")
             return
 
-        self.db.deactivate_student(sid)
+        if len(deletable) == 1:
+            question = f"Remove {self._name_of(deletable[0])} from the roster?"
+        else:
+            names = [self._name_of(i) for i in deletable[:4]]
+            listed = ", ".join(n for n in names if n)
+            if len(deletable) > 4:
+                listed += f", and {len(deletable) - 4} more"
+            question = (f"Remove {len(deletable)} students from the roster?"
+                        f"\n\n{listed}")
+        kept = ""
+        if held:
+            kept = (f"\n\n{len(held)} of the ones you ticked "
+                    f"{'has' if len(held) == 1 else 'have'} instruments "
+                    f"checked out and will be kept.")
+        if Messagebox.yesno(
+                question + kept
+                + "\n\nThey move to the Inactive / Former Students list, where "
+                  "you can put any of them back.",
+                title="Remove students?") != "Yes":
+            return
+
+        for sid in deletable:
+            self.db.deactivate_student(sid)
+        self._checked.clear()
         self._selected_id = None
         self.refresh()
+        self._update_sel_count()
+        if held:
+            Messagebox.show_info(
+                f"{len(deletable)} removed.  {len(held)} kept, still holding "
+                f"instruments.", title="Done")
 
     def _show_inactive_window(self):
         """List former (inactive) students, most-recently-enrolled first, with a
@@ -2341,6 +2380,26 @@ class _BulkAssignDialog(_ClassOptionsMixin, ttk.Toplevel):
             Messagebox.show_warning("Nothing selected to assign.", title="Nothing to Apply",
                                     parent=self)
             return
+
+        # Adding a class to thirty students is the normal way to use this and
+        # is undone by unticking it again, so it is not worth a question.
+        # Replacing wipes what each student already had, and setting an
+        # instrument overwrites theirs -- neither can be reconstructed from
+        # the roster afterwards, so those ask.
+        n = len(self.student_ids)
+        if n > 1 and (replace or prim or sec):
+            what = []
+            if replace and (ensembles or periods):
+                what.append("replace what they have now with your selection")
+            if prim:
+                what.append(f"set every one of them to {prim}")
+            if sec:
+                what.append(f"set their second instrument to {sec}")
+            if Messagebox.yesno(
+                    f"This will {' and '.join(what)}, for all {n} students."
+                    f"\n\nWhat they had before is not kept.  Go ahead?",
+                    title="Apply to all " + str(n) + "?", parent=self) != "Yes":
+                return
 
         if ensembles:
             self.db.bulk_set_student_multi(self.student_ids, "ensembles", ensembles, replace)
