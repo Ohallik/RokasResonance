@@ -52,6 +52,18 @@ class InventoryManager(ttk.Frame):
         # When set, this is one school's inventory and nothing else appears in
         # it.  Left unset, it is the secondary program, as it has always been.
         self.site_id = site_id
+        # A 5th grader does not do 5th grade band twice, so an elementary
+        # school never has a last year to carry forward -- and these loans
+        # carry no rental fee, which is the other half of what carry-over
+        # does.  The button is left off that toolbar entirely.
+        self._elementary = False
+        if site_id:
+            try:
+                site = db.get_site(site_id)
+                self._elementary = bool(site) and (
+                    dict(site).get("level") == "elementary")
+            except Exception:
+                pass
         self._on_checkouts = on_checkouts
         self._all_rows = []
         self._selected_id = None
@@ -167,8 +179,11 @@ class InventoryManager(ttk.Frame):
                    command=self._open_checkin_chooser).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="📄 Generate Form", bootstyle=PRIMARY,
                    command=self._generate_form).pack(side=LEFT, padx=2, pady=6)
-        ttk.Button(toolbar, text="🔁 Carry Over…", bootstyle=(SUCCESS, OUTLINE),
-                   command=self._open_carry_over).pack(side=LEFT, padx=2, pady=6)
+        if not self._elementary:
+            ttk.Button(toolbar, text="🔁 Carry Over…",
+                       bootstyle=(SUCCESS, OUTLINE),
+                       command=self._open_carry_over).pack(side=LEFT, padx=2,
+                                                           pady=6)
 
         ttk.Separator(toolbar, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=4)
 
