@@ -801,8 +801,12 @@ def build_student_list(trip, students, path, teacher_name="", school_name=""):
     ws.append([])
     ws["A1"].font = Font(bold=True, size=14)
 
-    head_at = ws.max_row + 1
+    # Read the row back AFTER writing it.  append([]) advances the write
+    # position but leaves max_row where it was, because a row with no cells in
+    # it is not a row -- so predicting the header's position put the shading
+    # and the filter arrows one row above the words.
     ws.append(["Last Name", "First Name", "Grade", "Student ID", "Class"])
+    head_at = ws.max_row
     for c in ws[head_at]:
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="2E5FA3")
