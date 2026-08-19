@@ -402,7 +402,12 @@ class FieldTripsView(ttk.Frame):
         dl = ft.deadlines(t, cal)
         if dl:
             overdue = [x for x in dl if x["overdue"]]
-            nxt = next((x for x in dl if not x["overdue"] and x["due"]), None)
+            # Skip the ones already ticked off: "next deadline" meant the
+            # next one CHRONOLOGICALLY, so a deadline she had just marked done
+            # was still being offered as the thing to do next, with a date in
+            # the past and "-0 school weeks away" beside it.
+            nxt = next((x for x in dl if not x["overdue"] and x["due"]
+                        and not x.get("done")), None)
             missing_anchor = [x for x in dl if not x["due"]]
             bold = False
             if overdue:
@@ -413,7 +418,7 @@ class FieldTripsView(ttk.Frame):
                 left = nxt["school_weeks_left"]
                 when = ct.fmt_date(nxt["due"].isoformat())
                 text = f"Next district deadline:  {nxt['label']} by {when}"
-                if left is not None and left >= 0:
+                if left is not None and left >= 1:
                     text += f"  ({left:.0f} school week(s) away)"
                 color = muted_fg()
             else:
@@ -1365,7 +1370,12 @@ class _DeadlinesDialog(ttk.Toplevel):
             box = tk.LabelFrame(body, text=f" {d['label']} ",
                                 font=("Segoe UI", 9, "bold"), padx=10, pady=6)
             box.pack(fill=X, pady=4)
-            if d["due"]:
+            if d.get("done"):
+                tick = ft.DEADLINE_SATISFIED_BY.get(d["key"], "")
+                label = dict(ft.CHECKLIST_ITEMS).get(tick, "the checklist")
+                line = f"✓ done — “{label}” is ticked"
+                color = "#1a7a1a"
+            elif d["due"]:
                 when = ct.fmt_date(d["due"].isoformat())
                 left = d["school_weeks_left"]
                 if d["overdue"]:
@@ -1388,9 +1398,50 @@ class _DeadlinesDialog(ttk.Toplevel):
             ttk.Label(box, text=d["detail"], font=("Segoe UI", 9),
                       wraplength=520, justify=LEFT).pack(anchor=W, pady=(2, 0))
 
+        # ── Which board meetings are still open to this trip ──
+        # Being past due for the meeting she happened to pick is not the same
+        # as being out of options, and the window was only showing the first.
+        if kind == ft.TRIP_OVERNIGHT:
+            box = tk.LabelFrame(body, text=" Board meetings you can still make ",
+                                font=("Segoe UI", 9, "bold"), padx=10, pady=6)
+            box.pack(fill=X, pady=(8, 4))
+            usable = ft.usable_board_meetings(year, trip)
+            picked = (trip.get("board_date") or "").strip()
+            if not usable:
+                ttk.Label(box, text="None of the board's regular meetings are "
+                                    "still in reach for this trip. Check the "
+                                    "district's list for a later one: "
+                                    + sc.BOARD_MEETINGS_URL,
+                          font=("Segoe UI", 9), foreground=_OVERDUE,
+                          wraplength=520, justify=LEFT).pack(anchor=W)
+            else:
+                ttk.Label(box, text="Earlier is better, not harder. Any of "
+                                    "these still leaves time for the packet; "
+                                    "set one on the trip with Edit.",
+                          font=("Segoe UI", 8), foreground=muted_fg(),
+                          wraplength=520, justify=LEFT).pack(anchor=W,
+                                                             pady=(0, 4))
+                for o in usable[:8]:
+                    mark = "●  " if o["date"].isoformat() == picked else "○  "
+                    ttk.Label(
+                        box,
+                        text=f"{mark}{ct.fmt_date(o['date'].isoformat())}"
+                             f"      packet to the principal by "
+                             f"{ct.fmt_date(o['packet_due'].isoformat())}",
+                        font=("Segoe UI", 9,
+                              "bold") if mark.startswith("●") else
+                             ("Segoe UI", 9),
+                        foreground="#1a7a1a" if mark.startswith("●")
+                        else muted_fg()).pack(anchor=W)
+                if len(usable) > 8:
+                    ttk.Label(box, text=f"…and {len(usable) - 8} more later in "
+                                        f"the year.",
+                              font=("Segoe UI", 8),
+                              foreground=muted_fg()).pack(anchor=W)
+
         ttk.Button(self, text="Close", bootstyle=(SECONDARY, OUTLINE),
                    command=self.destroy).pack(pady=(4, 12))
-        fit_window(self, 600, 560)
+        fit_window(self, 620, 620)
 
 
 def _ask_text(parent, title, prompt, hint=""):

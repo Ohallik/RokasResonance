@@ -287,17 +287,48 @@ DEADLINES_OVERNIGHT = [
     ("nurse_notify", 8, "trip", "Tell the school nurse",
      "Eight school weeks, and before board approval. The Special Education "
      "Supervisor for Health Services is notified too."),
-    ("application", 5, "board", "Packet to the principal",
-     "Five school weeks before the board meeting. The district's own steps "
-     "say four; the timeline table says five, so this uses five."),
+    ("application", 4, "board", "Packet to the principal",
+     "Four school weeks before the board meeting. The district's own document "
+     "disagrees with itself -- the numbered steps say four, the timeline table "
+     "on page five says five -- and four is what is actually practised."),
     ("athletics", 3, "board", "Packet to Athletics & Activities",
      "The principal's office sends it to Jessica Dowling. Ask for a read "
      "receipt: that is your proof it arrived."),
     ("nurse_roster", 6, "trip", "Roster, medical and bus info to the nurse",
      "Six school weeks before the trip."),
-    ("health_forms", 6, "trip", "Exhibit E and medication forms from students",
-     "From every student, not only the ones who take medication."),
+    ("permission_back", 6, "trip", "Parent authorization forms back",
+     "Exhibit C, signed, from every student. The district sets no date for "
+     "this one -- six school weeks is the deadline it sets for the health "
+     "paperwork, and getting these in by then leaves room to chase whoever "
+     "has not. Without the form a student cannot travel."),
 ]
+
+
+# Which checklist tick means a deadline has been met.
+#
+# "Packet to the principal" IS the field trip form: they are one action, and
+# ticking the form and then being told the packet is past due is the planner
+# arguing with the teacher about something she has already done.  Athletics &
+# Activities is the same packet -- the principal's office forwards it, so the
+# teacher's part is finished when it reaches the principal.
+DEADLINE_SATISFIED_BY = {
+    "application": "approved",
+    "athletics": "approved",
+    "nurse_notify": "nurse_check",
+    "nurse_roster": "nurse_check",
+}
+
+
+def deadline_done(trip, key):
+    """Whether the checklist says this deadline has been dealt with.  N/A
+    counts: an item marked "does not apply" is not outstanding."""
+    tick = DEADLINE_SATISFIED_BY.get(key)
+    if not tick:
+        return False
+    try:
+        return int(trip.get(tick) or 0) in (CHECK_DONE, CHECK_NA)
+    except (TypeError, ValueError):
+        return False
 
 
 def deadlines(trip, cal=None, today=None):
@@ -327,10 +358,11 @@ def deadlines(trip, cal=None, today=None):
         left = None
         if due and cal:
             left = sc.school_weeks_between(cal, today, due)
+        done = deadline_done(trip, key)
         out.append({
             "key": key, "label": label, "detail": detail, "weeks": weeks,
-            "anchor": anchor, "due": due,
-            "overdue": bool(due and due < today),
+            "anchor": anchor, "due": due, "done": done,
+            "overdue": bool(due and due < today and not done),
             "school_weeks_left": left,
         })
     out.sort(key=lambda x: (x["due"] is None, x["due"] or today))
