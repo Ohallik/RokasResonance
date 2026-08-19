@@ -761,7 +761,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
     def _get_selected(self):
         sel = self.tree.selection()
         if not sel:
-            Messagebox.show_warning("Please select a student first.", title="No Selection")
+            Messagebox.show_warning("Please select a student first.", title="No Selection",
+    parent=self.winfo_toplevel())
             return None
         return int(sel[0])
 
@@ -777,7 +778,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             Messagebox.show_warning(
                 "Tick the ☐ boxes next to the students you want (or use 'Select All Shown'),\n"
                 "then assign an ensemble, class period, and/or instrument to all of them at once.",
-                title="No Students Selected")
+                title="No Students Selected",
+                parent=self.winfo_toplevel())
             return
         dlg = _BulkAssignDialog(self.winfo_toplevel(), self.db, ids,
                                 self.program_type, site_id=self.site_id)
@@ -879,7 +881,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             Messagebox.show_warning(
                 "Please select at most 10 files at a time.",
                 title="Too Many Files"
-            )
+            ,
+            parent=self.winfo_toplevel())
             return
         school_year = self._year_var.get() or _current_school_year()
         dlg = _StudentImportDialog(
@@ -981,7 +984,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             Messagebox.show_warning(
                 "Tick the boxes next to the students you want to remove "
                 "(or use 'Select All Shown'), then press Delete.",
-                title="No Students Selected")
+                title="No Students Selected",
+                parent=self.winfo_toplevel())
             return
 
         # An instrument out on loan is the one thing that has to be settled
@@ -996,7 +1000,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                 f"{who} still {'has' if len(held) == 1 else 'have'} "
                 f"instruments checked out.\n\nCheck the instruments in first, "
                 f"then delete.",
-                title="Cannot Delete")
+                title="Cannot Delete",
+                parent=self.winfo_toplevel())
             return
 
         if len(deletable) == 1:
@@ -1017,7 +1022,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                 question + kept
                 + "\n\nThey move to the Inactive / Former Students list, where "
                   "you can put any of them back.",
-                title="Remove students?") != "Yes":
+                title="Remove students?",
+                parent=self.winfo_toplevel()) != "Yes":
             return
 
         for sid in deletable:
@@ -1029,7 +1035,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         if held:
             Messagebox.show_info(
                 f"{len(deletable)} removed.  {len(held)} kept, still holding "
-                f"instruments.", title="Done")
+                f"instruments.", title="Done",
+                parent=self.winfo_toplevel())
 
     def _show_inactive_window(self):
         """List former (inactive) students, most-recently-enrolled first, with a
@@ -1145,7 +1152,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             self.db.update_student(sid, data)
             win.destroy()
             Messagebox.show_info(f"{name} reactivated for {data['school_year']}.",
-                                 title="Reactivated")
+                                 title="Reactivated",
+                                 parent=self.winfo_toplevel())
             if on_done:
                 on_done(data["school_year"])
 
@@ -1164,7 +1172,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             from openpyxl.utils import get_column_letter
         except ImportError:
             Messagebox.show_error("openpyxl is required. Run: pip install openpyxl",
-                                  title="Missing Dependency")
+                                  title="Missing Dependency",
+                                  parent=self.winfo_toplevel())
             return
 
         # ── Scope dialog ───────────────────────────────────────────────────
@@ -1203,7 +1212,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             school_year=year, include_inactive=inactive_var.get(),
             level="secondary"))
         if not students:
-            Messagebox.show_info("No students match that scope.", title="Nothing to Export")
+            Messagebox.show_info("No students match that scope.", title="Nothing to Export",
+    parent=self.winfo_toplevel())
             return
 
         wb = openpyxl.Workbook()
@@ -1266,10 +1276,12 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         try:
             wb.save(path)
         except Exception as e:
-            Messagebox.show_error(f"Could not save file:\n{e}", title="Save Error")
+            Messagebox.show_error(f"Could not save file:\n{e}", title="Save Error",
+    parent=self.winfo_toplevel())
             return
         if Messagebox.yesno(f"Exported {len(students)} student(s).\n\nOpen the file now?",
-                            title="Export Complete") == "Yes":
+                            title="Export Complete",
+                            parent=self.winfo_toplevel()) == "Yes":
             import subprocess
             subprocess.Popen(["start", "", path], shell=True)
 
@@ -1319,7 +1331,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                     if str(self._sval(s, "grade")).strip() == grade]
         if not students:
             Messagebox.show_info(f"No grade-{grade} students found for {year}.",
-                                 title="Nothing to Export")
+                                 title="Nothing to Export",
+                                 parent=self.winfo_toplevel())
             return
 
         path = filedialog.asksaveasfilename(
@@ -1337,12 +1350,14 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                 for s in students:
                     writer.writerow([self._sval(s, key) or "" for _, key in HS_TRANSFER_FIELDS])
         except Exception as e:
-            Messagebox.show_error(f"Could not save file:\n{e}", title="Save Error")
+            Messagebox.show_error(f"Could not save file:\n{e}", title="Save Error",
+    parent=self.winfo_toplevel())
             return
         Messagebox.show_info(
             f"Exported {len(students)} grade-{grade} student(s) to:\n{path}\n\n"
             "High-school directors can import this after loading their own roster to "
-            "auto-fill instrumentation.", title="Export Complete")
+            "auto-fill instrumentation.", title="Export Complete",
+            parent=self.winfo_toplevel())
 
     def _import_instruments_from_csv(self):
         """Update existing students' instruments (and fill blank contacts) from a
@@ -1351,7 +1366,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             "Import instrumentation from another school's CSV?\n\n"
             "Load your own class roster FIRST. This matches students by ID or name "
             "and fills in what they played previously — it won't create new students.",
-            title="Update Instruments from CSV") != "Yes":
+            title="Update Instruments from CSV",
+            parent=self.winfo_toplevel()) != "Yes":
             return
         path = filedialog.askopenfilename(
             title="Select transfer CSV (from feeder school)",
@@ -1365,10 +1381,12 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                 reader = csv.DictReader(f)
                 rows = [{(k or "").strip(): (v or "").strip() for k, v in r.items()} for r in reader]
         except Exception as e:
-            Messagebox.show_error(f"Could not read CSV:\n{e}", title="Import Error")
+            Messagebox.show_error(f"Could not read CSV:\n{e}", title="Import Error",
+    parent=self.winfo_toplevel())
             return
         if not rows:
-            Messagebox.show_info("That CSV has no rows.", title="Nothing to Import")
+            Messagebox.show_info("That CSV has no rows.", title="Nothing to Import",
+    parent=self.winfo_toplevel())
             return
 
         matched = updated = 0
@@ -1416,7 +1434,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         if unmatched:
             preview = ", ".join(unmatched[:12]) + ("…" if len(unmatched) > 12 else "")
             msg += f"\n\n{len(unmatched)} could not be matched (not on your roster):\n{preview}"
-        Messagebox.show_info(msg, title="Instrument Import Complete")
+        Messagebox.show_info(msg, title="Instrument Import Complete",
+    parent=self.winfo_toplevel())
 
 
 # ── CSV roster parser ─────────────────────────────────────────────────────────
@@ -2107,10 +2126,12 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
 
     def _validate(self, data: dict) -> bool:
         if not data.get("first_name") and not data.get("last_name"):
-            Messagebox.show_warning("Student name is required.", title="Validation")
+            Messagebox.show_warning("Student name is required.", title="Validation",
+    parent=self.winfo_toplevel())
             return False
         if not data.get("school_year"):
-            Messagebox.show_warning("School year is required.", title="Validation")
+            Messagebox.show_warning("School year is required.", title="Validation",
+    parent=self.winfo_toplevel())
             return False
         return True
 
@@ -2369,6 +2390,38 @@ class _BulkAssignDialog(_ClassOptionsMixin, ttk.Toplevel):
                 text="Add (default): keeps each student's current ensembles/periods and adds "
                      "the ones you tick below — nothing is erased.")
 
+    def _names(self, limit=4):
+        """The first few students this will hit, then how many more."""
+        out = []
+        for sid in self.student_ids[:limit]:
+            st = self.db.get_student(sid)
+            if st:
+                out.append(f"{st['first_name']} {st['last_name']}".strip())
+        listed = ", ".join(n for n in out if n)
+        rest = len(self.student_ids) - limit
+        if rest > 0:
+            listed += f", and {rest} more"
+        return listed
+
+    def _confirm_apply(self, n, ensembles, periods, prim, sec, replace):
+        """Show what is about to happen, to how many, and to whom."""
+        lines = []
+        if ensembles:
+            joined = ", ".join(ensembles)
+            lines.append(f"Class: {'replace what they have with' if replace else 'add'} {joined}")
+        if periods:
+            joined = ", ".join(periods)
+            lines.append(f"Period: {'replace with' if replace else 'add'} {joined}")
+        if prim:
+            lines.append(f"Instrument: {prim}, replacing what they have now")
+        if sec:
+            lines.append(f"Second instrument: {sec}, replacing what they have now")
+        return Messagebox.yesno(
+            f"Apply this to {n} students?\n\n"
+            + "\n".join(lines)
+            + f"\n\n{self._names()}",
+            title=f"Apply to {n} students?", parent=self) == "Yes"
+
     def _apply(self):
         replace = self._mode_var.get() == "replace"
         ensembles = [o for o, v in self._ens_vars.items() if v.get()]
@@ -2381,24 +2434,17 @@ class _BulkAssignDialog(_ClassOptionsMixin, ttk.Toplevel):
                                     parent=self)
             return
 
-        # Adding a class to thirty students is the normal way to use this and
-        # is undone by unticking it again, so it is not worth a question.
-        # Replacing wipes what each student already had, and setting an
-        # instrument overwrites theirs -- neither can be reconstructed from
-        # the roster afterwards, so those ask.
+        # Ticks carry over between assignments, and the roster this runs
+        # against is invisible from here -- so a teacher who assigns the
+        # violins, then ticks the violas without unticking, silently puts
+        # every violin on viola too.  That happened.  The count and the first
+        # few names are what catch it: six names when you ticked four is
+        # obvious, and nothing else on screen would have told you.
         n = len(self.student_ids)
-        if n > 1 and (replace or prim or sec):
-            what = []
-            if replace and (ensembles or periods):
-                what.append("replace what they have now with your selection")
-            if prim:
-                what.append(f"set every one of them to {prim}")
-            if sec:
-                what.append(f"set their second instrument to {sec}")
-            if Messagebox.yesno(
-                    f"This will {' and '.join(what)}, for all {n} students."
-                    f"\n\nWhat they had before is not kept.  Go ahead?",
-                    title="Apply to all " + str(n) + "?", parent=self) != "Yes":
+        overwrites = bool(prim or sec or replace)
+        if n > 5 or (n > 1 and overwrites):
+            if not self._confirm_apply(n, ensembles, periods, prim, sec,
+                                       replace):
                 return
 
         if ensembles:

@@ -335,7 +335,8 @@ class MusicDialog(ttk.Toplevel):
 
     def _validate(self, data: dict) -> bool:
         if not data.get("title"):
-            Messagebox.show_warning("Title is required.", title="Validation")
+            Messagebox.show_warning("Title is required.", title="Validation",
+    parent=self.winfo_toplevel())
             return False
         return True
 
@@ -450,7 +451,8 @@ class MusicDialog(ttk.Toplevel):
             "Mark this sheet music as inactive? It will be hidden from the "
             "main list but all data will be preserved.",
             title="Confirm"
-        ) == "Yes":
+        ,
+        parent=self.winfo_toplevel()) == "Yes":
             self.db.deactivate_sheet_music(self.music_id)
             self._result = "deactivated"
             self.destroy()

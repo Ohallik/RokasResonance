@@ -439,7 +439,8 @@ class InstrumentDialog(ttk.Toplevel):
 
     def _validate(self, data: dict) -> bool:
         if not data.get("description"):
-            Messagebox.show_warning("Instrument is required.", title="Validation")
+            Messagebox.show_warning("Instrument is required.", title="Validation",
+    parent=self.winfo_toplevel())
             return False
         return True
 
@@ -462,7 +463,8 @@ class InstrumentDialog(ttk.Toplevel):
             data[field] = ""
         new_id = self.db.add_instrument(data)
         Messagebox.show_info(f"Instrument duplicated (ID: {new_id}). Editing the new copy.",
-                             title="Duplicated")
+                             title="Duplicated",
+                             parent=self.winfo_toplevel())
         self.instrument_id = new_id
         self._load_instrument(new_id)
 
@@ -471,7 +473,8 @@ class InstrumentDialog(ttk.Toplevel):
             "Mark this instrument as inactive? It will be hidden from the main list "
             "but all history will be preserved.",
             title="Confirm"
-        ) == "Yes":
+        ,
+        parent=self.winfo_toplevel()) == "Yes":
             self.db.deactivate_instrument(self.instrument_id)
             self._result = "deactivated"
             self.destroy()

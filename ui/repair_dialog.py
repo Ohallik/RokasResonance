@@ -251,7 +251,8 @@ class RepairDialog(ttk.Toplevel):
 
     def _validate(self, data: dict) -> bool:
         if not data.get("description"):
-            Messagebox.show_warning("Repair notes are required.", title="Validation")
+            Messagebox.show_warning("Repair notes are required.", title="Validation",
+    parent=self.winfo_toplevel())
             return False
         return True
 

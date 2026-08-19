@@ -364,7 +364,8 @@ class LessonPlanEditor(ttk.Toplevel):
         """Save current warm-up text as a new template."""
         warmup_text = self.text_warmup.get("1.0", END).strip()
         if not warmup_text:
-            Messagebox.show_warning("Empty Template", "Please enter warm-up text first.")
+            Messagebox.show_warning("Empty Template", "Please enter warm-up text first.",
+    parent=self.winfo_toplevel())
             return
 
         # Prompt for template name
@@ -374,10 +375,12 @@ class LessonPlanEditor(ttk.Toplevel):
         if dialog.result:
             if hasattr(self.db, "add_template"):
                 self.db.add_template("warmup", dialog.result, warmup_text)
-                Messagebox.show_info("Success", f"Template '{dialog.result}' saved.")
+                Messagebox.show_info("Success", f"Template '{dialog.result}' saved.",
+    parent=self.winfo_toplevel())
                 self._load_warmup_templates()
             else:
-                Messagebox.show_warning("Not Implemented", "Template saving not yet implemented in database.")
+                Messagebox.show_warning("Not Implemented", "Template saving not yet implemented in database.",
+    parent=self.winfo_toplevel())
 
     def _build_assessment_card(self, parent):
         """Build Assessment card."""
@@ -951,7 +954,8 @@ class LessonPlanEditor(ttk.Toplevel):
                 "Unsaved Changes",
                 "You have unsaved changes. Are you sure you want to close?",
                 buttons=["Yes:info", "No:warning"]
-            )
+            ,
+            parent=self.winfo_toplevel())
             if response != "Yes":
                 return
 
@@ -964,7 +968,8 @@ class LessonPlanEditor(ttk.Toplevel):
                 "Unsaved Changes",
                 "Save changes before navigating?",
                 buttons=["Save:info", "Don't Save:warning", "Cancel:secondary"]
-            )
+            ,
+            parent=self.winfo_toplevel())
             if response == "Save":
                 self._on_save()
                 return
@@ -993,7 +998,8 @@ class LessonPlanEditor(ttk.Toplevel):
                 "Unsaved Changes",
                 "Save changes before navigating?",
                 buttons=["Save:info", "Don't Save:warning", "Cancel:secondary"]
-            )
+            ,
+            parent=self.winfo_toplevel())
             if response == "Save":
                 self._on_save()
                 return

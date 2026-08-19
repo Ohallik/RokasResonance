@@ -304,7 +304,8 @@ class CheckoutDialog(ttk.Toplevel):
     def _do_checkout(self):
         student_name = self._student_var.get().strip()
         if not student_name:
-            Messagebox.show_warning("Please enter or select a student name.", title="Required")
+            Messagebox.show_warning("Please enter or select a student name.", title="Required",
+    parent=self.winfo_toplevel())
             return
 
         student_id = self._selected_student_id
