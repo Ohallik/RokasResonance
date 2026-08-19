@@ -549,6 +549,17 @@ class FieldTripsView(ttk.Frame):
             self._new_trip(template=ft.trip_template(chosen["t"]))
 
     def _edit_trip(self, t):
+        # Re-read from the database rather than trusting the dict the card was
+        # built from.  A card captures its trip when it is drawn, and a dialog
+        # holds its own snapshot; either can be a version or two behind by the
+        # time Edit is clicked, and a stale seed shows blank fields that were
+        # saved perfectly well -- indistinguishable from having lost them.
+        try:
+            fresh = self.db.get_field_trip(t["id"])
+            if fresh:
+                t = dict(fresh)
+        except Exception:
+            pass
         dlg = _TripDialog(self, seed=dict(t),
                           program_type=self._program_type(), editing=True,
                           main_db=self.main_db, student_year=self._student_year(),

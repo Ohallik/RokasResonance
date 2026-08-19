@@ -96,7 +96,7 @@ class LessonPlansHub(ttk.Frame):
         # selector it moves, rather than as a full-width button on the hub
         # where it was easy to hit on any of the other 364 days.
         ttk.Button(
-            header, text="📦 New School Year…", bootstyle=(LIGHT, OUTLINE),
+            header, text="📦 New School Year…", bootstyle=LIGHT,
             command=self._open_year_wizard,
         ).pack(side=RIGHT, padx=(0, 4), pady=8)
 
