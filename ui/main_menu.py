@@ -459,9 +459,15 @@ class MainMenu(ttk.Frame):
 
         # Sheet Music and Uniforms are not here at all: an itinerant has no
         # uniform cupboard, and the music library is a secondary idea.  Budget
-        # and Teacher Tools stay, because they will make sense here eventually
-        # -- they just do not yet, and they say so rather than opening a screen
-        # built for a high school.
+        # and Teacher Tools are ordinary buttons here now: the class pickers
+        # offer each school's own sections, the concert planner has had its
+        # gym assumptions taken out, and an itinerant runs concerts, seating
+        # charts and field trips like anybody else.
+        #
+        # New School Year is NOT here, for the same reason it is not on the
+        # secondary hub: it archives a roster and rolls the whole program
+        # forward, it is used once a year, and a full-width button sat under
+        # the cursor on all the other days.  It lives in Teacher Tools now.
         prep = ttk.Frame(btn_area)
         prep.grid(row=row + 1, column=0, columnspan=2, sticky="ew", pady=2)
         for c in (0, 1):
@@ -472,9 +478,6 @@ class MainMenu(ttk.Frame):
         self._nav_button(
             prep, "  🧰  Teacher Tools", self._open_lesson_plans, "blue"
         ).grid(row=0, column=1, sticky="ew", padx=(3, 0), ipady=btn_pad)
-        self._nav_button(
-            prep, "  📦  New School Year…", self._open_year_wizard, "purple"
-        ).grid(row=0, column=2, sticky="ew", padx=(3, 0), ipady=btn_pad)
 
     # Budget and Teacher Tools used to show a "not yet" notice here, on the
     # reasoning that both assumed a secondary program.  They no longer do: the
