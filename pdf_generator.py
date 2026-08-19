@@ -240,15 +240,21 @@ def _row_student(student_name, grade, s, school_name=SCHOOL_NAME):
     ], cw, underline_cols=(1, 5), top_pad=6)
 
 
-def _row_address(address, phone, parent, s, parent_style="n10"):
-    # Address ___  Phone ___  Parent/Guardian Name ___
-    cw = [0.65*inch, 1.9*inch, 0.55*inch, 1.25*inch, 1.1*inch, 1.55*inch]
+def _row_address(address, phone, parent, s, parent_style="n10",
+                 parent_label="Parent/Guardian Name"):
+    # Address ___  Phone ___  Parent's Name ___
+    # The label column is sized to the longer of the two labels, because at
+    # 1.1" "Parent/Guardian Name" wrapped mid-word and printed as
+    # "Parent/Guardia n Name" on every secondary form.
+    label_w = 1.45*inch if len(parent_label) > 14 else 1.1*inch
+    cw = [0.65*inch, 1.75*inch, 0.5*inch, 1.1*inch, label_w,
+          7.0*inch - (0.65 + 1.75 + 0.5 + 1.1)*inch - label_w]
     return _tbl([
         _p("<b>Address</b>",         s["b10"]),
         _p(address,                   s["n8"]),
         _p("<b>Phone</b>",           s["b10"]),
         _p(phone,                     s["n10"]),
-        _p("<b>Parent/Guardian Name</b>", s["b10"]),
+        _p(f"<b>{parent_label}</b>", s["b10"]),
         _p(parent,                    s[parent_style]),
     ], cw, underline_cols=(1, 3, 5), top_pad=5)
 
@@ -286,6 +292,16 @@ def _row_describe(s):
         _p("<b>Describe if not excellent</b>", s["b10"]),
         _p("",                                  s["n10"]),
     ], cw, underline_cols=(1,), top_pad=5)
+
+
+# The elementary form prints one fixed list for every instrument, in two
+# columns, and the teacher circles what went out with it.  Straight off the
+# district's own form -- it is not derived from the instrument the way the
+# secondary form's list is.
+ELEM_ACCESSORIES = (
+    ["Bow", "Case Bag", "Gooseneck/Bocal", "Ligature"],
+    ["Mouthpiece", "Neck/Seat Strap", "Shoulder Rest"],
+)
 
 
 # ── Accessories & Condition table ─────────────────────────────────────────────
@@ -333,6 +349,30 @@ def _accessories_table(accessories, s):
         ])
 
     tbl = Table(rows, colWidths=cw)
+    tbl.setStyle(TableStyle([
+        ("TOPPADDING",    (0, 0), (-1, -1), 1),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 1),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 1),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    return tbl
+
+
+def _elem_accessories_table(s):
+    """The district elementary list: names only, no per-item rating, because
+    the teacher circles the ones that went out rather than grading each."""
+    left, right = ELEM_ACCESSORIES
+    rows_n = max(len(left), len(right))
+    left = list(left) + [None] * (rows_n - len(left))
+    right = list(right) + [None] * (rows_n - len(right))
+
+    def item_p(name):
+        return _p(f"<u><b>{name}</b></u>", s["b9"]) if name else _p("", s["n9"])
+
+    rows = [[item_p(l), _p("", s["n9"]), item_p(r)]
+            for l, r in zip(left, right)]
+    tbl = Table(rows, colWidths=[2.2*inch, 0.4*inch, 4.4*inch])
     tbl.setStyle(TableStyle([
         ("TOPPADDING",    (0, 0), (-1, -1), 1),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
@@ -415,7 +455,8 @@ def _sig_line(label, s):
 def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: str,
                        school_name: str = None, district_name: str = None,
                        program_type: str = "band",
-                       charges_fees: bool = True) -> str:
+                       charges_fees: bool = True,
+                       elementary: bool = False) -> str:
     """
     Generate a Bellevue School District Equipment Loan Form PDF matching
     the Charms single-page layout.
@@ -433,6 +474,11 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     elementary loan carries no rental, so its form must not quote $75 and $20
     or tell a family to make a check payable to the school.  Sending home a
     bill that does not exist is worse than sending home nothing.
+
+    elementary: print the district's ELEMENTARY loan form rather than the
+    secondary one.  They are different documents: the elementary one says
+    Parent's Name, carries one fixed accessory list for every instrument, and
+    addresses students and parents rather than students and parents/guardians.
     """
     school_name = (school_name or "").strip() or SCHOOL_NAME
     district_name = (district_name or "").strip() or DISTRICT_NAME
@@ -525,7 +571,9 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
 
     # ── Student / Instrument Info ──────────────────────────────────────────
     story.append(_row_student(student_name, grade, s, school_name=school_name))
-    story.append(_row_address(full_address, phone, parent, s, parent_style))
+    story.append(_row_address(
+        full_address, phone, parent, s, parent_style,
+        parent_label="Parent's Name" if elementary else "Parent/Guardian Name"))
     story.append(_row_instrument(printed_name, serial_no, barcode, s))
     story.append(_row_make(brand, condition, est_value, s))
     story.append(_row_describe(s))
@@ -534,7 +582,8 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     # ── Accessories & Condition ────────────────────────────────────────────
     story.append(_p("<u><b>Accessories &amp; Condition</b></u> (circle)", s["n10"]))
     story.append(Spacer(1, 3))
-    story.append(_accessories_table(accessories, s))
+    story.append(_elem_accessories_table(s) if elementary
+                 else _accessories_table(accessories, s))
     story.append(Spacer(1, 7))
 
     # ── Date / Return / Repair Fields ─────────────────────────────────────
@@ -545,7 +594,9 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     story.append(Spacer(1, 8))
 
     # ── To Students and Parents/Guardians ──────────────────────────────────
-    story.append(_p("<u><b>To Students and Parents/Guardians:</b></u>", s["b10"]))
+    story.append(_p(
+        "<u><b>To Students and Parents:</b></u>" if elementary
+        else "<u><b>To Students and Parents/Guardians:</b></u>", s["b10"]))
     story.append(Spacer(1, 2))
     if charges_fees:
         story.append(_p(
@@ -566,7 +617,8 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
         "We expect normal wear, but we also expect that the instrument will be returned "
         "in as good a condition as it was when you checked it out.",
         "<u>Any repairs necessary due to accident or misuse are you and your "
-        "parents/guardians' responsibility.</u>",
+        + ("parents' responsibility.</u>" if elementary
+           else "parents/guardians' responsibility.</u>"),
         "Should you leave Bellevue, you must return the instrument to your music instructor.",
         "You may keep the instrument out over the summer provided you make arrangements "
         "with your instructor.",
@@ -583,8 +635,9 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
         "When the instrument is stored in a school building and it is damaged by fire, "
         "the school district insurance will cover its loss or damage. There is no school "
         "district insurance in effect to cover losses due to damage by accidents, "
-        "mistreatment, and loss by theft. It is you and your parents/guardians' "
-        "responsibility.",
+        "mistreatment, and loss by theft. It is you and your "
+        + ("parents' responsibility." if elementary
+           else "parents/guardians' responsibility."),
         s["n9"]
     ))
     story.append(Spacer(1, 8))
@@ -704,6 +757,7 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
     school_name = district_name = None
     program_type = "band"
     charges_fees = True          # a program with no school on the instrument
+    elementary = False
     try:
         from ui.settings_dialog import load_settings, school_name as _school
         teacher = (load_settings(base_dir).get("teacher") or {})
@@ -715,9 +769,11 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
             site = db.get_site(site_id)
             if site:
                 school_name = (dict(site).get("name") or "").strip()
-                # The school that owns the instrument decides whether there is
-                # a fee, the same way it decides the name on the form.
+                # The school that owns the instrument decides whether there
+                # is a fee and which of the district's two forms to print,
+                # the same way it decides the name on the form.
                 charges_fees = bool(dict(site).get("charges_fees"))
+                elementary = (dict(site).get("level") == "elementary")
         if not school_name:
             school_name = _school(base_dir)
     except Exception:
@@ -735,7 +791,8 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
     return generate_loan_form(dict(checkout), dict(instrument), out_path,
                               school_name=school_name, district_name=district_name,
                               program_type=program_type,
-                              charges_fees=charges_fees)
+                              charges_fees=charges_fees,
+                              elementary=elementary)
 
 
 def generate_uniform_chart(db, base_dir: str, output_path: str = None) -> str:
