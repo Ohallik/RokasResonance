@@ -2718,18 +2718,43 @@ class Database:
         with self._connect() as conn:
             conn.execute("DELETE FROM repairs WHERE id=?", (repair_id,))
 
-    def get_pending_repairs(self):
-        """All not-yet-completed repairs (date_repaired blank), joined with the
-        instrument, for the technician printout / needs-repair export."""
+    def get_checkouts_for_site(self, site_id):
+        """Every checkout, past and present, against one school's instruments.
+
+        The handoff needs the history and not just what is out today: next
+        year's teacher wants to know which horn has been through four children
+        and which has never left the cupboard."""
         with self._connect() as conn:
             return conn.execute(
-                """SELECT r.*, i.category, i.description AS instrument_desc,
+                """SELECT c.*, i.category, i.description AS instrument_desc,
+                          i.brand, i.serial_no, i.barcode, i.district_no, i.size,
+                          s.first_name, s.last_name, s.grade, s.student_id AS district_student_id
+                   FROM checkouts c
+                   JOIN instruments i ON i.id = c.instrument_id
+                   LEFT JOIN students s ON s.id = c.student_id
+                   WHERE i.site_id = ?
+                   ORDER BY c.date_assigned DESC, c.id DESC""",
+                (site_id,)).fetchall()
+
+    def get_pending_repairs(self, site_id=None):
+        """All not-yet-completed repairs (date_repaired blank), joined with the
+        instrument, for the technician printout / needs-repair export.
+
+        ``site_id`` narrows it to one school, which is what the handoff to next
+        year's teacher needs: they are taking on that building, not everything
+        their predecessor happened to look after."""
+        scope, params = self._site_scope("i", site_id)
+        with self._connect() as conn:
+            return conn.execute(
+                f"""SELECT r.*, i.category, i.description AS instrument_desc,
                           i.brand, i.model, i.serial_no, i.barcode, i.district_no,
                           i.condition AS instrument_condition, i.locker
                    FROM repairs r
                    LEFT JOIN instruments i ON i.id = r.instrument_id
-                   WHERE r.date_repaired IS NULL OR TRIM(r.date_repaired) = ''
-                   ORDER BY r.priority DESC, i.category, i.description"""
+                   WHERE (r.date_repaired IS NULL OR TRIM(r.date_repaired) = '')
+                         {scope}
+                   ORDER BY r.priority DESC, i.category, i.description""",
+                params
             ).fetchall()
 
     def get_instruments_needing_repair(self):
@@ -2808,18 +2833,21 @@ class Database:
                 (instrument_id,)
             ).fetchall()
 
-    def get_all_repairs(self):
+    def get_all_repairs(self, site_id=None):
         """Every repair record joined with its instrument, for the repair-hub
-        history view and cost analysis."""
+        history view and cost analysis.  ``site_id`` narrows it to one school."""
+        scope, params = self._site_scope("i", site_id)
         with self._connect() as conn:
             return conn.execute(
-                """SELECT r.*, i.category, i.description AS instrument_desc,
+                f"""SELECT r.*, i.category, i.description AS instrument_desc,
                           i.brand, i.model, i.serial_no, i.barcode, i.district_no,
                           i.condition AS instrument_condition, i.locker,
                           i.amount_paid, i.est_value, i.year_purchased
                    FROM repairs r
                    LEFT JOIN instruments i ON i.id = r.instrument_id
-                   ORDER BY r.date_added DESC"""
+                   WHERE 1=1 {scope}
+                   ORDER BY r.date_added DESC""",
+                params
             ).fetchall()
 
     def get_repair_cost_summary(self):

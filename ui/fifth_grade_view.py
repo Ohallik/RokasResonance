@@ -13,6 +13,7 @@ check an instrument out at the middle school knows how to do it here, and the
 loan forms, repair log and checkout history all come along unchanged.
 """
 
+import os
 import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
@@ -102,6 +103,20 @@ class FifthGradeView(ttk.Frame):
                            if not site.get("charges_fees") else f"   {programme}",
                   font=("Segoe UI", 9), foreground=muted_fg()).pack(side=LEFT)
 
+        # Exports for THIS school.  Assignments move around every year, so the
+        # question "what am I handing to whoever gets Sherwood Forest next?"
+        # has to be answerable without unpicking six schools' worth of records.
+        ttk.Button(bar, text="📦 Hand Over This School",
+                   bootstyle=(SUCCESS, OUTLINE),
+                   command=lambda s=site: self._export(s, "handoff")
+                   ).pack(side=RIGHT, padx=(6, 0))
+        ttk.Button(bar, text="🔧 Needs Repair", bootstyle=(WARNING, OUTLINE),
+                   command=lambda s=site: self._export(s, "needs_repair")
+                   ).pack(side=RIGHT, padx=6)
+        ttk.Button(bar, text="Repair History", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda s=site: self._export(s, "repair_history")
+                   ).pack(side=RIGHT)
+
         inner = ttk.Notebook(outer, bootstyle=SECONDARY)
         inner.pack(fill=BOTH, expand=True, padx=6, pady=(0, 6))
 
@@ -119,6 +134,58 @@ class FifthGradeView(ttk.Frame):
         self._tabs[site["id"]] = {"inventory": inv, "students": stu}
         return outer
 
+    _EXPORTS = {
+        "handoff": ("Hand over this school",
+                    "Instruments, checkout history and repair history, in one "
+                    "file for whoever teaches here next."),
+        "needs_repair": ("Instruments awaiting repair",
+                         "What is broken now — the list for the technician."),
+        "repair_history": ("Repair history",
+                           "Everything ever done to this school's instruments."),
+    }
+
+    def _export(self, site, kind):
+        from tkinter import filedialog
+        import site_export as SE
+
+        title, _desc = self._EXPORTS[kind]
+        path = filedialog.asksaveasfilename(
+            parent=self.winfo_toplevel(),
+            title=f"{title} — {site['name']}",
+            defaultextension=".xlsx",
+            initialfile=SE.suggested_filename(site, kind),
+            filetypes=[("Excel workbook", "*.xlsx")],
+        )
+        if not path:
+            return
+        try:
+            fn = {"handoff": SE.export_handoff,
+                  "needs_repair": SE.export_needs_repair,
+                  "repair_history": SE.export_repair_history}[kind]
+            res = fn(self.db, site, path)
+        except ImportError:
+            Messagebox.show_error(
+                "Writing a spreadsheet needs openpyxl:  pip install openpyxl",
+                title="Missing Dependency", parent=self.winfo_toplevel())
+            return
+        except Exception as e:
+            Messagebox.show_error(f"Could not write the file:\n{e}",
+                                  title="Export failed",
+                                  parent=self.winfo_toplevel())
+            return
+
+        counts = ", ".join(
+            f"{v} {_plural(k, v)}" for k, v in res.items()
+            if k not in ("path", "total") and isinstance(v, int))
+        Messagebox.show_info(
+            f"{site['name']} — {counts or 'nothing to export'}."
+            f"\n\n{os.path.basename(path)}",
+            title=title, parent=self.winfo_toplevel())
+        try:
+            os.startfile(path)
+        except Exception:
+            pass
+
     def refresh(self):
         for panes in self._tabs.values():
             for pane in panes.values():
@@ -126,6 +193,11 @@ class FifthGradeView(ttk.Frame):
                     pane.refresh()
                 except Exception:
                     pass
+
+
+def _plural(word: str, n: int) -> str:
+    """"1 checkouts" reads like a bug even when the number is right."""
+    return word if n == 1 else word + "s"
 
 
 def _short(name: str) -> str:
