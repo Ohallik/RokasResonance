@@ -836,7 +836,8 @@ class _FieldTripDialog(ttk.Toplevel):
             parts.append("Ensembles: " + ", ".join(tagged))
         self.db.add_budget_transaction({
             "txn_date": self._date.get().strip(),
-            "description": f"Field Trip: {self._trip.get().strip()}",
+            # The Category column beside it already says Field Trip.
+            "description": self._trip.get().strip(),
             "category": "Field Trip",
             "kind": "expense",
             "amount": total,

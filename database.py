@@ -105,6 +105,21 @@ class _DictRow(dict):
         return super().keys()
 
 
+def _fee_description(fee_type: str) -> str:
+    """The part of a fee that is not already in another column.
+
+    "Instrument Rental (School Year)" sits next to a Category of "Instrument
+    Rental Fees", so the words that earn their place are the ones in brackets.
+    Anything else keeps its own name.
+    """
+    name = (fee_type or "Student Fee").strip()
+    if name.lower().startswith("instrument rental"):
+        if "(" in name and ")" in name:
+            return name[name.index("(") + 1:name.rindex(")")].strip()
+        return "Rental"
+    return name
+
+
 class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -2992,7 +3007,11 @@ class Database:
 
     # ─── Budgeting ───────────────────────────────────────────────────────────────
 
-    FUNDING_SOURCES = ["Building", "ASB", "Boosters", "Other"]
+    # District belongs here because it really does pay for some things -- the
+    # district-run festivals a high school enters, above all -- and without it
+    # those landed under "Other" alongside everything else nobody could
+    # categorise.
+    FUNDING_SOURCES = ["Building", "District", "ASB", "Boosters", "Other"]
 
     @staticmethod
     def school_year_bounds(school_year: str):
@@ -3092,7 +3111,9 @@ class Database:
             rows.append({
                 "id": None, "source": "repair", "repair_id": rp["id"],
                 "txn_date": rp["date_repaired"] or rp["date_added"] or "",
-                "description": f"Repair: {rp['inst'] or ''} — {rp['description'] or ''}".strip(" —"),
+                # Not "Repair: ..." -- the Category column beside it already
+                # says Instrument Repair.
+                "description": f"{rp['inst'] or ''} — {rp['description'] or ''}".strip(" —"),
                 "category": "Instrument Repair", "kind": "expense",
                 "amount": float(rp["act_cost"] or 0), "funding_source": "Building",
                 "student_id": None, "student_name": "", "notes": "",
@@ -3105,7 +3126,12 @@ class Database:
             rows.append({
                 "id": None, "source": "fee", "fee_id": f["id"],
                 "txn_date": f["date_paid"] or lo,
-                "description": f"Fee: {ftype}" + (f" — {who}" if who else ""),
+                # Every word of "Fee: Instrument Rental (School Year) — Charlie
+                # Zhang" except two is already on the row: the Category column
+                # says Instrument Rental Fees and the Student column says
+                # Charlie Zhang.  What is left worth saying is which rental it
+                # is, so that is all this says.
+                "description": _fee_description(ftype),
                 "category": cat, "kind": "income",
                 "amount": float(f["amount"] or 0), "funding_source": "Other",
                 "student_id": f["student_id"], "student_name": who, "notes": "",
