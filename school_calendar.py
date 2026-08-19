@@ -73,12 +73,32 @@ _BSD_2026_2027_WINDOWS = {
     "unknown_windows": ["state testing"],
 }
 
+# School board meeting dates.  An overnight or out-of-state trip is approved by
+# the BOARD, and every approval deadline counts back from the meeting rather
+# than from the trip -- so which meeting a trip is aiming at is the first thing
+# that has to be known and the easiest thing to get wrong.
+#
+# Kept as plain data, and deliberately only the dates that are actually
+# published.  BSD lists the next couple of meetings at
+#   https://www.bsd405.org/about-us/school-board/meetings
+# and keeps the full year's schedule on a Diligent portal that needs a browser
+# to read.  Roka does not guess the rest from "roughly monthly": a made-up
+# meeting date produces a confident, wrong deadline months out, which is worse
+# than admitting the list is short.
+#
+# To extend: add (date, label) pairs.  Nothing else needs changing.
+_BSD_2026_2027_BOARD = [
+    (date(2026, 8, 24), "Special meeting (planning)"),
+    (date(2026, 8, 27), "Regular board meeting"),
+]
+
 CALENDARS = {
     "2026-2027": {
         "first_day": date(2026, 9, 2),
         "last_day": date(2027, 6, 23),
         "no_school": _BSD_2026_2027_NO_SCHOOL,
         "windows": _BSD_2026_2027_WINDOWS,
+        "board_meetings": _BSD_2026_2027_BOARD,
     },
 }
 
@@ -153,13 +173,21 @@ def add_school_days(cal, d, days):
     step = 1 if days > 0 else -1
     left = abs(int(days))
     cur = d
+    lo, hi = cal["first_day"], cal["last_day"]
     # A hard stop well past any real school year, so a bad calendar cannot
     # spin here forever.
     for _ in range(2000):
         if left <= 0:
             return cur
         cur = cur + timedelta(days=step)
-        if is_school_day(cal, cur):
+        if lo <= cur <= hi:
+            if is_school_day(cal, cur):
+                left -= 1
+        elif cur.weekday() < 5:
+            # Outside the school year there are no school days to count, and
+            # walking on looking for one runs to the iteration cap and returns
+            # a date years adrift.  Counting weekdays keeps the answer sane and
+            # says the true thing: the deadline falls outside term.
             left -= 1
     return cur
 
@@ -240,3 +268,14 @@ def unchecked_windows(cal):
     """Blackout windows this calendar has no dates for, so the warning can say
     what it did NOT check instead of implying the date is clear."""
     return list(((cal or {}).get("windows") or {}).get("unknown_windows", []))
+
+
+# ── School board meetings ────────────────────────────────────────────────────
+
+BOARD_MEETINGS_URL = "https://www.bsd405.org/about-us/school-board/meetings"
+
+
+def board_meetings(cal):
+    """[(date, label)] for the year, soonest first.  Empty when none are
+    recorded, which callers must handle by saying so rather than by guessing."""
+    return sorted((cal or {}).get("board_meetings") or [], key=lambda x: x[0])

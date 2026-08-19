@@ -790,16 +790,31 @@ class _TripDialog(ttk.Toplevel):
                                    justify=LEFT)
         self._blackout.pack(anchor=W, pady=(4, 0))
         self._vars["depart_date"].trace_add("write",
-                                            lambda *a: self._check_blackout())
+                                            lambda *a: self._date_changed())
 
         # Overnight approval counts back from the school BOARD MEETING, not
         # from the trip, so without this date no deadline can be worked out.
         self._board_box = ttk.Frame(body)
-        entry(self._board_box, "School board meeting date", "board_date",
-              width=14,
-              hint="YYYY-MM-DD — the meeting your trip needs to be on. Every "
-                   "approval deadline counts back from this, not from the "
-                   "trip.")
+        ttk.Label(self._board_box, text="School board meeting date",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(8, 0))
+        ttk.Label(self._board_box,
+                  text="The meeting your trip needs to be approved at. Every "
+                       "approval deadline counts back from this, not from the "
+                       "trip.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=540, justify=LEFT).pack(anchor=W)
+        bv = tk.StringVar(value=str(seed.get("board_date") or ""))
+        self._vars["board_date"] = bv
+        self._board_combo = ttk.Combobox(self._board_box, textvariable=bv,
+                                         width=30)
+        self._board_combo.pack(anchor=W)
+        self._board_combo.bind("<<ComboboxSelected>>",
+                               lambda e: self._board_picked())
+        bv.trace_add("write", lambda *a: self._board_note_update())
+        self._board_note = ttk.Label(self._board_box, text="",
+                                     font=("Segoe UI", 8), wraplength=540,
+                                     justify=LEFT)
+        self._board_note.pack(anchor=W, pady=(2, 0))
 
         row2 = ttk.Frame(body)
         row2.pack(fill=X, anchor=W)
@@ -955,6 +970,9 @@ class _TripDialog(ttk.Toplevel):
                 box.pack(fill=X, anchor=W, pady=(4, 0))
             else:
                 box.pack_forget()
+        if overnight:
+            self._board_combo["values"] = self._board_options()
+            self._board_note_update()
         # Rebuild the checklist for this procedure.
         for w in self._cgrid.winfo_children():
             w.destroy()
@@ -975,6 +993,73 @@ class _TripDialog(ttk.Toplevel):
                      "and there are no paper slips to collect.")
         else:
             self._forms_note.config(text="")
+
+    _BOARD_SEP = "   —   "
+
+    def _board_options(self):
+        """The meetings Roka knows about, labelled with what each one means for
+        this trip: the packet deadline, and whether it is still in reach."""
+        import school_calendar as sc
+        year = self._school_year_of(self._vars["depart_date"].get().strip())
+        opts, labels = [], []
+        for o in ft.board_meeting_options(year, {"depart_date":
+                                                 self._vars["depart_date"].get()}):
+            tail = o["label"]
+            if o["packet_due"]:
+                tail += f", packet due {o['packet_due'].isoformat()}"
+            if not o["reachable"]:
+                tail += " — too late"
+            labels.append(o["date"].isoformat() + self._BOARD_SEP + tail)
+            opts.append(o)
+        self._board_opts = opts
+        return labels
+
+    @staticmethod
+    def _school_year_of(date_str):
+        d = ct.parse_date(date_str)
+        if not d:
+            from lesson_plan_db import current_school_year
+            return current_school_year()
+        start = d.year if d.month >= 7 else d.year - 1
+        return f"{start}-{start + 1}"
+
+    def _board_picked(self):
+        """Keep only the date; the rest of the label was there to choose by."""
+        raw = self._vars["board_date"].get()
+        if self._BOARD_SEP in raw:
+            self._vars["board_date"].set(raw.split(self._BOARD_SEP, 1)[0])
+
+    def _board_note_update(self):
+        """Say whether this is a meeting Roka has heard of, and which one is
+        still in reach.  A typed date is accepted either way -- the district
+        publishes only the next couple, so most real dates will be unknown
+        here, and refusing them would make the field useless."""
+        import school_calendar as sc
+        year = self._school_year_of(self._vars["depart_date"].get().strip())
+        typed = ct.parse_date(self._vars["board_date"].get().split(
+            self._BOARD_SEP)[0].strip())
+        known = {o["date"] for o in ft.board_meeting_options(year)}
+        if typed and known and typed not in known:
+            self._board_note.config(
+                text="That is not one of the meetings Roka knows about, which "
+                     "is fine — the district only publishes the next few. "
+                     "Check it against " + sc.BOARD_MEETINGS_URL,
+                foreground=muted_fg())
+            return
+        advice = ft.board_meeting_advice(
+            year, {"depart_date": self._vars["depart_date"].get()})
+        self._board_note.config(text=advice,
+                                foreground="#B45309" if "None of" in advice
+                                or "no school board" in advice else muted_fg())
+
+    def _date_changed(self):
+        self._check_blackout()
+        if self._trip_type.get() == ft.TRIP_OVERNIGHT:
+            try:
+                self._board_combo["values"] = self._board_options()
+                self._board_note_update()
+            except Exception:
+                pass
 
     def _check_blackout(self):
         """Warn while the date is being typed, not after the packet is done."""
@@ -1008,6 +1093,9 @@ class _TripDialog(ttk.Toplevel):
         data["groups_list"] = ", ".join(groups)
         data["notes"] = self._notes.get("1.0", "end").strip()
         data["trip_type"] = self._trip_type.get()
+        if data.get("board_date"):
+            data["board_date"] = data["board_date"].split(
+                self._BOARD_SEP)[0].strip()
         for key, box in self._long_vars.items():
             data[key] = box.get("1.0", "end").strip()
         for key, _label in ft.CHECKLIST_ITEMS:
@@ -1366,8 +1454,7 @@ class _RosterCostsDialog(ttk.Toplevel):
                  "Per ensemble entered — e.g. $350 for BHS Jazz Festival."),
                 ("Bus / transportation ($)", "transport_cost", ""),
                 ("Food ($)", "food_cost", ""),
-                ("Substitute ($)", "sub_cost",
-                 "BSD: $212/4 hrs · $266/5 hrs · $354/full day"),
+                ("Substitute ($)", "sub_cost", ""),
                 ("Other ($)", "other_cost", "")]:
             ttk.Label(right, text=label, font=("Segoe UI", 9)
                       ).pack(anchor=W, pady=(6, 0))
@@ -1378,6 +1465,23 @@ class _RosterCostsDialog(ttk.Toplevel):
             v.trace_add("write", lambda *a: self._recalc())
             self._cost_vars[key] = v
             ttk.Entry(right, textvariable=v, width=12).pack(anchor=W)
+
+        # The form asks you to check one of three district rates.  Choosing one
+        # fills the amount above; the amount stays editable, because the rates
+        # are stamped with a school year on the form itself and change.
+        ttk.Label(right, text="Which substitute rate", font=("Segoe UI", 9)
+                  ).pack(anchor=W, pady=(6, 0))
+        self._sub_rate = tk.StringVar(value=(trip.get("sub_rate") or ""))
+        ttk.Radiobutton(right, text="No substitute needed", value="",
+                        variable=self._sub_rate, bootstyle=PRIMARY,
+                        command=self._rate_picked).pack(anchor=W)
+        for key, label, _amt in ft.SUB_RATES:
+            ttk.Radiobutton(right, text=label, value=key,
+                            variable=self._sub_rate, bootstyle=PRIMARY,
+                            command=self._rate_picked).pack(anchor=W)
+        ttk.Label(right, text=ft.SUB_RATE_NOTE, font=("Segoe UI", 8),
+                  foreground=muted_fg(), wraplength=230,
+                  justify=LEFT).pack(anchor=W)
 
         ttk.Label(right, text="Funding", font=("Segoe UI", 9, "bold")
                   ).pack(anchor=W, pady=(10, 0))
@@ -1406,6 +1510,14 @@ class _RosterCostsDialog(ttk.Toplevel):
 
         self._recalc()
         fit_window(self, 640, 580)
+
+    def _rate_picked(self):
+        """Ticking a rate fills the cost.  Clearing it zeroes the cost, since
+        a substitute nobody is paying for is not a cost."""
+        key = self._sub_rate.get()
+        self._cost_vars["sub_cost"].set(
+            f"{ft.SUB_RATE_AMOUNT[key]:.2f}" if key in ft.SUB_RATE_AMOUNT
+            else "0")
 
     def _going(self):
         return sum(1 for _, v in self._rows if v.get())
@@ -1444,6 +1556,7 @@ class _RosterCostsDialog(ttk.Toplevel):
                                         title="Check Costs", parent=self)
                 return
         data["funding"] = self._funding.get()
+        data["sub_rate"] = self._sub_rate.get()
         data["covered"] = 1 if self._covered.get() else 0
         self.db.update_field_trip(self.trip["id"], data)
         excluded = [sid for sid, v in self._rows if not v.get()]
