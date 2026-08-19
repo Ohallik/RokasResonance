@@ -100,6 +100,44 @@ FORM_SHORT = {
 FORM_GATES_ATTENDANCE = {FORM_EXHIBIT_A, FORM_EXHIBIT_C}
 
 
+def trip_is_elementary(main_db, trip, fallback=False):
+    """Whether THIS trip is a 5th grade trip.
+
+    Read off the groups going, not off the teacher's profile.  A teacher can
+    hold a middle school and six elementaries at once, and her program type
+    says nothing about which of them is on the bus: a day trip for Advanced
+    Band was being told to collect Exhibit A from all 48 students, on paper,
+    because the PROFILE said elementary.
+
+    An elementary group carries its school's name ("Jing Mei Elementary
+    School: Section 1"), so the groups answer it.  ``fallback`` is used only
+    when the trip has no groups yet and there is nothing to read.
+    """
+    groups = groups_list(trip)
+    if not groups:
+        return fallback
+    try:
+        sites = [dict(x) for x in main_db.get_sites(level="elementary")]
+    except Exception:
+        return fallback
+    if not sites:
+        # No elementary schools on file, so the groups cannot answer it.  A
+        # teacher whose whole programme is 5th grade but who has not added
+        # their schools yet still gets the elementary rules.
+        return fallback
+    from ui.ensembles import site_groups
+    for site in sites:
+        try:
+            labels = site_groups(main_db, site, None)
+        except Exception:
+            labels = []
+        for label in labels:
+            if any(_member_of({"ensembles": g}, label) or g == label
+                   for g in groups):
+                return True
+    return False
+
+
 def required_forms(trip, elementary=False):
     """The per-student forms this trip has to collect on paper.
 
@@ -283,7 +321,13 @@ CHECKLIST_ITEMS = [
     ("nurse_check", "Nurse check completed"),
     # Overnight only -- see checklist_for().
     ("board_approved", "School board approval"),
-    ("carrier_profile", "Charter carrier profile attached"),
+    # 2320P, overnight, "Transportation": a charter company must have a current
+    # carrier profile, printed from the WA Utilities and Transportation
+    # Commission site and attached to the packet.  Only asked of a charter
+    # company -- a district bus has nothing to attach.
+    ("carrier_profile", "Charter carrier profile (from the WA UTC)"),
+    # 2320P, overnight, "Financial Plan": ASB minutes go with any trip on an
+    # ASB org key, and the amount approved has to match the application.
     ("asb_minutes", "ASB minutes attached"),
 ]
 
@@ -294,14 +338,36 @@ _DAY_ONLY = {"finalforms_done"}
 _OVERNIGHT_ONLY = {"board_approved", "carrier_profile", "asb_minutes"}
 
 
+def uses_charter(trip):
+    """Whether this trip is on a hired coach, as opposed to a district bus,
+    private cars or walking."""
+    return "charter" in (trip.get("travel_method") or "").lower()
+
+
+def uses_asb_money(trip):
+    """Whether ASB money is paying, which is what pulls the ASB minutes in."""
+    if (trip.get("funding") or "") == FUNDING_EXTRACURRICULAR:
+        return True
+    return "asb" in (trip.get("budget_code") or "").lower()
+
+
 def checklist_for(trip, elementary=False):
-    """The checklist items this trip actually has."""
+    """The checklist items this trip actually has.
+
+    An item that cannot apply is not shown at all rather than shown and left
+    at N/A: a charter carrier profile means nothing on a district bus, and a
+    list of things to ignore is a list people stop reading.
+    """
     overnight = trip_type(trip) == TRIP_OVERNIGHT
     out = []
     for key, label in CHECKLIST_ITEMS:
         if key in _OVERNIGHT_ONLY and not overnight:
             continue
         if key in _DAY_ONLY and (overnight or elementary):
+            continue
+        if key == "carrier_profile" and not uses_charter(trip):
+            continue
+        if key == "asb_minutes" and not uses_asb_money(trip):
             continue
         out.append((key, label))
     return out

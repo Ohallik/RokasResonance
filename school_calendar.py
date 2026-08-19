@@ -227,9 +227,10 @@ def blackout_reasons(cal, d):
     out = []
     win = cal.get("windows") or {}
 
-    if not is_school_day(cal, d) and cal["first_day"] <= d <= cal["last_day"]:
-        out.append("that is not a school day")
-
+    # A non-school day is deliberately NOT a warning.  2320P blacks out the
+    # school day BEFORE a break, not the break itself, and a trip that runs
+    # over spring break is a good idea rather than a mistake: nobody needs a
+    # substitute for a day there was no class on.
     # The school day before a break.  Two or more weekdays off in a row, so a
     # long weekend does not count: 2320P names Thanksgiving, winter, mid-winter
     # and spring, and flagging the Friday before Labor Day would train people

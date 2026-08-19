@@ -144,10 +144,15 @@ def _sub_row(trip, s, note=True, note_w=1.95):
     chosen = (trip.get("sub_rate") or "").strip()
     cells, widths = [], []
     for key, label, _amt in ft.SUB_RATES:
-        cells.append(Paragraph(label.replace(" ", "&nbsp;"), s["lbl"]))
-        widths.append(0.80 * inch)
+        # Box BEFORE its rate, not after.  The district's own form puts it
+        # after -- "$212/4 hrs ☐ $266/5 hrs ☐" -- and at this width that reads
+        # as though the tick belongs to the NEXT rate: a $212 substitute
+        # printed with the box beside $266/5 hrs, on a form somebody signs.
+        # Same three rates, same order, unambiguous.
         cells.append(_checkbox(chosen == key))
         widths.append(0.17 * inch)
+        cells.append(Paragraph(label.replace(" ", "&nbsp;"), s["lbl"]))
+        widths.append(0.80 * inch)
     if note:
         cells.append(Paragraph(f"* {ft.SUB_RATE_NOTE}", s["tinyr"]))
         widths.append(note_w * inch)
@@ -155,7 +160,11 @@ def _sub_row(trip, s, note=True, note_w=1.95):
     inner.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 1),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        # Tight after a box, roomy after its label: that spacing is what makes
+        # each tick visibly belong to the rate it sits beside.
+        ("RIGHTPADDING", (0, 0), (0, -1), 3),
+        ("RIGHTPADDING", (1, 0), (1, -1), 10),
+        ("RIGHTPADDING", (3, 0), (3, -1), 10),
         ("TOPPADDING", (0, 0), (-1, -1), 1),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
     ]))
@@ -289,7 +298,16 @@ def _approval(s):
     return t
 
 
-def _supervision_answer(chaperones, teacher_name, overnight):
+def _supervision_answer(chaperones, teacher_name, overnight, written=None):
+    """What the teacher wrote, or a count assembled from the chaperone list.
+
+    The assembled version used to be the only version, which meant her own name
+    appeared on a form she had never typed it into.  The trip dialog shows this
+    field now and says what happens if it is left blank.
+    """
+    written = (written or "").strip()
+    if written:
+        return written
     if not chaperones and not teacher_name:
         return ""
     bits = []
@@ -436,8 +454,8 @@ def build_application(trip, path, students=0, chaperones=0, teacher_name="",
         "How many adults will provide supervision"
         + (" – and have non-BSD personnel been VIBES cleared?"
            if is_overnight else "?"),
-        _supervision_answer(chaperones, teacher_name, is_overnight), s,
-        lines=1))
+        _supervision_answer(chaperones, teacher_name, is_overnight,
+                            trip.get("supervision")), s, lines=1))
     flow.append(_question(
         "What considerations have been made for students who cannot afford "
         "the cost of the trip?", trip.get("affordability"), s, lines=2))

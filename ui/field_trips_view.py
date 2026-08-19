@@ -127,8 +127,19 @@ class FieldTripsView(ttk.Frame):
             "program_type", "band")
 
     def _students(self):
+        """Everyone, both levels.
+
+        get_students_for_email defaults to SECONDARY, which is right for a
+        general contact list -- a 5th grader must never turn up on a marching
+        band email.  Here the guard is the wrong one: what puts a child on this
+        list is being in one of the GROUPS chosen for the event, and an
+        elementary group carries its school's name ("Jing Mei Elementary
+        School: Section 1"), so it can never match "Advanced Band". Filtering
+        by level as well simply hid every 5th grader from a teacher who has
+        both -- an elementary event showed nobody attending at all.
+        """
         return [dict(r) for r in self.main_db.get_students_for_email(
-            school_year=self._student_year())]
+            school_year=self._student_year(), level=None)]
 
     def _attending(self, trip):
         return ft.roster(self._students(), dict(trip),
@@ -203,8 +214,12 @@ class FieldTripsView(ttk.Frame):
         year = self._year()
         for t in completed:
             dest = f", {t['destination']}" if t.get("destination") else ""
+            # This year's, so still editable: a trip lands here by mistake
+            # whenever the year in the date is a keystroke wrong, and a
+            # read-only dead end means retyping the whole thing.
             done_row(f"✔ {t.get('depart_date')}  ·  {t.get('name')}{dest}",
-                     lambda tr=t: _PastTripDialog(self, year, dict(tr), self.db))
+                     lambda tr=t: _PastTripDialog(self, year, dict(tr), self.db,
+                                                  editable=True))
         for pyear, t, pdb in self._past_trips():
             dest = f", {t['destination']}" if t.get("destination") else ""
             done_row(f"🕰 {pyear}  ·  {t.get('name')}"
@@ -266,10 +281,11 @@ class FieldTripsView(ttk.Frame):
         sent = {r["stage"] for r in self.db.get_trip_reminders(t["id"])
                 if r["sent_date"]}
         staff_emailed = any(s.startswith("teachers-") for s in sent)
+        # Columns size to their text rather than sharing the card's width.
+        # Stretched to a third each, "Sub request" sat marooned by itself at
+        # the far right of a wide window with nothing between.
         grid = ttk.Frame(card)
-        grid.pack(fill=X, pady=(6, 2))
-        for col in range(3):
-            grid.columnconfigure(col, weight=1)
+        grid.pack(anchor=W, pady=(6, 2))
 
         def _item_label(state, label):
             if state == ft.CHECK_DONE:
@@ -289,20 +305,26 @@ class FieldTripsView(ttk.Frame):
             self.db.update_field_trip(trip_id, {key: new})
             self.refresh()
 
-        for i, (key, label) in enumerate(ft.checklist_for(t, self._is_elementary())):
+        elementary = self._trip_elementary(t)
+        for i, (key, label) in enumerate(ft.checklist_for(t, elementary)):
             state = int(t.get(key) or 0)
             text, color = _item_label(state, label)
             lbl = ttk.Label(grid, text=text, font=("Segoe UI", fs(9)),
                             foreground=color, cursor="hand2")
-            lbl.grid(row=i // 3, column=i % 3, sticky=W, padx=(0, 12), pady=1)
+            lbl.grid(row=i // 3, column=i % 3, sticky=W, padx=(0, 22), pady=1)
             lbl.bind("<Button-1>", lambda e, k=key: _cycle(k))
             lbl.bind("<Button-3>", lambda e, k=key: _set_na(k))
         # Derived item: staff emailed (auto from the teachers reminders)
+        # Not clickable, because it is not a note you keep: it ticks itself the
+        # moment the staff email is marked sent in Reminders.  "(auto)" said
+        # that to nobody.
         text, color = _item_label(
-            ft.CHECK_DONE if staff_emailed else ft.CHECK_TODO, "Staff emailed")
-        ttk.Label(grid, text=text + "  (auto)", font=("Segoe UI", fs(9)),
-                  foreground=color).grid(row=2, column=0, sticky=W,
-                                         padx=(0, 12), pady=1)
+            ft.CHECK_DONE if staff_emailed else ft.CHECK_TODO,
+            "Staff emailed (from Reminders)")
+        n_items = len(ft.checklist_for(t, elementary))
+        ttk.Label(grid, text=text, font=("Segoe UI", fs(9)),
+                  foreground=color).grid(row=n_items // 3, column=n_items % 3,
+                                         sticky=W, padx=(0, 22), pady=1)
 
         # ── Reminders summary ──
         due = ft.stages_due(t.get("depart_date"), sent)
@@ -354,7 +376,7 @@ class FieldTripsView(ttk.Frame):
                 lbl.bind("<Button-1>", lambda e, tr=t: self._deadlines(tr))
 
         # ── Paper forms outstanding ──
-        forms = ft.required_forms(t, self._is_elementary())
+        forms = ft.required_forms(t, elementary)
         if forms and n:
             have = self.db.get_trip_forms(t["id"])
             missing = sum(1 for stu in attending for f in forms
@@ -385,7 +407,7 @@ class FieldTripsView(ttk.Frame):
                    command=lambda tr=t: self._chaperones(tr)).pack(side=LEFT, padx=4)
         ttk.Button(btns, text="✉ Reminders", bootstyle=(WARNING, OUTLINE),
                    command=lambda tr=t: self._reminders(tr)).pack(side=LEFT, padx=4)
-        if ft.required_forms(t, self._is_elementary()):
+        if forms:
             ttk.Button(btns, text="📋 Forms", bootstyle=(INFO, OUTLINE),
                        command=lambda tr=t: self._forms(tr)).pack(side=LEFT, padx=4)
         ttk.Button(btns, text="🖨 Application", bootstyle=(SECONDARY, OUTLINE),
@@ -394,16 +416,21 @@ class FieldTripsView(ttk.Frame):
         ttk.Button(btns, text="🗑", bootstyle=(DANGER, OUTLINE), width=3,
                    command=lambda tr=t: self._delete_trip(tr)).pack(side=RIGHT)
 
-    def _is_elementary(self):
-        """Whether this teacher's programme is 5th grade.  It decides whether
-        FinalForms covers permission or paper does -- both district procedures
-        say FinalForms is for middle and high school."""
+    def _profile_is_elementary(self):
+        """Only used when a trip has no groups yet and nothing can be read off
+        it.  On its own this is the wrong question -- see _trip_elementary."""
         try:
             from ui.settings_dialog import load_settings
             return ((load_settings(self.base_dir).get("teacher") or {})
                     .get("program_type") == "elementary")
         except Exception:
             return False
+
+    def _trip_elementary(self, trip):
+        """Whether THIS trip is a 5th grade trip, from the groups going on it.
+        Decides whether permission is FinalForms or paper."""
+        return ft.trip_is_elementary(self.main_db, trip,
+                                     fallback=self._profile_is_elementary())
 
     def _deadlines(self, trip):
         _DeadlinesDialog(self, self.db, dict(trip), self._year())
@@ -412,7 +439,7 @@ class FieldTripsView(ttk.Frame):
         students = ft.roster(self._students(), dict(trip),
                              self.db.get_trip_exclusions(trip["id"]))
         _FormsDialog(self, self.db, dict(trip), students,
-                     self._is_elementary())
+                     self._trip_elementary(dict(trip)))
         self.refresh()
 
     def _print_application(self, trip):
@@ -460,7 +487,7 @@ class FieldTripsView(ttk.Frame):
         seed = dict(template) if template else None
         dlg = _TripDialog(self, seed=seed, program_type=self._program_type(),
                           main_db=self.main_db, student_year=self._student_year(),
-                          elementary=self._is_elementary())
+                          elementary=self._profile_is_elementary())
         self.wait_window(dlg)
         if dlg.result:
             # A template contributes what the dialog doesn't show (extra
@@ -525,7 +552,7 @@ class FieldTripsView(ttk.Frame):
         dlg = _TripDialog(self, seed=dict(t),
                           program_type=self._program_type(), editing=True,
                           main_db=self.main_db, student_year=self._student_year(),
-                          elementary=self._is_elementary())
+                          elementary=self._trip_elementary(dict(t)))
         self.wait_window(dlg)
         if dlg.result:
             self.db.update_field_trip(t["id"], dlg.result)
@@ -569,19 +596,30 @@ class _PastTripDialog(ttk.Toplevel):
     chaperones, and the saved emails — with one button to reuse it all as
     the template for this year's version."""
 
-    def __init__(self, parent_view, year, trip, pdb):
+    def __init__(self, parent_view, year, trip, pdb, editable=False):
         super().__init__(parent_view.winfo_toplevel())
         self.view = parent_view
         self.trip = trip
-        self.title(f"{trip.get('name')} — {year} (read-only)")
+        self._pdb = pdb
+        self._editable = editable
+        self.title(f"{trip.get('name')} — {year}"
+                   + ("" if editable else " (read-only)"))
         self.resizable(True, True)
         self.grab_set()
 
         ttk.Label(self, text=f"🕰  {trip.get('name')} — {year}",
                   font=("Segoe UI", 12, "bold"),
                   bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(12, 0))
-        ttk.Label(self, text="Read-only — from a previous school year.",
-                  font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W, padx=16)
+        ttk.Label(
+            self,
+            text=("This trip's date has already gone by, so it sits with the "
+                  "completed trips. Edit it if the date was wrong — a school "
+                  "year runs across two calendar years, so it is an easy one "
+                  "to mistype."
+                  if editable else
+                  "Read-only — from a previous school year."),
+            font=("Segoe UI", 8), foreground=muted_fg(), wraplength=560,
+            justify=LEFT).pack(anchor=W, padx=16)
 
         lines = []
         when = ct.fmt_date(trip.get("depart_date"))
@@ -653,7 +691,20 @@ class _PastTripDialog(ttk.Toplevel):
                    command=self.destroy).pack(side=RIGHT, padx=4)
         ttk.Button(btns, text="📋 Use as Template for a New Trip…",
                    bootstyle=SUCCESS, command=self._reuse).pack(side=RIGHT, padx=4)
+        if editable:
+            ttk.Button(btns, text="✏ Edit This Trip", bootstyle=PRIMARY,
+                       command=self._edit).pack(side=LEFT, padx=4)
         fit_window(self, 620, 600)
+
+    def _edit(self):
+        """Open the ordinary edit dialog on a trip that has slipped into the
+        completed list.  Without this, a trip whose year was mistyped is a dead
+        end: everything the teacher wrote is there and unreachable."""
+        self.destroy()
+        try:
+            self.view._edit_trip(self.trip)
+        except Exception:
+            pass
 
     def _view_email(self, label, text):
         win = ttk.Toplevel(self)
@@ -685,6 +736,8 @@ class _TripDialog(ttk.Toplevel):
                  main_db=None, student_year=None, elementary=False):
         super().__init__(parent.winfo_toplevel())
         self.result = None
+        self._main_db = main_db
+        self._profile_elementary = elementary
         self._elementary = elementary
         seed = seed or {}
         self.title("Edit Field Trip" if editing else "New Field Trip")
@@ -757,7 +810,8 @@ class _TripDialog(ttk.Toplevel):
             # shows checked when the picker offers "MS Band (Entry)".
             bv = tk.BooleanVar(value=any(cr.same_class(g, c) for c in chosen))
             self._grp_vars[g] = bv
-            ttk.Checkbutton(grid, text=dmap[g], variable=bv, bootstyle=PRIMARY
+            ttk.Checkbutton(grid, text=dmap[g], variable=bv, bootstyle=PRIMARY,
+                            command=self._type_changed
                             ).grid(row=i // 3, column=i % 3, sticky=W,
                                    padx=(0, 14), pady=2)
         extras = [g for g in chosen
@@ -824,6 +878,7 @@ class _TripDialog(ttk.Toplevel):
                   ).pack(anchor=W, pady=(8, 0))
         tv = tk.StringVar(value=str(seed.get("travel_method") or ""))
         self._vars["travel_method"] = tv
+        tv.trace_add("write", lambda *a: self._type_changed())
         ttk.Combobox(c5, textvariable=tv, values=ft.TRAVEL_METHODS,
                      width=18).pack(anchor=W)
         entry(c6, "Entry / registration fee ($ total)", "entry_fee", width=10,
@@ -844,6 +899,10 @@ class _TripDialog(ttk.Toplevel):
                                      foreground=muted_fg(), wraplength=560,
                                      justify=LEFT)
         self._forms_note.pack(anchor=W)
+        self._extras_note = ttk.Label(body, text="", font=("Segoe UI", 8),
+                                      foreground=muted_fg(), wraplength=560,
+                                      justify=LEFT)
+        self._extras_note.pack(anchor=W)
         self._check_states = {}
         cgrid = ttk.Frame(body)
         cgrid.pack(anchor=W, pady=(4, 0), fill=X)
@@ -851,7 +910,10 @@ class _TripDialog(ttk.Toplevel):
         cgrid.columnconfigure(1, weight=1)
 
         def _make_item(idx, key, label):
-            self._check_states[key] = int(seed.get(key) or 0)
+            # setdefault, not assignment: the checklist is rebuilt whenever the
+            # trip type changes, and re-reading the seed each time threw away
+            # everything ticked since the window opened.
+            self._check_states.setdefault(key, int(seed.get(key) or 0))
             btn = ttk.Button(cgrid)
 
             def render():
@@ -905,6 +967,11 @@ class _TripDialog(ttk.Toplevel):
         entry(a2, "Educational objective", "educational_objective", width=40,
               hint="Called out twice in the district's own instructions as "
                    "the one people leave off.")
+        entry(
+            appbox, "How many adults will provide supervision", "supervision",
+            width=54,
+            hint="Leave this blank and the form prints your chaperone count "
+                 "plus your own name. Type something here to say it your way.")
 
         self._overnight_box = ttk.Frame(appbox)
         orow = ttk.Frame(self._overnight_box); orow.pack(fill=X, anchor=W)
@@ -964,6 +1031,17 @@ class _TripDialog(ttk.Toplevel):
         """Show only what this procedure asks for.  An overnight trip needs a
         board meeting date, four times and an itinerary; a day trip does not,
         and showing them anyway is five more fields to skip past."""
+        # Which groups are ticked decides whether this is a 5th grade trip, so
+        # it is re-read here rather than fixed when the window opened.
+        try:
+            picked = [g for g, bv in self._grp_vars.items() if bv.get()]
+            picked += [x.strip() for x in self._extra_grp.get().split(",")
+                       if x.strip()]
+            self._elementary = ft.trip_is_elementary(
+                self._main_db, {"groups_list": ", ".join(picked)},
+                fallback=self._profile_elementary)
+        except Exception:
+            pass
         overnight = self._trip_type.get() == ft.TRIP_OVERNIGHT
         for box in (self._board_box, self._overnight_box):
             if overnight:
@@ -977,8 +1055,31 @@ class _TripDialog(ttk.Toplevel):
         for w in self._cgrid.winfo_children():
             w.destroy()
         trip = {"trip_type": self._trip_type.get()}
+        # The checklist depends on how the trip travels and who is paying, so
+        # it is built from what is on screen right now.
+        snapshot = dict(trip)
+        try:
+            snapshot["travel_method"] = self._vars["travel_method"].get()
+            snapshot["budget_code"] = self._vars["budget_code"].get()
+        except Exception:
+            pass
+        trip = snapshot
         for i, (key, label) in enumerate(ft.checklist_for(trip)):
             self._make_item(i, key, label)
+        # The overnight extras are things most teachers have never been asked
+        # for, so the window says what they are rather than leaving a tickbox
+        # to be guessed at.
+        extras = []
+        if overnight and ft.uses_charter(snapshot):
+            extras.append("A charter company needs a current carrier profile: "
+                          "print it from the WA Utilities and Transportation "
+                          "Commission site and attach it to the packet.")
+        if overnight and ft.uses_asb_money(snapshot):
+            extras.append("A trip on an ASB org key needs the ASB minutes "
+                          "attached, and the amount approved there has to "
+                          "match the amount on the application.")
+        self._extras_note.config(text="  ".join(extras))
+
         forms = ft.required_forms(trip, elementary=self._elementary)
         if forms:
             self._forms_note.config(
@@ -1062,18 +1163,30 @@ class _TripDialog(ttk.Toplevel):
                 pass
 
     def _check_blackout(self):
-        """Warn while the date is being typed, not after the packet is done."""
-        reasons, unchecked = ft.blackout_warning(
-            self._vars["depart_date"].get().strip())
-        if not reasons:
-            self._blackout.config(text="")
-            return
-        msg = "The district asks you to avoid this date: " + "; ".join(reasons) + "."
-        if unchecked:
-            msg += (" Roka does not have this year's "
-                    + " or ".join(unchecked) + " dates, so it could not check "
-                    "those.")
-        self._blackout.config(text=msg)
+        """Warn while the date is being typed, not after the packet is done.
+
+        A date already gone by is checked here too, and it is the more common
+        mistake by far: a school year spans two calendar years, so in August
+        "March 9th" is 2027, and typing 2026 files the whole trip under
+        completed the moment it is saved.
+        """
+        raw = self._vars["depart_date"].get().strip()
+        d = ct.parse_date(raw)
+        bits = []
+        if d and d < datetime.today().date():
+            bits.append("That date has already gone by, so this trip will be "
+                        "filed under completed trips as soon as you save. Check "
+                        "the year: a school year runs across two of them.")
+        reasons, unchecked = ft.blackout_warning(raw)
+        if reasons:
+            msg = ("The district asks you to avoid this date: "
+                   + "; ".join(reasons) + ".")
+            if unchecked:
+                msg += (" Roka does not have this year's "
+                        + " or ".join(unchecked) + " dates, so it could not "
+                        "check those.")
+            bits.append(msg)
+        self._blackout.config(text="  ".join(bits))
 
     def _save(self):
         name = self._vars["name"].get().strip()
@@ -1093,6 +1206,11 @@ class _TripDialog(ttk.Toplevel):
         data["groups_list"] = ", ".join(groups)
         data["notes"] = self._notes.get("1.0", "end").strip()
         data["trip_type"] = self._trip_type.get()
+        # A day trip returns the day it left.  Leaving it blank printed a blank
+        # Return Date on the district form, which is a question the form asks.
+        if (data["trip_type"] == ft.TRIP_DAY and data.get("depart_date")
+                and not (data.get("return_date") or "").strip()):
+            data["return_date"] = data["depart_date"]
         if data.get("board_date"):
             data["board_date"] = data["board_date"].split(
                 self._BOARD_SEP)[0].strip()
@@ -1104,6 +1222,16 @@ class _TripDialog(ttk.Toplevel):
         # Said once, on the way out, so it cannot be missed -- but not
         # blocking. A teacher may have a real reason, and the district asks
         # people to avoid these dates rather than forbidding them.
+        gone = ct.parse_date(data.get("depart_date"))
+        if gone and gone < datetime.today().date():
+            if Messagebox.yesno(
+                    f"{ct.fmt_date(data.get('depart_date'))} has already gone "
+                    f"by.\n\nThis trip will go straight into completed trips. "
+                    f"If you meant a date still to come, check the year — a "
+                    f"school year runs across two calendar years.\n\nSave it "
+                    f"anyway?",
+                    title="That date has passed", parent=self) != "Yes":
+                return
         reasons, _unchecked = ft.blackout_warning(data.get("depart_date"))
         if reasons:
             if Messagebox.yesno(
@@ -1466,19 +1594,24 @@ class _RosterCostsDialog(ttk.Toplevel):
             self._cost_vars[key] = v
             ttk.Entry(right, textvariable=v, width=12).pack(anchor=W)
 
-        # The form asks you to check one of three district rates.  Choosing one
-        # fills the amount above; the amount stays editable, because the rates
-        # are stamped with a school year on the form itself and change.
+        # The district form asks you to check one of three rates, so Roka has to
+        # know WHICH -- a number alone cannot tick a box.  Choosing one fills
+        # the amount above; the amount stays editable, because the rates are
+        # stamped with a school year on the form itself and change.
         ttk.Label(right, text="Which substitute rate", font=("Segoe UI", 9)
                   ).pack(anchor=W, pady=(6, 0))
-        self._sub_rate = tk.StringVar(value=(trip.get("sub_rate") or ""))
-        ttk.Radiobutton(right, text="No substitute needed", value="",
-                        variable=self._sub_rate, bootstyle=PRIMARY,
-                        command=self._rate_picked).pack(anchor=W)
+        self._sub_rate = tk.StringVar()
+        self._rate_labels = {"": "No substitute needed"}
         for key, label, _amt in ft.SUB_RATES:
-            ttk.Radiobutton(right, text=label, value=key,
-                            variable=self._sub_rate, bootstyle=PRIMARY,
-                            command=self._rate_picked).pack(anchor=W)
+            self._rate_labels[key] = label
+        self._rate_keys = {v: k for k, v in self._rate_labels.items()}
+        self._sub_rate.set(self._rate_labels.get(
+            (trip.get("sub_rate") or "").strip(), "No substitute needed"))
+        rate_cb = ttk.Combobox(right, textvariable=self._sub_rate,
+                               state="readonly", width=20,
+                               values=list(self._rate_labels.values()))
+        rate_cb.pack(anchor=W)
+        rate_cb.bind("<<ComboboxSelected>>", lambda e: self._rate_picked())
         ttk.Label(right, text=ft.SUB_RATE_NOTE, font=("Segoe UI", 8),
                   foreground=muted_fg(), wraplength=230,
                   justify=LEFT).pack(anchor=W)
@@ -1511,10 +1644,13 @@ class _RosterCostsDialog(ttk.Toplevel):
         self._recalc()
         fit_window(self, 640, 580)
 
+    def _rate_key(self):
+        return self._rate_keys.get(self._sub_rate.get(), "")
+
     def _rate_picked(self):
-        """Ticking a rate fills the cost.  Clearing it zeroes the cost, since
-        a substitute nobody is paying for is not a cost."""
-        key = self._sub_rate.get()
+        """Choosing a rate fills the cost.  Choosing none zeroes it, since a
+        substitute nobody is paying for is not a cost."""
+        key = self._rate_key()
         self._cost_vars["sub_cost"].set(
             f"{ft.SUB_RATE_AMOUNT[key]:.2f}" if key in ft.SUB_RATE_AMOUNT
             else "0")
@@ -1556,7 +1692,7 @@ class _RosterCostsDialog(ttk.Toplevel):
                                         title="Check Costs", parent=self)
                 return
         data["funding"] = self._funding.get()
-        data["sub_rate"] = self._sub_rate.get()
+        data["sub_rate"] = self._rate_key()
         data["covered"] = 1 if self._covered.get() else 0
         self.db.update_field_trip(self.trip["id"], data)
         excluded = [sid for sid, v in self._rows if not v.get()]

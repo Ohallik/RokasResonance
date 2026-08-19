@@ -193,8 +193,19 @@ class ConcertsView(ttk.Frame):
             "program_type", "band")
 
     def _students(self):
+        """Everyone, both levels.
+
+        get_students_for_email defaults to SECONDARY, which is right for a
+        general contact list -- a 5th grader must never turn up on a marching
+        band email.  Here the guard is the wrong one: what puts a child on this
+        list is being in one of the GROUPS chosen for the event, and an
+        elementary group carries its school's name ("Jing Mei Elementary
+        School: Section 1"), so it can never match "Advanced Band". Filtering
+        by level as well simply hid every 5th grader from a teacher who has
+        both -- an elementary event showed nobody attending at all.
+        """
         return [dict(r) for r in self.main_db.get_students_for_email(
-            school_year=self._student_year())]
+            school_year=self._student_year(), level=None)]
 
     def _past_concerts(self):
         """(year, concert dict, that year's db) for every other school year

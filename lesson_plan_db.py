@@ -468,6 +468,8 @@ class LessonPlanDatabase:
                         "depart_dest_time TEXT",    # times, not two
                         "itinerary TEXT",
                         "sub_rate TEXT",            # which of the three
+                        "supervision TEXT",         # who is supervising, in
+                                                    # the teacher's own words
                         "board_approved INTEGER DEFAULT 0",
                         "carrier_profile INTEGER DEFAULT 0",
                         "asb_minutes INTEGER DEFAULT 0"):
@@ -1631,8 +1633,8 @@ class LessonPlanDatabase:
                   "assignments", "missed_work", "affordability",
                   "health_review", "advisor_phone", "dest_address",
                   "arrive_dest_time", "depart_dest_time", "itinerary",
-                  "sub_rate", "board_approved", "carrier_profile",
-                  "asb_minutes"]
+                  "sub_rate", "supervision", "board_approved",
+                  "carrier_profile", "asb_minutes"]
 
     def get_field_trips(self, school_year=None):
         with self._connect() as conn:

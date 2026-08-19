@@ -29,9 +29,47 @@ class LessonPlansHub(ttk.Frame):
             migrate_from_main_db,
         )
         migrated = migrate_from_main_db(db.db_path, self._base_dir)
-        self._current_year = migrated or current_school_year()
+        self._current_year = migrated or self._opening_year()
         self.db = get_lesson_plan_db(self._base_dir, self._current_year)
         self._build()
+
+    def _opening_year(self):
+        """Which school year to open on.
+
+        The year last worked in, when there is one.  Failing that, the most
+        recent year that actually has students: opening on a year whose roster
+        is empty shows blank seating charts, an empty field trip roster and a
+        blank Number of Students on a printed form, all of which read as data
+        loss rather than as "you are looking at the wrong year".  The calendar
+        year is only the fallback for a profile with no roster at all.
+        """
+        from lesson_plan_db import current_school_year
+        try:
+            from ui.settings_dialog import load_settings
+            remembered = ((load_settings(self._base_dir).get("lesson_plans")
+                           or {}).get("last_year") or "").strip()
+        except Exception:
+            remembered = ""
+        if remembered:
+            return remembered
+        try:
+            for year in self.main_db.get_school_years():
+                if self.main_db.get_students_for_email(school_year=year,
+                                                       level=None):
+                    return year
+        except Exception:
+            pass
+        return current_school_year()
+
+    def _remember_year(self, year):
+        """So Teacher Tools comes back where it was left."""
+        try:
+            from ui.settings_dialog import load_settings, save_settings
+            cfg = load_settings(self._base_dir) or {}
+            cfg.setdefault("lesson_plans", {})["last_year"] = year
+            save_settings(self._base_dir, cfg)
+        except Exception:
+            pass
 
     def _build(self):
         # ── Header ───────────────────────────────────────────────────────────
@@ -287,6 +325,7 @@ class LessonPlansHub(ttk.Frame):
             return
         from lesson_plan_db import get_lesson_plan_db
         self._current_year = new_year
+        self._remember_year(new_year)
         self.db = get_lesson_plan_db(self._base_dir, new_year)
         for tab in self._tabs():
             tab.db = self.db
