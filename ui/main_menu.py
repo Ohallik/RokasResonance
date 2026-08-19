@@ -1006,6 +1006,22 @@ class MainMenu(ttk.Frame):
                              app_dir=self.app_dir, db=self.db)
         self.winfo_toplevel().wait_window(dlg)  # block until Save/Cancel closes dialog
         self._refresh_stats()
+        # Schools can have been added or archived in there, and the hub is built
+        # from them -- the 5th Grade button appears with the first elementary
+        # school and goes when the last one is archived.  Rebuilding here is why
+        # that no longer waits for a restart.
+        self._build_nav_buttons()
+        # The 5th Grade window builds its tabs once, when it opens, so one left
+        # open would still be showing the old set of schools.  Close it rather
+        # than leave a tab for a school that is no longer there; nothing in it
+        # holds unsaved work.
+        win = self._windows.pop("fifth_grade", None) or getattr(self, "_fifth_window", None)
+        try:
+            if win and win.winfo_exists():
+                win.destroy()
+        except Exception:
+            pass
+        self._fifth_window = None
 
     def _switch_profile(self):
         """Ask main.py to show the profile selector via the callback."""
