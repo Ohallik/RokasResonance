@@ -367,19 +367,9 @@ class MainMenu(ttk.Frame):
         ttk.Label(stu_group, text="Students",
                   font=("Segoe UI", fs(9), "bold"),
                   foreground=muted_fg()).pack(anchor=W, pady=(0, 2))
-        stu_row = ttk.Frame(stu_group)
-        stu_row.pack(fill=X)
-        stu_row.columnconfigure(0, weight=2)
-        stu_row.columnconfigure(1, weight=2)
         self._nav_button(
-            stu_row, "  🎓  Manage Students", self._open_students, "green"
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
-        # Rolling the roster forward is a whole-program action, not a lesson-
-        # planning one — it belongs beside the students it moves, in the hub,
-        # where a new teacher will actually find it before anything depends on it.
-        self._nav_button(
-            stu_row, "  📦  New School Year…", self._open_year_wizard, "purple"
-        ).grid(row=0, column=1, sticky="ew", padx=(3, 0), ipady=btn_pad)
+            stu_group, "  🎓  Manage Students", self._open_students, "green"
+        ).pack(fill=X, ipady=btn_pad)
 
         if show_fifth:
             elem_group = ttk.Frame(row2)
@@ -399,13 +389,29 @@ class MainMenu(ttk.Frame):
         ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(8, 2))
         cur_row += 1
 
+        # New School Year sits here rather than beside Manage Students.  It was
+        # put there on the reasoning that it belongs next to the students it
+        # moves -- but it is a once-a-year job you go looking for, like the
+        # budget or the planner, not something you reach for while working on a
+        # roster.  It also freed the Students row, which was three buttons wide
+        # once 5th Grade appeared and had begun clipping its own labels.
+        prep_row = ttk.Frame(btn_area)
+        prep_row.grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2)
+        # No uniform group here.  These three labels are very different lengths,
+        # and uniform would size all of them to "New School Year..." -- 873px for
+        # a row whose contents need about 500.  Inventory can keep its uniform
+        # because its three labels are near enough the same width already.
+        for _c in (0, 1, 2):
+            prep_row.columnconfigure(_c, weight=1)
         self._nav_button(
-            btn_area, "  💵  Budget", self._open_budget, "teal"
-        ).grid(row=cur_row, column=0, sticky="ew", padx=(0, 3), pady=2, ipady=btn_pad)
-
+            prep_row, "  💵  Budget", self._open_budget, "teal"
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
         self._nav_button(
-            btn_area, "  🧰  Teacher Tools", self._open_lesson_plans, "blue"
-        ).grid(row=cur_row, column=1, sticky="ew", padx=(3, 0), pady=2, ipady=btn_pad)
+            prep_row, "  🧰  Teacher Tools", self._open_lesson_plans, "blue"
+        ).grid(row=0, column=1, sticky="ew", padx=3, ipady=btn_pad)
+        self._nav_button(
+            prep_row, "  📦  New School Year…", self._open_year_wizard, "purple"
+        ).grid(row=0, column=2, sticky="ew", padx=(3, 0), ipady=btn_pad)
 
 
     def _open_fifth_grade(self):
