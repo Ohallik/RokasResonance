@@ -417,11 +417,24 @@ def checklist_summary(trip, staff_emailed=None, elementary=False):
 # the what/where/how, costs (edit as prices change), notes, and the saved
 # email templates — NOT dates, roster choices, approvals, chaperones, or
 # reminder history.
+# What a new trip inherits when an old one is reused as its template.  Not the
+# dates, roster, approvals or chaperones -- those are this year's.  Everything
+# else, including every answer on the district application: the objective, the
+# activities, the alternate assignments and the affordability answer are the
+# same words year after year, and retyping them is the tax the paperwork
+# charges for running the trip again.
 TEMPLATE_FIELDS = ["name", "groups_list", "destination", "travel_method",
                    "depart_time", "return_time", "entry_fee",
-                   "transport_cost", "food_cost", "sub_cost", "other_cost",
-                   "funding", "covered", "notes",
-                   "email_families", "email_chaperones", "email_teachers"]
+                   "transport_cost", "food_cost", "sub_cost", "sub_rate",
+                   "other_cost", "funding", "covered", "notes",
+                   "email_families", "email_chaperones", "email_teachers",
+                   # the district application
+                   "trip_type", "budget_code", "educational_objective",
+                   "supervision", "activities", "assignments", "missed_work",
+                   "affordability", "health_review",
+                   # overnight only
+                   "advisor_phone", "dest_address", "arrive_dest_time",
+                   "depart_dest_time", "itinerary"]
 
 
 def trip_template(trip):

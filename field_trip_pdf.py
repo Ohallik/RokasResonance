@@ -25,7 +25,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.platypus import (SimpleDocTemplate, Paragraph, Table, TableStyle,
-                                Spacer, KeepTogether, HRFlowable)
+                                Spacer, KeepTogether, HRFlowable, PageBreak)
 
 import field_trip_tools as ft
 from concert_tools import fmt_date
@@ -482,3 +482,226 @@ def suggested_filename(trip, overnight=None):
     kind = "Overnight" if is_overnight else "Day"
     when = (trip.get("depart_date") or datetime.today().strftime("%Y-%m-%d"))
     return f"{name} - {kind} Field Trip Application - {when}.pdf"
+
+
+# ── Permission forms, one per student ────────────────────────────────────────
+# 2320P Exhibit C's own directions: "(2) Complete the school portion (top half)
+# of form, (3) Duplicate one form per student, (4) Send a copy home for parent
+# and student signatures."  Step 3 is the one that costs an evening: the school
+# portion is identical on all of them and the only thing that differs is the
+# name at the top.  So Roka fills the top half once and stamps a page per
+# student, in one PDF, ready for the copier.
+#
+# Exhibit A is the elementary day-trip equivalent and takes the same treatment.
+#
+# The notary page is NOT produced.  Exhibit C carries one, and the form itself
+# says it is required for international trips only -- which Roka does not
+# cover.  Printing it would be inviting somebody to go and find a notary for a
+# trip to Ellensburg.
+
+_TRANSPORT_TICKS = ["Airline", "School Bus", "Commercial Carrier",
+                    "Leased Vehicle", "District Vehicle", "Other"]
+
+_TRANSPORT_MATCH = {
+    "school bus": "School Bus",
+    "charter bus": "Commercial Carrier",
+    "public transit": "Commercial Carrier",
+    "private vehicles": "Other",
+    "walking": "Other",
+}
+
+
+def _transport_tick(travel_method):
+    """Which of Exhibit C's boxes the planner's travel method means."""
+    return _TRANSPORT_MATCH.get((travel_method or "").strip().lower())
+
+
+def _pupil_line(label, width, s):
+    t = Table([[Paragraph("", s["val"])]], colWidths=[width * inch])
+    t.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.7, _LINE),
+                           ("TOPPADDING", (0, 0), (-1, -1), 10)]))
+    return [t, Paragraph(label, s["tiny"]), Spacer(1, 6)]
+
+
+def build_permission_forms(trip, students, path, teacher_name="",
+                           school_name="", elementary=False):
+    """One PDF, one permission form per student, school portion filled in."""
+    s = _styles()
+    overnight = ft.trip_type(trip) == ft.TRIP_OVERNIGHT
+    exhibit = "Exhibit A" if (elementary and not overnight) else "Exhibit C"
+    title = ("PARENT AUTHORIZATION AND ACKNOWLEDGEMENT OF RISK "
+             "FOR OUT OF STATE OR OVERNIGHT FIELD TRIP" if overnight else
+             "PARENT AUTHORIZATION AND ACKNOWLEDGEMENT OF RISK FOR FIELD TRIP")
+
+    when = fmt_date(trip.get("depart_date")) or ""
+    back = fmt_date(trip.get("return_date")) or ""
+    dates = when if (not back or back == when) else f"{when} to {back}"
+    ticked = _transport_tick(trip.get("travel_method"))
+
+    doc = SimpleDocTemplate(path, pagesize=letter,
+                            leftMargin=0.75 * inch, rightMargin=0.75 * inch,
+                            topMargin=0.55 * inch, bottomMargin=0.6 * inch,
+                            title=f"{exhibit} — {trip.get('name') or 'Field Trip'}")
+
+    def _footer(canvas, doc_):
+        canvas.saveState()
+        canvas.setFont("Helvetica-Oblique", 7.5)
+        canvas.setFillColor(_GREY)
+        canvas.drawString(0.75 * inch, 0.42 * inch,
+                          f"PROCEDURE 2320P {exhibit.upper()}")
+        canvas.drawRightString(letter[0] - 0.75 * inch, 0.42 * inch,
+                               "Prepared in Roka's Resonance")
+        canvas.restoreState()
+
+    flow = []
+    for i, stu in enumerate(students):
+        if i:
+            flow.append(PageBreak())
+        name = _student_name(stu)
+        sid = ""
+        try:
+            sid = (stu.get("student_id") or "").strip()
+        except Exception:
+            pass
+
+        flow.append(Paragraph(f"PROCEDURE 2320P {exhibit.upper()}", s["district"]))
+        flow.append(Paragraph(title, _ps("exh", 11, bold=True, align=TA_CENTER,
+                                         leading=14)))
+        flow.append(Paragraph(
+            "(This form and an attached field trip description are required "
+            "for all out-of-state or overnight trips.)" if overnight else
+            "(Complete and return to your child's music teacher.)",
+            s["subtitle"]))
+        flow.append(Spacer(1, 8))
+
+        flow.append(_grid([
+            (("Name of Student and Student Id#",
+              name + (f"   —   {sid}" if sid else "")), None),
+            (("Date(s) of Trip:", dates),
+             ("Destination:", trip.get("destination"))),
+            (("Purpose:", trip.get("educational_objective")), None),
+            (("Name of Employee:", teacher_name),
+             ("School:", school_name)),
+        ], s))
+        flow.append(Spacer(1, 6))
+        flow.append(Paragraph(
+            "Is the District employee responsible for the trip and may be "
+            "accompanied by other District staff and approved volunteer "
+            "chaperones. They have my permission to do so.", s["val"]))
+        flow.append(Spacer(1, 8))
+
+        # Transportation, ticked from the planner where it can be.
+        flow.append(Paragraph("TRANSPORTATION BEING PROVIDED BY "
+                              "(Check all that apply)", s["q"]))
+        cells, widths = [], []
+        for label in _TRANSPORT_TICKS:
+            cells.append(_checkbox(ticked == label))
+            widths.append(0.20 * inch)
+            cells.append(Paragraph(label, s["lbl"]))
+            widths.append(1.05 * inch)
+        tt = Table([cells], colWidths=widths)
+        tt.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                ("LEFTPADDING", (0, 0), (-1, -1), 1),
+                                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                                ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+        flow.append(tt)
+
+        flow.append(Paragraph("DRIVERS OF DISTRICT, PRIVATE OR LEASED VEHICLES "
+                              "(Check all that apply.)", s["q"]))
+        dcells, dwidths = [], []
+        for label in ("Parent", "Teacher or Staff Member", "Other"):
+            dcells.append(_checkbox(False))
+            dwidths.append(0.20 * inch)
+            dcells.append(Paragraph(label, s["lbl"]))
+            dwidths.append(1.60 * inch)
+        dt = Table([dcells], colWidths=dwidths)
+        dt.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                ("LEFTPADDING", (0, 0), (-1, -1), 1),
+                                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                                ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+        flow.append(dt)
+        flow.append(Paragraph(
+            "If travel by private car is involved, your student will ride "
+            "with ____________________________  (name of driver), "
+            "____________________  (telephone).", s["val"]))
+        flow.append(Spacer(1, 4))
+        flow.append(Paragraph(
+            "Please Note: School staff ensures that all drivers and vehicles "
+            "are approved by the District Transportation Department before "
+            "driving students.", s["tiny"]))
+        if overnight:
+            flow.append(Spacer(1, 4))
+            flow.append(Paragraph(
+                "An itinerary for the trip (detailing dates, place of lodging, "
+                "events, etc.) is attached for your information.", s["val"]))
+
+        flow.append(Spacer(1, 10))
+        flow.append(HRFlowable(width="100%", thickness=1, color=_LINE,
+                               spaceBefore=0, spaceAfter=8))
+        flow.append(Paragraph("TO BE COMPLETED AT HOME", s["q"]))
+        flow.append(Spacer(1, 4))
+        flow.append(Paragraph("Pupil Agreement", _ps("pa", 9.5, bold=True,
+                                                     align=TA_CENTER)))
+        flow.append(Paragraph(
+            "While participating in this field trip, I will accept "
+            "responsibility for abiding by all District and school rules, "
+            "regulations, policies and procedures; following the directions of "
+            "staff and volunteer chaperones; and the expectations set by "
+            "advisors. Any incidents of exceptional misconduct as defined in "
+            "District Procedure 3241P may result in my being sent home at the "
+            "expense of my family.", s["val"]))
+        flow.append(Spacer(1, 6))
+        for label, w in [("Signature of Student", 3.2),
+                         ("Signature of Parent/Guardian", 3.2)]:
+            flow.extend(_pupil_line(label, w, s))
+
+        flow.append(Paragraph("PARENTAL AUTHORIZATION AND ACKNOWLEDGEMENT OF "
+                              "RISKS", _ps("par", 9.5, bold=True,
+                                           align=TA_CENTER)))
+        flow.append(Paragraph(
+            "If an emergency situation involving illness and/or injury should "
+            "arise, the Bellevue district staff member in charge has my "
+            "permission to seek the aid of medical professionals for emergency "
+            "care. In the event it becomes necessary to obtain emergency care "
+            "for your student, neither s/he nor the Bellevue School District "
+            "assumes financial liability for expenses incurred because of "
+            "accident, injury, illness and/or unforeseen circumstances.",
+            s["val"]))
+        flow.append(Spacer(1, 4))
+        flow.append(Paragraph(
+            "I understand that participation in this field trip is voluntary, "
+            "that it is not required, and that it may expose my child to some "
+            "risk(s). I have read and understand the description of the field "
+            "trip and authorize my child to participate in the planned "
+            "components of the field trip. I also understand that "
+            "participation will involve activities off school property; "
+            "therefore, neither the Bellevue School District, nor its "
+            "employees and volunteers, will have any responsibility for the "
+            "condition or use of any non-school property.", s["val"]))
+        flow.append(Spacer(1, 8))
+        flow.append(Paragraph(
+            f"I give permission for <b>{name}</b> to participate in this "
+            f"field trip.", s["val"]))
+        flow.append(Spacer(1, 4))
+        for label, w in [("Signature of Parent or Guardian", 3.6),
+                         ("Parent or Guardian Phone Number", 3.0)]:
+            flow.extend(_pupil_line(label, w, s))
+
+    doc.build(flow, onFirstPage=_footer, onLaterPages=_footer)
+    return path
+
+
+def _student_name(stu):
+    try:
+        first = (stu.get("preferred_name") or stu.get("first_name") or "").strip()
+        last = (stu.get("last_name") or "").strip()
+        full = f"{first} {last}".strip()
+        return full or (stu.get("name") or "").strip()
+    except Exception:
+        return ""
+
+
+def suggested_permission_filename(trip):
+    name = "".join(c for c in (trip.get("name") or "Field Trip")
+                   if c.isalnum() or c in " -_").strip() or "Field Trip"
+    return f"{name} - Permission Forms.pdf"
