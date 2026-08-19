@@ -319,14 +319,8 @@ class NewSchoolYearWizard(ttk.Toplevel):
 
         if self._has_secondary:
             nstep("Import this year's class lists (CSV)",
-                  "One CSV per class: everyone on the list is assigned to the "
-                  "ensemble and class period(s) you choose. Returning students "
-                  "are rolled into the new year automatically (keeping their "
-                  "instrument, contacts, and history); new names become new "
-                  "records. Columns just need a first/last name (or one 'Name' "
-                  "column); an Instrument column is used for new students. "
-                  "Honors / Jr. All-State marks reset, they are earned fresh "
-                  "each year.")
+                  "One CSV per class. Returning students are rolled in "
+                  "automatically, new students become new records.")
             ttk.Button(body, text="➕ Import a Class List…",
                        bootstyle=(PRIMARY, OUTLINE),
                        command=self._import_list).pack(anchor=W, pady=(4, 2))
@@ -343,9 +337,8 @@ class NewSchoolYearWizard(ttk.Toplevel):
             names = ", ".join(x["name"].replace(" Elementary School", "")
                               for x in self._elem_sites)
             nstep("Before you finish: send off your elementary inventories",
-                  "One inventory file per school, to hand on to whoever takes "
-                  "that school next, plus a single list of everything awaiting "
-                  "repair across all of them for the district coordinator."
+                  "One inventory file per school to hand on, plus one "
+                  "combined repair list for the district coordinator."
                   + "\n\nSchools: " + names)
             ttk.Button(body, text="📤 Export Every School's Inventory & Repairs…",
                        bootstyle=(SUCCESS, OUTLINE),
@@ -356,23 +349,18 @@ class NewSchoolYearWizard(ttk.Toplevel):
             self._export_log.pack(anchor=W)
 
             nstep("Later, in the autumn: your schools for the incoming year",
-                  "This one can wait. Postings are often not settled until the "
-                  "new year starts, and this same panel is on Settings \u25b8 "
-                  "Schools whenever you do find out. Add the schools you are "
-                  "picking up, archive the ones you are handing on. Archived "
-                  "schools can be restored later as needed.")
+                  "This can wait until postings are settled; the same panel "
+                  "is on Settings ▸ Schools. Archived schools can be "
+                  "restored later as needed.")
             from ui.sites_view import SitesPanel
             self._sites_panel = SitesPanel(body, self.main_db)
             self._sites_panel.pack(fill=X, pady=(4, 2))
 
         if self._has_secondary:
             nstep("Archive the students who didn't move forward",
-                  "Runs when you click Finish, AFTER the imports above, so it "
-                  "only archives students who aren't on any new class list "
-                  "(graduating 8th graders, kids who dropped). Returning "
-                  "students are already in the new year and are not touched. "
-                  "Nothing is deleted; anyone can be reactivated later from "
-                  "Manage Students or by a later class-list import.")
+                  "Runs on Finish, after the imports above, so it only "
+                  "archives students who aren't on a new class list. Nothing is "
+                  "deleted.")
             self._archive_var = tk.BooleanVar(value=True)
             ttk.Checkbutton(body, variable=self._archive_var, bootstyle=PRIMARY,
                             text="Archive " + current_year + " students who "
@@ -380,11 +368,8 @@ class NewSchoolYearWizard(ttk.Toplevel):
                             ).pack(anchor=W, pady=(2, 0))
 
             nstep("Roll uniforms forward",
-                  "Returning students KEEP the uniform pieces they had last "
-                  "year, so you don't re-issue everyone from scratch. The "
-                  "option below only releases gear still held by students who "
-                  "did NOT return (graduated / dropped), so those pieces free "
-                  "up for reassignment. Runs on Finish, after archiving.")
+                  "Returning students keep their pieces. This only releases "
+                  "gear held by students who didn't return.")
             self._release_uniforms_var = tk.BooleanVar(value=True)
             ttk.Checkbutton(body, variable=self._release_uniforms_var,
                             bootstyle=PRIMARY,
@@ -398,11 +383,8 @@ class NewSchoolYearWizard(ttk.Toplevel):
             self._archive_var = tk.BooleanVar(value=True)
             self._release_uniforms_var = tk.BooleanVar(value=False)
             nstep("Last year's children",
-                  "Your 5th graders have all moved on to middle school, so "
-                  "they are archived when you finish. Nothing is deleted: "
-                  "their records stay searchable, and an instrument's history "
-                  "stays with the instrument. Anyone who turns up on a new "
-                  "class list comes straight back.")
+                  "Your 5th graders have all moved on, so they are archived "
+                  "when you finish. Nothing is deleted.")
 
         after = []
         if self._has_secondary:
