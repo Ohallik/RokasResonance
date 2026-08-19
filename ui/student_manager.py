@@ -737,7 +737,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         import os
         base_dir = os.path.dirname(os.path.abspath(self.db.db_path))
         open_instrumentation(self, self.db, base_dir,
-                             self._year_var.get() or None)
+                             self._year_var.get() or None,
+                             site_id=self.site_id)
 
     def _open_export_menu(self):
         menu = tk.Menu(self, tearoff=0)

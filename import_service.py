@@ -75,12 +75,14 @@ def import_students(db, csv_source, ensemble_label, period, school_year,
                 if s["student_id"]}
     # Where a school's choir IS the year group, every child imported joins it.
     # Ticking two hundred boxes by hand is not a reasonable alternative.
-    choir_label = None
+    choir_label = site_name = None
     if site_id:
         site = db.get_site(site_id)
-        if site and dict(site).get("choir_default"):
-            from ui.ensembles import choir_ensemble
-            choir_label = choir_ensemble(dict(site)["name"])
+        if site:
+            site_name = dict(site)["name"]
+            if dict(site).get("choir_default"):
+                from ui.ensembles import choir_ensemble
+                choir_label = choir_ensemble(site_name)
     added = updated = moved = 0
     for s in studs:
         rec = dict(s)
@@ -92,7 +94,14 @@ def import_students(db, csv_source, ensemble_label, period, school_year,
         prior = existing.get(rec.get("student_id"))
         if prior:
             merged = dict(prior)
-            merged["ensembles"] = _merge_csv(prior["ensembles"], ensemble_label)
+            base = prior["ensembles"]
+            if site_name:
+                # One section per school. Alex Li is in Section 1 or Section 2,
+                # never both -- they run back to back in the same room, so
+                # being in both is not a thing that can happen. Turning up on
+                # the other list means he was moved, so the old section goes.
+                base = _drop_site_classes(base, site_name, sections_only=True)
+            merged["ensembles"] = _merge_csv(base, ensemble_label)
             if choir_label:
                 merged["ensembles"] = _merge_csv(merged["ensembles"], choir_label)
             merged["class_periods"] = _merge_csv(prior["class_periods"],
@@ -177,19 +186,31 @@ def import_students_sectioned(db, csv_source, section_to_class, period, school_y
             "total": len(studs), "per_class": per_class}
 
 
-def _drop_site_classes(csv_val, site_name):
-    """Remove the classes belonging to one school from a student's ensembles.
+def _drop_site_classes(csv_val, site_name, sections_only=False):
+    """Remove one school's classes from a student's ensembles.
 
-    5th grade sections are named after their school ("Clyde Hill Elementary
+    5th grade classes are named after their school ("Clyde Hill Elementary
     School: Section 1"), so the school's own name is what identifies them.
     Anything not recognisably that school's is left alone -- a secondary class
     has no business being touched by an elementary import.
+
+    ``sections_only`` keeps that school's choir. Choir is something a child is
+    in AS WELL as their section, so moving them between sections must not
+    quietly take them out of it.
     """
     prefix = (site_name or "").strip().lower()
     if not prefix:
         return csv_val
-    kept = [p.strip() for p in (csv_val or "").split(",") if p.strip()
-            and not p.strip().lower().startswith(prefix)]
+    kept = []
+    for part in (csv_val or "").split(","):
+        p = part.strip()
+        if not p:
+            continue
+        mine = p.lower().startswith(prefix)
+        if mine and sections_only and p.lower().rstrip().endswith("choir"):
+            kept.append(p)          # their choir survives a section change
+        elif not mine:
+            kept.append(p)
     return ", ".join(kept)
 
 

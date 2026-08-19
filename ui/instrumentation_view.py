@@ -20,9 +20,9 @@ from ui.ensembles import (selectable_ensembles, instrument_sort_key,
                           class_display_map)
 
 
-def open_instrumentation(parent, main_db, base_dir, school_year=None):
-    """Open the numbers-per-part window."""
-    return InstrumentationDialog(parent, main_db, base_dir, school_year)
+def open_instrumentation(parent, main_db, base_dir, school_year=None, site_id=None):
+    """Open the numbers-per-part window.  ``site_id`` counts one school only."""
+    return InstrumentationDialog(parent, main_db, base_dir, school_year, site_id)
 
 
 def count_parts(students, ensembles=None, count_secondary=False):
@@ -74,10 +74,14 @@ def _get(row, key):
 
 
 class InstrumentationDialog(ttk.Toplevel):
-    def __init__(self, parent, main_db, base_dir, school_year=None):
+    def __init__(self, parent, main_db, base_dir, school_year=None, site_id=None):
         super().__init__(parent.winfo_toplevel())
         self.main_db = main_db
         self.base_dir = base_dir
+        # Counting one school only.  How many clarinet parts to photocopy for
+        # Clyde Hill is a different number from Sherwood Forest's, and adding
+        # them together is worse than useless.
+        self.site_id = site_id
         self.title("Numbers Per Part")
         self.grab_set()
         self.lift()
@@ -202,7 +206,7 @@ class InstrumentationDialog(ttk.Toplevel):
         self._vars, self._checks = {}, []
         self._ensembles = selectable_ensembles(
             self.main_db, self._year_var.get() or None,
-            self._program_type(), self.base_dir)
+            self._program_type(), self.base_dir, site_id=self.site_id)
         dmap = class_display_map(self._ensembles)
         for i, e in enumerate(self._ensembles):
             v = tk.BooleanVar(value=False)
@@ -233,7 +237,9 @@ class InstrumentationDialog(ttk.Toplevel):
     def _recount(self):
         year = self._year_var.get() or None
         try:
-            students = list(self.main_db.get_all_students(school_year=year))
+            students = list(self.main_db.get_all_students(
+                school_year=year, site_id=self.site_id,
+                level=None if self.site_id else "secondary"))
         except Exception:
             students = []
         chosen = self._selected()

@@ -149,15 +149,16 @@ def instruments_for(program_type: str):
     return BAND_INSTRUMENTS + ["Other"]
 
 
-def roster_ensembles(main_db, school_year=None):
+def roster_ensembles(main_db, school_year=None, site_id=None):
     """Every class name that actually appears on student records, in roster
     order.  This is what the data says, as opposed to what the setup wizard
-    configured."""
+    configured.  ``site_id`` limits it to one school's classes."""
     seen = []
     if main_db is None:
         return seen
     try:
-        rows = main_db.get_students_for_email(school_year=school_year)
+        rows = main_db.get_students_for_email(school_year=school_year,
+                                              site_id=site_id)
     except Exception:
         return seen
     for r in rows:
@@ -173,7 +174,7 @@ def roster_ensembles(main_db, school_year=None):
 
 
 def selectable_ensembles(main_db, school_year=None, program_type="band",
-                         base_dir=None, include_empty=False):
+                         base_dir=None, include_empty=False, site_id=None):
     """What a class picker should offer.
 
     The configured class list and the names actually on student records drift
@@ -196,8 +197,13 @@ def selectable_ensembles(main_db, school_year=None, program_type="band",
     once, under the configured (canonical) spelling.
     """
     import class_registry as cr
+    found = roster_ensembles(main_db, school_year, site_id=site_id)
+    if site_id:
+        # One school's own sections and choir, nothing configured for the
+        # secondary programme.  A Clyde Hill picker offering "Advanced Band"
+        # is offering a class that cannot contain any of its children.
+        return found
     configured = ensembles_for(program_type, base_dir)
-    found = roster_ensembles(main_db, school_year)
     out, seen = [], set()
 
     def add(name):
