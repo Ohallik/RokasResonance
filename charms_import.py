@@ -62,6 +62,28 @@ def _by_name(headers):
     return out
 
 
+def sniff(path):
+    """Which Charms file this is, from its own header row: "inventory",
+    "repairs", or None if it is neither.
+
+    Both exports put "Category" in the first cell, so that alone does not
+    separate them.  The repair log carries a Priority column and none of the
+    purchase columns, which does.
+    """
+    try:
+        rows = _load_rows(path)
+    except Exception:
+        return None
+    hi = _header_row(rows)
+    if hi is None:
+        return None
+    heads = {(h or "").strip().lower() for h in rows[hi]}
+    if "priority" in heads and not (heads & {"amt paid", "amt. paid",
+                                             "date purch", "cur value"}):
+        return "repairs"
+    return "inventory"
+
+
 def parse_charms_inventory(path):
     """Instrument dicts from a Charms inventory CSV — full record (add_instrument
     keys) plus purchase fields and, if present, a current ``_checkout``.  Also

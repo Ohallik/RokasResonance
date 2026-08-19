@@ -211,22 +211,34 @@ class FifthGradeView(ttk.Frame):
                        ("All files", "*.*")])
         if not path:
             return
-        # Which one it is decides how the columns are read, and the two look
-        # nothing alike, so ask rather than sniff and get it subtly wrong.
-        answer = Messagebox.yesno(
-            "Is this a CutTime export?\n\nYes — CutTime.\nNo — Charms.",
-            title="Which program?", parent=self.winfo_toplevel())
-        is_cuttime = (answer == "Yes")
+        # The file says which program it came out of, so it is not worth
+        # asking.  A wrong answer reads the wrong columns and imports rows
+        # with no description at all, which is worse than no import.
+        kind = import_service.detect_inventory_format(path)
+        if kind == "charms_xlsx":
+            Messagebox.show_error(
+                "That looks like a Charms inventory saved as a spreadsheet."
+                "\n\nExport it from Charms as a CSV and try again.",
+                title="Could not import", parent=self.winfo_toplevel())
+            return
+        if kind is None:
+            Messagebox.show_error(
+                "That file is not a CutTime or Charms inventory export."
+                "\n\nCutTime exports a spreadsheet (.xlsx); Charms "
+                "exports a CSV.",
+                title="Could not import", parent=self.winfo_toplevel())
+            return
         try:
             res = import_service.import_inventory(
                 self.db,
-                cuttime_path=path if is_cuttime else None,
-                charms_inv_path=None if is_cuttime else path,
+                cuttime_path=path if kind == "cuttime" else None,
+                charms_inv_path=path if kind == "charms" else None,
+                charms_repair_path=path if kind == "charms_repairs"
+                else None,
                 site_id=site["id"])
         except Exception as e:
             Messagebox.show_error(
-                f"That file could not be read as {'CutTime' if is_cuttime else 'Charms'}"
-                f" inventory.\n\n{e}",
+                f"That file could not be read.\n\n{e}",
                 title="Could not import", parent=self.winfo_toplevel())
             return
 

@@ -16,6 +16,7 @@ Charms-only user (no CutTime) imports their Charms inventory directly.
 Pure logic + DB calls, no UI, so it can be unit-tested and driven by the wizard.
 """
 
+import os
 from datetime import datetime
 
 import synergy_import
@@ -257,6 +258,29 @@ def _merge_csv(existing, new):
 
 
 # ── Inventory (CutTime + Charms) ──────────────────────────────────────────────
+
+def detect_inventory_format(path):
+    """What an inventory file is, worked out from the file itself.
+
+    Returns "cuttime", "charms", "charms_repairs", "charms_xlsx" (a Charms
+    export re-saved as .xlsx, which cannot be read), or None.  A teacher
+    handed us the export their old program produced; asking them which
+    program produced it is asking a question the file already answers, and
+    a wrong answer imports the wrong columns silently.
+    """
+    ext = os.path.splitext(path or "")[1].lower()
+    if ext in (".xlsx", ".xlsm", ".xls"):
+        kind = cuttime_import.sniff(path)
+        if kind == "charms_shaped":
+            return "charms_xlsx"
+        return "cuttime" if kind else None
+    if ext in (".csv", ".txt", ""):
+        kind = charms_import.sniff(path)
+        if kind == "repairs":
+            return "charms_repairs"
+        return "charms" if kind else None
+    return None
+
 
 def import_inventory(db, cuttime_path=None, charms_inv_path=None,
                      charms_repair_path=None, site_id=None):

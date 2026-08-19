@@ -69,6 +69,42 @@ def _index_of(headers, *names):
     return None
 
 
+# Headers that only a CutTime inventory export has.
+_CUTTIME_MARKERS = ["assigned member first", "assigned member last",
+                    "latest check-out date", "owner id", "condition comment",
+                    "current value", "type"]
+
+
+def sniff(path):
+    """Whether an .xlsx is a CutTime inventory export.  Returns "inventory",
+    "charms_shaped" for a Charms sheet somebody re-saved as .xlsx (which this
+    parser cannot read), or None if the file will not open at all."""
+    try:
+        import openpyxl
+        import warnings
+        warnings.filterwarnings("ignore")
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        ws = wb.active
+        head = []
+        for row in ws.iter_rows(max_row=8):
+            vals = [("" if c.value is None else str(c.value)).strip()
+                    for c in row]
+            if any(vals):
+                head = vals
+                break
+        wb.close()
+    except Exception:
+        return None
+    low = {h.lower() for h in head if h}
+    if not low:
+        return None
+    if head and head[0].strip().lower() == "category":
+        return "charms_shaped"
+    if low & set(_CUTTIME_MARKERS):
+        return "inventory"
+    return "inventory"          # only CutTime is read from .xlsx anyway
+
+
 def parse_cuttime_inventory(path):
     """Return a list of instrument dicts (keys matching ``add_instrument``) from
     a CutTime .xlsx export.  Rows that are checked out include a ``_checkout``
