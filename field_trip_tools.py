@@ -422,11 +422,12 @@ CHECKLIST_ITEMS = [
     ("nurse_check", "Nurse check completed"),
     # Overnight only -- see checklist_for().
     ("board_approved", "School board approval"),
-    # 2320P, overnight, "Transportation": a charter company must have a current
-    # carrier profile, printed from the WA Utilities and Transportation
-    # Commission site and attached to the packet.  Only asked of a charter
-    # company -- a district bus has nothing to attach.
-    ("carrier_profile", "Charter carrier profile (from the WA UTC)"),
+    # 2320P, overnight, "Transportation".  The district calls it a "carrier
+    # profile", which tells a teacher nothing: it is the state's safety record
+    # for the bus company, printed off and stapled to the packet.  Named for
+    # the job, not for the jargon.  Only asked of a charter company -- a
+    # district bus has nothing to attach.
+    ("carrier_profile", "Bus company's safety record attached"),
     # 2320P, overnight, "Financial Plan": ASB minutes go with any trip on an
     # ASB org key, and the amount approved has to match the application.
     ("asb_minutes", "ASB minutes attached"),

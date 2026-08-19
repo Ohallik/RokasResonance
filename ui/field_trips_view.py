@@ -1077,9 +1077,13 @@ class _TripDialog(ttk.Toplevel):
         # to be guessed at.
         extras = []
         if overnight and ft.uses_charter(snapshot):
-            extras.append("A charter company needs a current carrier profile: "
-                          "print it from the WA Utilities and Transportation "
-                          "Commission site and attach it to the packet.")
+            extras.append(
+                "Bus company's safety record: the state keeps one for every "
+                "charter company. Search for the company by name on the "
+                "Washington Utilities and Transportation Commission website "
+                "(utc.wa.gov), print its profile, and staple it to the "
+                "packet. The district calls this a “carrier "
+                "profile”.")
         if overnight and ft.uses_asb_money(snapshot):
             extras.append("A trip on an ASB org key needs the ASB minutes "
                           "attached, and the amount approved there has to "
