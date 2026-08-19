@@ -177,6 +177,12 @@ class SitesPanel(ttk.Frame):
         self.reload()
         lines = [f"{site['name']} is back, with its {res['instruments']} "
                  f"instrument(s)."]
+        if not res.get("elementary"):
+            # Restoring a secondary school gives back the whole program.  Say
+            # the number out loud: somebody who archived it by accident is
+            # looking for exactly this reassurance.
+            lines.append(f"Its {res.get('students', 0)} student(s) and their "
+                         f"check-outs are back too, exactly as they were.")
         if res["students_cleared"]:
             lines.append(f"Its {res['students_cleared']} old 5th grader(s) are "
                          f"archived rather than carried over: they have moved on "
@@ -186,9 +192,10 @@ class SitesPanel(ttk.Frame):
             lines.append(f"{res['checkouts_returned']} instrument(s) still "
                          f"showing as checked out to them were returned to the "
                          f"cupboard.")
-        lines.append("If somebody else looked after this school in the "
-                     "meantime, use Import Inventory From Another Teacher on "
-                     "its tab to take on the cupboard as they left it.")
+        if res.get("elementary"):
+            lines.append("If somebody else looked after this school in the "
+                         "meantime, use Import Inventory From Another Teacher "
+                         "on its tab to take on the cupboard as they left it.")
         Messagebox.show_info("\n\n".join(lines),
                              title="School restored",
                              parent=self.winfo_toplevel())
@@ -209,10 +216,17 @@ class SitesPanel(ttk.Frame):
                 title="Only school", parent=self.winfo_toplevel())
             return
         site = dict(self.db.get_site(sid))
+        if site.get("level") == "elementary":
+            tail = ("Restoring it later brings back its instruments and "
+                    "history. The roster does not come back: 5th graders have "
+                    "moved on to middle school by then, so you import a fresh "
+                    "class list.")
+        else:
+            tail = "Restoring it later brings all of it back, exactly as it is now."
         if Messagebox.yesno(
                 f"Archive {site['name']}?\n\nIts instruments, students and "
                 f"history are all kept — it just stops appearing as somewhere "
-                f"you teach. You can add it again later.",
+                f"you teach.\n\n{tail}",
                 title="Archive school", parent=self.winfo_toplevel()) == "Yes":
             self.db.archive_site(sid)
             self.reload()
