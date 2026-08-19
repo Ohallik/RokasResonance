@@ -84,9 +84,15 @@ FORM_MEDICATION = "medication"
 
 FORM_LABELS = {
     FORM_EXHIBIT_A: "Exhibit A — parent authorization",
-    FORM_EXHIBIT_C: "Exhibit C — parent authorization",
-    FORM_EXHIBIT_E: "Exhibit E — emergency health",
-    FORM_MEDICATION: "3416P — medication authorization",
+    FORM_EXHIBIT_C: "Exhibit C — parent authorization and risk",
+    # Retired, and kept only so a tick recorded against one before they were
+    # retired still has a name to display.  Neither is chased any more:
+    #   Exhibit E   -- the overnight emergency health form, now entirely
+    #                  covered by FinalForms.
+    #   3416P       -- the medication authorisation, which is no longer even
+    #                  published on the district website.
+    FORM_EXHIBIT_E: "Exhibit E — emergency health (retired)",
+    FORM_MEDICATION: "3416P — medication authorization (retired)",
 }
 
 FORM_SHORT = {
@@ -145,18 +151,23 @@ def required_forms(trip, elementary=False):
     listing them anyway would have teachers ticking boxes for paperwork nobody
     collects.
     """
-    # The medication authorisation (3416P Exhibit A) is covered by FinalForms
-    # wherever FinalForms applies -- which is middle and high school. Meagan
-    # has not collected one on paper in years, and a column of boxes nobody
-    # ticks trains people to ignore the whole list. It stays only at
-    # elementary, which both district procedures put outside FinalForms.
+    # What is genuinely still collected on paper, checked against the district
+    # forms themselves rather than against the procedure's list of them:
+    #
+    #   Exhibit C   overnight and out-of-state, from every student.  "Without
+    #               this form, a student cannot attend the trip."  Its third
+    #               page is a notary block, which the form itself says applies
+    #               to international trips only -- not to a basic overnight.
+    #   Exhibit A   elementary day trips.  Both procedures put elementary
+    #               outside FinalForms in as many words.
+    #
+    # Not collected, and deliberately not listed:
+    #   Exhibit E   covered by FinalForms.
+    #   3416P       no longer published by the district at all.
     if trip_type(trip) == TRIP_OVERNIGHT:
-        forms = [FORM_EXHIBIT_C, FORM_EXHIBIT_E]
-        if elementary:
-            forms.append(FORM_MEDICATION)
-        return forms
+        return [FORM_EXHIBIT_C]
     if elementary:
-        return [FORM_EXHIBIT_A, FORM_MEDICATION]
+        return [FORM_EXHIBIT_A]
     return []
 
 
