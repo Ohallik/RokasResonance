@@ -819,10 +819,21 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         dlg = StudentDialog(self.winfo_toplevel(), self.db,
                              student_id=None,
                              default_year=self._year_var.get(),
-                             program_type=self.program_type)
+                             program_type=self.program_type,
+                             site=self._site())
         self.wait_window(dlg)
         self._claim_new_students(high_water)
         self.refresh()
+
+    def _site(self):
+        """The school this roster belongs to, or None for the secondary one."""
+        if not self.site_id:
+            return None
+        try:
+            row = self.db.get_site(self.site_id)
+            return dict(row) if row else None
+        except Exception:
+            return None
 
     def _max_student_id(self):
         try:
@@ -857,7 +868,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         dlg = StudentDialog(self.winfo_toplevel(), self.db,
                              student_id=sid,
                              default_year=self._year_var.get(),
-                             program_type=self.program_type)
+                             program_type=self.program_type,
+                             site=self._site())
         self.wait_window(dlg)
         self.refresh()
         self._load_detail(sid)
@@ -1651,11 +1663,18 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
 
     _class_options_include_empty = True     # assigns a class, so offer empties
 
-    def __init__(self, parent, db, student_id=None, default_year=None, program_type="band"):
+    def __init__(self, parent, db, student_id=None, default_year=None,
+                 program_type="band", site=None):
         super().__init__(parent)
         self.db = db
         self.student_id = student_id
         self.program_type = program_type or "band"
+        # The school being edited for, when this is a 5th grade roster.  It
+        # decides the wording, the instrument order, and whether choir is
+        # offered at all.
+        self.site = dict(site) if site else None
+        self._elementary = bool(self.site
+                                and self.site.get("level") == "elementary")
         self.default_year = default_year or _current_school_year()
 
         self.title("Edit Student" if student_id else "Add Student")
@@ -1828,22 +1847,40 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
 
         instr_row = ttk.Frame(parent)
         instr_row.pack(fill=X, padx=16, pady=(6, 0))
-        instr_opts = instruments_for(self.program_type)
-        self._field(instr_row, "Concert Instrument (Primary)", "primary_instrument",
-                    widget="combobox", options=instr_opts, side=LEFT, width=22)
-        self._field(instr_row, "Concert Instrument (Secondary)", "secondary_instrument",
-                    widget="combobox", options=instr_opts, side=LEFT, width=22)
 
-        jazz_row = ttk.Frame(parent)
-        jazz_row.pack(fill=X, padx=16, pady=(4, 0))
-        from ui.ensembles import JAZZ_INSTRUMENTS
-        self._field(jazz_row, "Jazz Band Instrument", "jazz_instrument",
-                    widget="combobox", options=[""] + JAZZ_INSTRUMENTS,
-                    side=LEFT, width=22)
-        ttk.Label(jazz_row, text="Only if different in jazz band (e.g. Horn "
-                                 "player on Guitar) — used for jazz rosters.",
-                  font=("Segoe UI", 8), foreground=muted_fg(),
-                  wraplength=260, justify=LEFT).pack(side=LEFT, padx=(8, 0))
+        if self._elementary:
+            # A 5th grader plays one instrument.  "Primary" only means anything
+            # next to a "Secondary", and there is no secondary, no jazz band and
+            # no doubling down here -- so those fields are not shown at all
+            # rather than sitting empty for the whole year.
+            from ui.ensembles import fifth_grade_instruments
+            self._field(instr_row, "5th Grade Instrument", "primary_instrument",
+                        widget="combobox",
+                        options=fifth_grade_instruments(self.program_type),
+                        side=LEFT, width=22)
+            ttk.Label(instr_row,
+                      text="The usual starters come first; the rest of the list "
+                           "is underneath for the occasional oboist.",
+                      font=("Segoe UI", 8), foreground=muted_fg(),
+                      wraplength=250, justify=LEFT).pack(side=LEFT, padx=(8, 0))
+            self._build_choir_row(parent)
+        else:
+            instr_opts = instruments_for(self.program_type)
+            self._field(instr_row, "Concert Instrument (Primary)", "primary_instrument",
+                        widget="combobox", options=instr_opts, side=LEFT, width=22)
+            self._field(instr_row, "Concert Instrument (Secondary)", "secondary_instrument",
+                        widget="combobox", options=instr_opts, side=LEFT, width=22)
+
+            jazz_row = ttk.Frame(parent)
+            jazz_row.pack(fill=X, padx=16, pady=(4, 0))
+            from ui.ensembles import JAZZ_INSTRUMENTS
+            self._field(jazz_row, "Jazz Band Instrument", "jazz_instrument",
+                        widget="combobox", options=[""] + JAZZ_INSTRUMENTS,
+                        side=LEFT, width=22)
+            ttk.Label(jazz_row, text="Only if different in jazz band (e.g. Horn "
+                                     "player on Guitar) — used for jazz rosters.",
+                      font=("Segoe UI", 8), foreground=muted_fg(),
+                      wraplength=260, justify=LEFT).pack(side=LEFT, padx=(8, 0))
 
         self._section(parent, "Contact Information")
         row2 = ttk.Frame(parent)
@@ -1900,6 +1937,9 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
         student = self.db.get_student(student_id)
         if not student:
             return
+        if self._elementary:
+            self._choir_load(student["ensembles"]
+                             if "ensembles" in student.keys() else "")
         for key, var in self._vars.items():
             val = student[key] if key in student.keys() else None
             var.set("" if val is None else str(val))
@@ -1956,13 +1996,61 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
         self.db.reactivate_student(self.student_id)
         self.destroy()
 
+    def _build_choir_row(self, parent):
+        """Choir sits alongside the instrument, never instead of it.
+
+        It is not a class anywhere in the district -- a few schools run one
+        before or after school -- so it is recorded as an ensemble this child
+        is in as well, which means the section tickboxes, the class filters and
+        the email lists all understand it with nothing added.
+        """
+        from ui.ensembles import choir_ensemble
+        row = ttk.Frame(parent)
+        row.pack(fill=X, padx=16, pady=(6, 0))
+        self._choir_label = choir_ensemble(self.site.get("name") if self.site else "")
+        self._choir_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(row, text="Also sings in choir",
+                        variable=self._choir_var,
+                        bootstyle=PRIMARY).pack(side=LEFT)
+        note = ("This school's choir is ticked for every child by default."
+                if (self.site or {}).get("choir_default")
+                else "Only if this school runs a choir and this child is in it.")
+        ttk.Label(row, text=note, font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=300, justify=LEFT).pack(side=LEFT, padx=(8, 0))
+        if not self.student_id and (self.site or {}).get("choir_default"):
+            self._choir_var.set(True)
+
+    def _choir_apply(self, ensembles_csv: str) -> str:
+        """Put the choir into (or take it out of) this child's ensembles."""
+        label = getattr(self, "_choir_label", "")
+        if not label:
+            return ensembles_csv
+        parts = [p.strip() for p in (ensembles_csv or "").split(",") if p.strip()]
+        parts = [p for p in parts if p.lower() != label.lower()]
+        if self._choir_var.get():
+            parts.append(label)
+        return ", ".join(parts)
+
+    def _choir_load(self, ensembles_csv: str):
+        label = getattr(self, "_choir_label", "")
+        if not label or not hasattr(self, "_choir_var"):
+            return
+        parts = [p.strip().lower() for p in (ensembles_csv or "").split(",")]
+        self._choir_var.set(label.lower() in parts)
+
     def _save(self):
         data = self._collect()
         if not self._validate(data):
             return
+        # Choir rides along in ensembles rather than in a column of its own, so
+        # it is folded in after the checkbox groups have had their say.
+        if self._elementary and hasattr(self, "_choir_var"):
+            data["ensembles"] = self._choir_apply(data.get("ensembles", ""))
         if self.student_id:
             self.db.update_student(self.student_id, data)
         else:
+            if self.site:
+                data["site_id"] = self.site["id"]
             self.db.add_student(data)
         self.destroy()
 

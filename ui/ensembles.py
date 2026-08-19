@@ -66,6 +66,43 @@ JAZZ_INSTRUMENTS = BAND_INSTRUMENTS + [
 ]
 
 
+# What a 5th grader actually starts on, in the order a beginning teacher hands
+# them out.  The rest of the list stays available underneath: a gifted child
+# does occasionally turn up on oboe or french horn, and while those families
+# almost always buy or rent privately, the option should not be missing.
+FIFTH_GRADE_BAND_COMMON = [
+    "Flute", "Clarinet", "Trumpet", "Trombone", "Percussion",
+    "Baritone BC", "Baritone TC",
+]
+# Strings are sized rather than swapped, so the instrument list is short and the
+# size field on the instrument carries 1/2, 3/4 and the rest.
+FIFTH_GRADE_STRINGS_COMMON = ["Violin", "Viola", "Cello", "String Bass"]
+
+# The choir some schools run before or after school.  Not a class anywhere in
+# the district, so it is an ensemble a child is in as well as their instrument,
+# never instead of it.
+CHOIR_SUFFIX = "Choir"
+
+
+def fifth_grade_instruments(program_type: str):
+    """Beginner instruments first, everything else after.
+
+    Ordered rather than filtered: the common six or seven cover almost every
+    child, and burying the rest behind "Other" would mean the one oboist a
+    teacher meets in five years cannot be recorded at all."""
+    common = (FIFTH_GRADE_STRINGS_COMMON if program_type == "orchestra"
+              else FIFTH_GRADE_BAND_COMMON)
+    full = (ORCHESTRA_INSTRUMENTS if program_type == "orchestra"
+            else BAND_INSTRUMENTS)
+    rest = [i for i in full if i not in common]
+    return common + rest + ["Other"]
+
+
+def choir_ensemble(site_name: str) -> str:
+    """The choir group for one school, named the way its sections are."""
+    return f"{(site_name or '').strip()}: {CHOIR_SUFFIX}"
+
+
 def ensembles_for(program_type: str, base_dir=None):
     """The performing ensembles / classes for this program type.  Returns the
     teacher's OWN configured classes (from the setup wizard) whenever a profile

@@ -800,6 +800,14 @@ class Database:
                 conn.commit()
             except Exception:
                 pass
+            # Some elementary schools run a choir before or after school and
+            # simply put the whole 5th grade in it.  When that is true, ticking
+            # every child by hand is a hundred clicks nobody should make.
+            try:
+                conn.execute("ALTER TABLE sites ADD COLUMN choir_default INTEGER DEFAULT 0")
+                conn.commit()
+            except Exception:
+                pass
             for _t in ("instruments", "students"):
                 try:
                     conn.execute(f"ALTER TABLE {_t} ADD COLUMN site_id INTEGER")
@@ -893,7 +901,7 @@ class Database:
                                 (site_id,)).fetchone()
 
     def add_site(self, name: str, level: str = "secondary", program: str = None,
-                 charges_fees: bool = None) -> int:
+                 charges_fees: bool = None, choir_default: bool = False) -> int:
         """Add a school.  Elementary loans carry no fee unless told otherwise --
         the district's elementary form says so in as many words."""
         if charges_fees is None:
@@ -911,19 +919,22 @@ class Database:
             if existing:
                 conn.execute(
                     "UPDATE sites SET is_active = 1, level = ?, program = ?, "
-                    "charges_fees = ? WHERE id = ?",
-                    (level, program, 1 if charges_fees else 0, existing["id"]))
+                    "charges_fees = ?, choir_default = ? WHERE id = ?",
+                    (level, program, 1 if charges_fees else 0,
+                     1 if choir_default else 0, existing["id"]))
                 conn.commit()
                 return existing["id"]
             cur = conn.execute(
-                "INSERT INTO sites (name, level, program, charges_fees) "
-                "VALUES (?, ?, ?, ?)",
-                (name, level, program, 1 if charges_fees else 0))
+                "INSERT INTO sites (name, level, program, charges_fees, "
+                "choir_default) VALUES (?, ?, ?, ?, ?)",
+                (name, level, program, 1 if charges_fees else 0,
+                 1 if choir_default else 0))
             conn.commit()
             return cur.lastrowid
 
     def update_site(self, site_id: int, **fields):
-        allowed = ("name", "level", "program", "charges_fees", "is_active")
+        allowed = ("name", "level", "program", "charges_fees", "is_active",
+                   "choir_default")
         sets = [(k, v) for k, v in fields.items() if k in allowed]
         if not sets:
             return
@@ -933,11 +944,14 @@ class Database:
                 + " WHERE id = ?", [v for _, v in sets] + [site_id])
             conn.commit()
 
-    def deactivate_site(self, site_id: int):
-        """Retire a school without deleting it.  An assignment ending does not
+    def archive_site(self, site_id: int):
+        """Archive a school without deleting it.  An assignment ending does not
         make last year's checkout history untrue, and the handoff export still
         needs to read it."""
         self.update_site(site_id, is_active=0)
+
+    # Old name, kept so nothing calling it breaks.
+    deactivate_site = archive_site
 
     def default_site_id(self):
         """The site to assume when nothing says otherwise -- only meaningful
@@ -1937,6 +1951,19 @@ class Database:
                 f"SELECT * FROM students {where}{scope} "
                 f"ORDER BY last_name, first_name", params + sp
             ).fetchall()
+
+    def set_student_site(self, student_id: int, site_id):
+        """Move one child to a school.
+
+        Deliberately its own method.  site_id is kept out of update_student's
+        column list so that an ordinary edit -- which passes a dict that may not
+        mention it -- cannot blank a child's school; that means moving one has
+        to be asked for explicitly, which is the right way round.
+        """
+        with self._connect() as conn:
+            conn.execute("UPDATE students SET site_id = ? WHERE id = ?",
+                         (site_id, student_id))
+            conn.commit()
 
     def get_student(self, student_id: int):
         with self._connect() as conn:

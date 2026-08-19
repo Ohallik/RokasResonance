@@ -64,34 +64,65 @@ def import_students(db, csv_source, ensemble_label, period, school_year,
     Student ID this year — e.g. they're in two of your classes) gets the new
     ensemble/period merged onto their record rather than duplicated.
 
-    ``site_id`` puts them at one school.  Matching is then against that school
-    only: two elementary schools can each have a Ben Carter, and the same
-    district ID cannot mean the same child twice in a 5th grade programme
-    spread over six buildings."""
+    ``site_id`` says which school the children on this list are at.  It does
+    NOT narrow the matching: the district Student ID is unique district-wide,
+    so it -- not the name and not the building -- is what decides whether two
+    rows are the same child.  Six Alex Lis with six IDs are six children; one
+    ID appearing at a second school is one child who has moved, and gets moved
+    rather than duplicated."""
     studs = synergy_import.parse_synergy_students(csv_source)
-    existing = {s["student_id"]: s
-                for s in db.get_all_students(school_year, site_id=site_id)
+    existing = {s["student_id"]: s for s in db.get_all_students(school_year)
                 if s["student_id"]}
-    added = updated = 0
+    # Where a school's choir IS the year group, every child imported joins it.
+    # Ticking two hundred boxes by hand is not a reasonable alternative.
+    choir_label = None
+    if site_id:
+        site = db.get_site(site_id)
+        if site and dict(site).get("choir_default"):
+            from ui.ensembles import choir_ensemble
+            choir_label = choir_ensemble(dict(site)["name"])
+    added = updated = moved = 0
     for s in studs:
         rec = dict(s)
         rec["school_year"] = school_year
         rec["ensembles"] = ensemble_label
         rec["class_periods"] = str(period) if period else None
+        if choir_label:
+            rec["ensembles"] = _merge_csv(rec["ensembles"], choir_label)
         prior = existing.get(rec.get("student_id"))
         if prior:
             merged = dict(prior)
             merged["ensembles"] = _merge_csv(prior["ensembles"], ensemble_label)
+            if choir_label:
+                merged["ensembles"] = _merge_csv(merged["ensembles"], choir_label)
             merged["class_periods"] = _merge_csv(prior["class_periods"],
                                                  str(period) if period else "")
             merged["provisional"] = 0     # official roster confirms an incoming student
+            # Turning up on a different school's list means they moved.  Drop
+            # the old school's sections on the way: a child at Sherwood Forest
+            # is not still in Clyde Hill's Section 1, and leaving it there puts
+            # them on their previous teacher's class list all year.
+            transferred = (site_id and prior["site_id"]
+                           and prior["site_id"] != site_id)
+            if transferred:
+                old_site = db.get_site(prior["site_id"])
+                if old_site:
+                    merged["ensembles"] = _drop_site_classes(
+                        merged["ensembles"], dict(old_site)["name"])
             db.update_student(prior["id"], merged)
             updated += 1
+            # site_id is not in update_student's column list on purpose -- an
+            # edit that forgot it would blank the school -- so set it here.
+            if site_id and prior["site_id"] != site_id:
+                db.set_student_site(prior["id"], site_id)
+                if transferred:
+                    moved += 1
         else:
             rec["site_id"] = site_id
             db.add_student(rec)
             added += 1
-    return {"added": added, "updated": updated, "total": len(studs)}
+    return {"added": added, "updated": updated, "moved": moved,
+            "total": len(studs)}
 
 
 def import_students_sectioned(db, csv_source, section_to_class, period, school_year):
@@ -144,6 +175,22 @@ def import_students_sectioned(db, csv_source, section_to_class, period, school_y
             per_class[lab] = per_class.get(lab, 0) + 1
     return {"added": added, "updated": updated, "skipped": skipped,
             "total": len(studs), "per_class": per_class}
+
+
+def _drop_site_classes(csv_val, site_name):
+    """Remove the classes belonging to one school from a student's ensembles.
+
+    5th grade sections are named after their school ("Clyde Hill Elementary
+    School: Section 1"), so the school's own name is what identifies them.
+    Anything not recognisably that school's is left alone -- a secondary class
+    has no business being touched by an elementary import.
+    """
+    prefix = (site_name or "").strip().lower()
+    if not prefix:
+        return csv_val
+    kept = [p.strip() for p in (csv_val or "").split(",") if p.strip()
+            and not p.strip().lower().startswith(prefix)]
+    return ", ".join(kept)
 
 
 def _merge_csv(existing, new):

@@ -31,7 +31,7 @@ _PROGRAM_LABEL = dict(PROGRAMS)
 
 
 class SitesPanel(ttk.Frame):
-    """The list of schools, with add / edit / retire."""
+    """The list of schools, with add / edit / archive."""
 
     def __init__(self, parent, db):
         super().__init__(parent)
@@ -55,12 +55,13 @@ class SitesPanel(ttk.Frame):
             wraplength=470, justify=LEFT,
         ).pack(anchor=W, pady=(2, 12))
 
-        cols = ("name", "level", "program", "fees")
+        cols = ("name", "level", "program", "fees", "choir")
         self.tree = ttk.Treeview(outer, columns=cols, show="headings",
                                  selectmode="browse", height=8,
                                  bootstyle=PRIMARY)
         for col, head, w in (("name", "School", 230), ("level", "Level", 130),
-                             ("program", "Programme", 90), ("fees", "Rental fee", 90)):
+                             ("program", "Programme", 90), ("fees", "Rental fee", 90),
+                             ("choir", "Choir", 80)):
             self.tree.heading(col, text=head, anchor=W)
             self.tree.column(col, width=w, anchor=W, stretch=(col == "name"))
         self.tree.pack(fill=BOTH, expand=True)
@@ -72,8 +73,8 @@ class SitesPanel(ttk.Frame):
                    command=self._add).pack(side=LEFT)
         ttk.Button(row, text="✎ Edit", bootstyle=(PRIMARY, OUTLINE),
                    command=self._edit).pack(side=LEFT, padx=6)
-        ttk.Button(row, text="Retire", bootstyle=(SECONDARY, OUTLINE),
-                   command=self._retire).pack(side=LEFT)
+        ttk.Button(row, text="Archive", bootstyle=(SECONDARY, OUTLINE),
+                   command=self._archive).pack(side=LEFT)
 
         self._note = ttk.Label(outer, text="", font=("Segoe UI", 8),
                                foreground=muted_fg(), wraplength=470,
@@ -94,6 +95,7 @@ class SitesPanel(ttk.Frame):
                 _LEVEL_LABEL.get(s["level"], s["level"] or ""),
                 _PROGRAM_LABEL.get(s["program"], s["program"] or "—"),
                 "charged" if s["charges_fees"] else "none",
+                "everyone" if s["choir_default"] else "—",
             ))
         self._note.config(text=self._summary(sites))
 
@@ -132,28 +134,28 @@ class SitesPanel(ttk.Frame):
         self.wait_window(dlg)
         self.reload()
 
-    def _retire(self):
-        """Retiring keeps the history.  An assignment ending does not make last
+    def _archive(self):
+        """Archiving keeps the history.  An assignment ending does not make last
         year's checkouts untrue, and the handoff export still has to read them."""
         sid = self._selected()
         if sid is None:
-            Messagebox.show_info("Select a school to retire.", title="No school",
+            Messagebox.show_info("Select a school to archive.", title="No school",
                                  parent=self.winfo_toplevel())
             return
         sites = [dict(s) for s in self.db.get_sites()]
         if len(sites) <= 1:
             Messagebox.show_warning(
-                "This is your only school, so it cannot be retired. Edit it "
+                "This is your only school, so it cannot be archived. Edit it "
                 "instead if the name is wrong.",
                 title="Only school", parent=self.winfo_toplevel())
             return
         site = dict(self.db.get_site(sid))
         if Messagebox.yesno(
-                f"Retire {site['name']}?\n\nIts instruments, students and "
+                f"Archive {site['name']}?\n\nIts instruments, students and "
                 f"history are all kept — it just stops appearing as somewhere "
                 f"you teach. You can add it again later.",
-                title="Retire school", parent=self.winfo_toplevel()) == "Yes":
-            self.db.deactivate_site(sid)
+                title="Archive school", parent=self.winfo_toplevel()) == "Yes":
+            self.db.archive_site(sid)
             self.reload()
 
 
@@ -211,6 +213,22 @@ class SiteDialog(ttk.Toplevel):
                                     justify=LEFT)
         self._fees_note.pack(anchor=W)
 
+        # Where a school's choir is simply "the 5th grade", ticking two hundred
+        # children one at a time is not a reasonable thing to ask.
+        self._choir = tk.BooleanVar(value=bool(site.get("choir_default", 0)))
+        self._choir_chk = ttk.Checkbutton(
+            body, text="Everyone here is in choir",
+            variable=self._choir, bootstyle=PRIMARY)
+        self._choir_chk.pack(anchor=W, pady=(10, 0))
+        self._choir_note = ttk.Label(
+            body, text="Some schools run a choir before or after school and put "
+                       "the whole year group in it. Tick this and every child "
+                       "imported here joins it automatically; leave it off to "
+                       "tick them individually.",
+            font=("Segoe UI", 8), foreground=muted_fg(), wraplength=340,
+            justify=LEFT)
+        self._choir_note.pack(anchor=W)
+
         btns = ttk.Frame(self)
         btns.pack(fill=X, padx=18, pady=(4, 14))
         ttk.Button(btns, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
@@ -229,6 +247,11 @@ class SiteDialog(ttk.Toplevel):
         elementary = self._level.get() == "elementary"
         if not initial:
             self._fees.set(not elementary)
+        for w in (self._choir_chk, self._choir_note):
+            if elementary:
+                w.pack(anchor=W)
+            else:
+                w.pack_forget()
         self._fees_note.config(
             text="Elementary instrument loans are free in this district, so "
                  "this is normally off." if elementary else
@@ -250,8 +273,10 @@ class SiteDialog(ttk.Toplevel):
                 title="Programme needed", parent=self)
             return
 
+        elementary = self._level.get() == "elementary"
         fields = dict(name=name, level=self._level.get(), program=program,
-                      charges_fees=1 if self._fees.get() else 0)
+                      charges_fees=1 if self._fees.get() else 0,
+                      choir_default=1 if (elementary and self._choir.get()) else 0)
         if self.site_id:
             self.db.update_site(self.site_id, **fields)
         else:
@@ -262,5 +287,6 @@ class SiteDialog(ttk.Toplevel):
                     f"{name} is already on your list.",
                     title="Already added", parent=self)
                 return
-            self.db.add_site(name, fields["level"], program, self._fees.get())
+            self.db.add_site(name, fields["level"], program, self._fees.get(),
+                             choir_default=bool(fields["choir_default"]))
         self.destroy()
