@@ -1227,6 +1227,16 @@ class _HonorsDialog(ttk.Toplevel):
     """Tick Honors (♪) and Jr. All-State (★) for students in this concert's
     ensembles — the marks print next to their names on the program."""
 
+
+    def _school_name(self):
+        """The school this program is for, so the star means the right award."""
+        try:
+            from ui.settings_dialog import school_name
+            return school_name(getattr(self, "base_dir", "")
+                               or getattr(self.master, "base_dir", ""))
+        except Exception:
+            return ""
+
     def __init__(self, parent, main_db, students, ensembles):
         super().__init__(parent.winfo_toplevel())
         self.main_db = main_db
@@ -1234,10 +1244,11 @@ class _HonorsDialog(ttk.Toplevel):
         self.resizable(True, True)
         self.grab_set()
 
-        ttk.Label(self, text="🎖  Honors & Jr. All-State",
+        _award = ct.recognition_label(self._school_name())
+        ttk.Label(self, text=f"🎖  Honors & {_award}",
                   font=("Segoe UI", 12, "bold"),
                   bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(12, 2))
-        ttk.Label(self, text="♪ = Honors in Band   ★ = Jr. All-State — marks "
+        ttk.Label(self, text=f"♪ = Honors   ★ = {_award} — marks "
                              "appear next to names on every program until unticked.",
                   font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W, padx=16)
 
@@ -1264,7 +1275,7 @@ class _HonorsDialog(ttk.Toplevel):
         ttk.Label(hdr, text="Student", width=30,
                   font=("Segoe UI", 9, "bold")).pack(side=LEFT)
         ttk.Label(hdr, text="♪ Honors", font=("Segoe UI", 9, "bold")).pack(side=LEFT, padx=6)
-        ttk.Label(hdr, text="★ All-State", font=("Segoe UI", 9, "bold")).pack(side=LEFT, padx=6)
+        ttk.Label(hdr, text=f"★ {_award}", font=("Segoe UI", 9, "bold")).pack(side=LEFT, padx=6)
         self._rows = []
         for s in members:
             row = ttk.Frame(inner); row.pack(fill=X, pady=1)

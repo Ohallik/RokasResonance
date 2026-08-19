@@ -46,6 +46,22 @@ SECTION_NAMES = {
 }
 
 
+
+def recognition_label(school_name: str) -> str:
+    """What the star next to a name means at THIS school.
+
+    Jr. All-State is a middle school award -- 7th and 8th grade only -- so
+    printing it beside a high schooler's name is simply wrong. High school
+    programs audition for All-State and All-Northwest instead. Honors is used
+    at both, so it is not affected.
+    """
+    name = (school_name or "").lower()
+    if "high school" in name:
+        return "All-State"
+    if "middle school" in name or "junior high" in name:
+        return "Jr. All-State"
+    return "All-State"
+
 def section_for(instrument: str) -> str:
     inst = (instrument or "").strip()
     return SECTION_NAMES.get(inst, inst) if inst else "Other"

@@ -342,26 +342,61 @@ def _num(v):
         return 0.0
 
 
+def export_all_needs_repair(db, sites, out_path):
+    """Every school's outstanding repairs, in one file.
+
+    This one goes to the district's instrument coordinator -- one person,
+    looking after every school in the district -- so a single list they can
+    work down beats a dozen files they have to open in turn.  The school is a
+    column, since without it the list is unusable to them.
+    """
+    from openpyxl import Workbook
+
+    fields = [("school", "School")] + REPAIR_FIELDS
+    rows = []
+    for site in sites:
+        site = dict(site)
+        for r in db.get_pending_repairs(site_id=site["id"]):
+            row = dict(r)
+            row["school"] = site["name"]
+            rows.append(row)
+
+    wb = Workbook()
+    ws = _sheet(wb, "Needs Repair", fields, rows, first=True)
+    _stamp(ws, "All schools", "instruments awaiting repair")
+    wb.save(out_path)
+    return {"path": out_path, "repair": len(rows), "schools": len(list(sites))}
+
+
 def export_year_end_pack(db, sites, out_dir):
     """One folder holding every school's year-end paperwork.
 
-    A teacher with six schools should not have to run twelve exports and name
-    twelve files to tell the curriculum coordinator what they are holding and
-    what is broken. One click, one folder, two files per school.
+    An inventory file PER SCHOOL, because each one is handed to whoever takes
+    that school on next, and a file covering six schools is no use to the
+    person taking one of them.  Repairs the other way round: one combined list,
+    because that goes to the district coordinator rather than to six different
+    successors.
     """
     import os
 
+    sites = [dict(x) for x in sites]
     os.makedirs(out_dir, exist_ok=True)
     done, failed = [], []
     for site in sites:
-        site = dict(site)
-        for kind, fn in (("inventory", export_handoff),
-                         ("needs_repair", export_needs_repair)):
-            path = os.path.join(out_dir, suggested_filename(site, kind))
-            try:
-                res = fn(db, site, path)
-                done.append((site["name"], kind, path, res))
-            except Exception as e:
-                failed.append((site["name"], kind, str(e)))
+        path = os.path.join(out_dir, suggested_filename(site, "inventory"))
+        try:
+            res = export_handoff(db, site, path)
+            done.append((site["name"], "inventory", path, res))
+        except Exception as e:
+            failed.append((site["name"], "inventory", str(e)))
+
+    combined = os.path.join(
+        out_dir, f"All_Schools_needs_repair_{date.today():%Y%m%d}.xlsx")
+    try:
+        res = export_all_needs_repair(db, sites, combined)
+        done.append(("All schools", "needs_repair", combined, res))
+    except Exception as e:
+        failed.append(("All schools", "needs_repair", str(e)))
+
     return {"folder": out_dir, "written": done, "failed": failed,
             "schools": len(sites)}

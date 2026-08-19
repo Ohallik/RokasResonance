@@ -20,7 +20,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from tkinter import filedialog
 
-from ui.theme import fs, muted_fg, fit_window
+from ui.theme import fs, muted_fg, fit_window, scroll_body
 
 
 def _next_school_year(current: str) -> str:
@@ -286,8 +286,11 @@ class NewSchoolYearWizard(ttk.Toplevel):
         ttk.Button(btns, text="✓ Finish — Start the New Year",
                    bootstyle=SUCCESS, command=self._finish).pack(side=RIGHT, padx=4)
 
-        body = ttk.Frame(self)
-        body.pack(fill=BOTH, expand=True, padx=18, pady=8)
+        # Scrolling, because this window grew.  A teacher with both programs
+        # now gets seven steps, and on a laptop the last of them ran off the
+        # bottom with no scrollbar and no sign there was anything below --
+        # including, on the elementary path, the schools panel itself.
+        body = scroll_body(self, padx=18, pady=8)
 
         def step(num, title, hint=""):
             ttk.Label(body, text=f"Step {num} — {title}",
@@ -339,10 +342,10 @@ class NewSchoolYearWizard(ttk.Toplevel):
         if self._elem_sites:
             names = ", ".join(x["name"].replace(" Elementary School", "")
                               for x in self._elem_sites)
-            nstep("Send your elementary inventories to the coordinator",
-                  "One folder holding, for every school you teach at, what you "
-                  "are currently holding and what is waiting on a repair. Six "
-                  "schools should not mean twelve exports and twelve filenames."
+            nstep("Before you finish: send off your elementary inventories",
+                  "One inventory file per school, to hand on to whoever takes "
+                  "that school next, plus a single list of everything awaiting "
+                  "repair across all of them for the district coordinator."
                   + "\n\nSchools: " + names)
             ttk.Button(body, text="📤 Export Every School's Inventory & Repairs…",
                        bootstyle=(SUCCESS, OUTLINE),
@@ -352,13 +355,12 @@ class NewSchoolYearWizard(ttk.Toplevel):
                                          foreground=muted_fg(), justify=LEFT)
             self._export_log.pack(anchor=W)
 
-            nstep("Your schools for the incoming year",
-                  "Staff often do not know in spring where they will be in "
-                  "the autumn, so this is here for whenever you do find out. "
-                  "Add the schools you are picking up, archive the ones you are "
-                  "handing on. Archiving keeps all their instruments, children "
-                  "and history, and a school can be restored later exactly as "
-                  "it was.")
+            nstep("Later, in the autumn: your schools for the incoming year",
+                  "This one can wait. Postings are often not settled until the "
+                  "new year starts, and this same panel is on Settings \u25b8 "
+                  "Schools whenever you do find out. Add the schools you are "
+                  "picking up, archive the ones you are handing on. Archived "
+                  "schools can be restored later as needed.")
             from ui.sites_view import SitesPanel
             self._sites_panel = SitesPanel(body, self.main_db)
             self._sites_panel.pack(fill=X, pady=(4, 2))

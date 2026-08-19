@@ -944,6 +944,34 @@ class Database:
                 + " WHERE id = ?", [v for _, v in sets] + [site_id])
             conn.commit()
 
+    def restore_site(self, site_id: int) -> dict:
+        """Bring a school back, with its instruments but NOT its old children.
+
+        A school comes back after a year or two away, and the children who were
+        in its 5th grade then are in secondary school now.  Carrying them
+        forward would hand the returning teacher a roster of people who left,
+        so the roster starts empty and the new class lists fill it.
+
+        The instruments stay, because a cupboard does not empty itself -- but
+        anything still checked out to one of those children is returned, or the
+        cupboard would look fuller on paper than it is on the shelf.
+        """
+        with self._connect() as conn:
+            conn.execute("UPDATE sites SET is_active = 1 WHERE id = ?", (site_id,))
+            returned = conn.execute(
+                "UPDATE checkouts SET date_returned = date('now') "
+                "WHERE date_returned IS NULL AND student_id IN "
+                "(SELECT id FROM students WHERE site_id = ?)", (site_id,)).rowcount
+            cleared = conn.execute(
+                "UPDATE students SET is_active = 0 WHERE site_id = ? AND is_active = 1",
+                (site_id,)).rowcount
+            instruments = conn.execute(
+                "SELECT COUNT(*) n FROM instruments WHERE site_id = ? AND is_active = 1",
+                (site_id,)).fetchone()["n"]
+            conn.commit()
+        return {"students_cleared": cleared, "checkouts_returned": returned,
+                "instruments": instruments}
+
     def archive_site(self, site_id: int):
         """Archive a school without deleting it.  An assignment ending does not
         make last year's checkout history untrue, and the handoff export still

@@ -173,12 +173,25 @@ class SitesPanel(ttk.Frame):
                                  title="Already active",
                                  parent=self.winfo_toplevel())
             return
-        self.db.update_site(sid, is_active=1)
+        res = self.db.restore_site(sid)
         self.reload()
-        Messagebox.show_info(
-            f"{site['name']} is back, with its instruments, children and "
-            f"history exactly as they were.",
-            title="School restored", parent=self.winfo_toplevel())
+        lines = [f"{site['name']} is back, with its {res['instruments']} "
+                 f"instrument(s)."]
+        if res["students_cleared"]:
+            lines.append(f"Its {res['students_cleared']} old 5th grader(s) are "
+                         f"archived rather than carried over: they have moved on "
+                         f"to secondary school since. Import this year's class "
+                         f"list from the school's own tab.")
+        if res["checkouts_returned"]:
+            lines.append(f"{res['checkouts_returned']} instrument(s) still "
+                         f"showing as checked out to them were returned to the "
+                         f"cupboard.")
+        lines.append("If somebody else looked after this school in the "
+                     "meantime, use Import Inventory From Another Teacher on "
+                     "its tab to take on the cupboard as they left it.")
+        Messagebox.show_info("\n\n".join(lines),
+                             title="School restored",
+                             parent=self.winfo_toplevel())
 
     def _archive(self):
         """Archiving keeps the history.  An assignment ending does not make last
