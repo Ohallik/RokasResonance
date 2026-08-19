@@ -1099,6 +1099,21 @@ class MainMenu(ttk.Frame):
         ImportWizard(self.winfo_toplevel(), self.db, self.base_dir, year)
         self._refresh_stats()
 
+    def after_onboarding(self):
+        """Redraw the hub once the setup wizard has finished.
+
+        The nav is built when the window opens, which is BEFORE setup runs on
+        a brand-new profile -- so an itinerant finished the wizard, named five
+        elementary schools, and was handed the secondary hub: Equipment, Sheet
+        Music, Uniforms and a Manage Students button, with none of their
+        schools on it.  The wizard answers the two questions the nav is built
+        from (what they teach, and where), so the nav has to be rebuilt after
+        it, exactly as it is after Settings.
+        """
+        self._refresh_stats()          # picks up the new program type
+        self._build_nav_buttons()
+        self._grow_to_fit()
+
     def _open_settings(self):
         from ui.settings_dialog import SettingsDialog
         dlg = SettingsDialog(self.winfo_toplevel(), self.base_dir,

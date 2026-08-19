@@ -569,8 +569,11 @@ def _maybe_onboard(app, menu, profile_name):
         return
     try:
         from ui.onboarding import OnboardingWizard
+        # after_onboarding, not _refresh_stats: setup decides what the hub
+        # looks like, so the numbers alone are not enough to redraw.
         OnboardingWizard(app, menu.base_dir, menu.db, profile_name,
-                         on_finish=getattr(menu, "_refresh_stats", None))
+                         on_finish=getattr(menu, "after_onboarding",
+                                           getattr(menu, "_refresh_stats", None)))
     except Exception:
         pass
 
