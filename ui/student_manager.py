@@ -48,6 +48,7 @@ from ui.ensembles import (
     BAND_ENSEMBLES, ORCHESTRA_ENSEMBLES, CHOIR_ENSEMBLES, PERIOD_OPTIONS,
     BAND_INSTRUMENTS, ORCHESTRA_INSTRUMENTS, CHOIR_PARTS,
     ensembles_for, instruments_for, instrument_sort_key, selectable_ensembles,
+    fifth_grade_instruments,
 )
 
 
@@ -104,12 +105,23 @@ class _ClassOptionsMixin:
     _class_options_include_empty = False
 
     def _class_options(self):
+        """The classes a picker should offer.
+
+        Scoped to the school when there is one.  Every screen that offers a
+        class list goes through here, which is why an elementary roster was
+        being offered "Advanced" in three different places at once: the list
+        was the configured SECONDARY one, and nothing ever said otherwise.
+        """
+        site_id = getattr(self, "site_id", None)
         try:
             return selectable_ensembles(
                 self.db, self._class_year(),
                 getattr(self, "program_type", "band"),
-                include_empty=self._class_options_include_empty)
+                include_empty=self._class_options_include_empty,
+                site_id=site_id)
         except Exception:
+            if site_id:
+                return []
             return list(ensembles_for(getattr(self, "program_type", "band")))
 
     def _class_display_options(self):
@@ -198,21 +210,27 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         ttk.Entry(filter_bar, textvariable=self._search_var, width=26).pack(side=LEFT)
         self._search_var.trace_add("write", lambda *_: self._apply_filter())
 
-        ttk.Label(filter_bar, text="Ensemble:").pack(side=LEFT, padx=(12, 4))
-        self._ensemble_filter_combo = ttk.Combobox(
-            filter_bar, textvariable=self._filter_ensemble_var,
-            state="readonly", width=18,
-            values=["All"] + self._class_display_options(),
-        )
-        self._ensemble_filter_combo.pack(side=LEFT)
-        self._filter_ensemble_var.trace_add("write", lambda *_: self._apply_filter())
+        # Neither filter belongs on a 5th grade roster.  The ensemble list is
+        # the configured SECONDARY classes, so it was offering to filter an
+        # elementary school by "Advanced"; and elementary has no class periods
+        # at all -- the group is a pullout on the specialist rotation.  Two
+        # sections and a search box is the whole of what is needed here.
+        if not self.site_id:
+            ttk.Label(filter_bar, text="Ensemble:").pack(side=LEFT, padx=(12, 4))
+            self._ensemble_filter_combo = ttk.Combobox(
+                filter_bar, textvariable=self._filter_ensemble_var,
+                state="readonly", width=18,
+                values=["All"] + self._class_display_options(),
+            )
+            self._ensemble_filter_combo.pack(side=LEFT)
+            self._filter_ensemble_var.trace_add("write", lambda *_: self._apply_filter())
 
-        ttk.Label(filter_bar, text="Period:").pack(side=LEFT, padx=(8, 4))
-        ttk.Combobox(
-            filter_bar, textvariable=self._filter_period_var,
-            state="readonly", width=5, values=["All"] + PERIOD_OPTIONS,
-        ).pack(side=LEFT)
-        self._filter_period_var.trace_add("write", lambda *_: self._apply_filter())
+            ttk.Label(filter_bar, text="Period:").pack(side=LEFT, padx=(8, 4))
+            ttk.Combobox(
+                filter_bar, textvariable=self._filter_period_var,
+                state="readonly", width=5, values=["All"] + PERIOD_OPTIONS,
+            ).pack(side=LEFT)
+            self._filter_period_var.trace_add("write", lambda *_: self._apply_filter())
 
         ttk.Checkbutton(
             filter_bar,
@@ -314,6 +332,11 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             ("P2 Email", "parent2_email"),
             ("Notes", "notes"),
         ]
+        if self.site_id:
+            # A 5th grader has no class period and no second instrument, so
+            # those two rows would sit blank on every child for the whole year.
+            fields = [f for f in fields
+                      if f[1] not in ("class_periods", "secondary_instrument")]
         for label, key in fields:
             r = ttk.Frame(outer)
             r.pack(fill=X, pady=1)
@@ -707,7 +730,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                 "then assign an ensemble, class period, and/or instrument to all of them at once.",
                 title="No Students Selected")
             return
-        dlg = _BulkAssignDialog(self.winfo_toplevel(), self.db, ids, self.program_type)
+        dlg = _BulkAssignDialog(self.winfo_toplevel(), self.db, ids,
+                                self.program_type, site_id=self.site_id)
         self.wait_window(dlg)
         # Ticks are cleared once an assignment lands.  Leaving them on invites
         # the next assignment to silently hit the same students again — that is
@@ -718,7 +742,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
 
     def _email_list(self):
         dlg = _EmailListDialog(self.winfo_toplevel(), self.db, self.program_type,
-                               self._year_var.get() or None)
+                               self._year_var.get() or None,
+                               site_id=self.site_id)
         self.wait_window(dlg)
 
     def _open_import_menu(self):
@@ -2120,6 +2145,12 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
         self.destroy()
 
 
+def _short_group(group: str) -> str:
+    """Tickbox text without the school name.  The window is already one school,
+    so boxes all starting "Clyde Hill Elementary School:" say nothing."""
+    return group.split(":", 1)[1].strip() if ":" in group else group
+
+
 # ── Bulk ensemble / period assignment dialog ──────────────────────────────────
 
 class _BulkAssignDialog(_ClassOptionsMixin, ttk.Toplevel):
@@ -2128,11 +2159,14 @@ class _BulkAssignDialog(_ClassOptionsMixin, ttk.Toplevel):
 
     _class_options_include_empty = True     # assigns a class, so offer empties
 
-    def __init__(self, parent, db, student_ids, program_type):
+    def __init__(self, parent, db, student_ids, program_type, site_id=None):
         super().__init__(parent)
         self.db = db
         self.student_ids = student_ids
         self.program_type = program_type
+        # Set when assigning within one school: its own sections, no class
+        # periods, no second instrument.
+        self.site_id = site_id
         self.applied = False    # caller clears the roster ticks only if we ran
         self._ens_vars = {}
         self._per_vars = {}
@@ -2269,13 +2303,18 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
     """Build a copy/paste-ready email list filtered by ensemble / period /
     instrument, for students, parents, or everyone."""
 
-    def __init__(self, parent, db, program_type, school_year):
+    def __init__(self, parent, db, program_type, school_year, site_id=None):
         super().__init__(parent)
         self.db = db
         self.program_type = program_type
         self.school_year = school_year
+        self.site_id = site_id
+        self._group_vars = {}
         self.base_dir = getattr(parent, "base_dir", "")
-        self._recip_var = tk.StringVar(value="students")
+        # A 10-year-old usually has no school email address, so writing to the
+        # children by default gives an empty list and a puzzled teacher.
+        # Families is the only sensible default for a 5th grade school.
+        self._recip_var = tk.StringVar(value="parents" if site_id else "students")
         self._ens_var = tk.StringVar(value="All")
         self._per_var = tk.StringVar(value="All")
         self._instr_var = tk.StringVar(value="All")
@@ -2308,24 +2347,47 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
             ttk.Radiobutton(rr, text=lbl, value=val, variable=self._recip_var,
                             bootstyle=INFO, command=self._generate).pack(side=LEFT, padx=4)
 
-        # Filters
-        ttk.Label(body, text="Ensemble:", font=("Segoe UI", 9, "bold")).grid(
-            row=1, column=0, sticky=W, pady=4)
-        ttk.Combobox(body, textvariable=self._ens_var, state="readonly", width=20,
-                     values=["All"] + self._class_display_options()).grid(
-            row=1, column=1, sticky=W, padx=4)
-        self._ens_var.trace_add("write", lambda *_: self._generate())
+        # Filters.  One school has two sections and maybe a choir -- a short,
+        # known list -- so they are tickboxes: "Section 1 and the choir" is one
+        # glance and two clicks, which a single-pick dropdown cannot express at
+        # all.  No period filter, because elementary has no periods.
+        if self.site_id:
+            ttk.Label(body, text="Groups:", font=("Segoe UI", 9, "bold")).grid(
+                row=1, column=0, sticky=NW, pady=4)
+            gbox = ttk.Frame(body)
+            gbox.grid(row=1, column=1, columnspan=3, sticky=W, padx=4)
+            groups = self._site_groups()
+            if not groups:
+                ttk.Label(gbox, text="Nobody is on this school's roster yet.",
+                          font=("Segoe UI", 8),
+                          foreground=muted_fg()).pack(anchor=W)
+            for i, g in enumerate(groups):
+                v = tk.BooleanVar(value=True)      # everyone, until narrowed
+                self._group_vars[g] = v
+                ttk.Checkbutton(gbox, text=_short_group(g), variable=v,
+                                bootstyle=INFO, command=self._generate
+                                ).grid(row=i // 2, column=i % 2, sticky=W,
+                                       padx=(0, 16), pady=1)
+        else:
+            ttk.Label(body, text="Ensemble:", font=("Segoe UI", 9, "bold")).grid(
+                row=1, column=0, sticky=W, pady=4)
+            ttk.Combobox(body, textvariable=self._ens_var, state="readonly", width=20,
+                         values=["All"] + self._class_display_options()).grid(
+                row=1, column=1, sticky=W, padx=4)
+            self._ens_var.trace_add("write", lambda *_: self._generate())
 
-        ttk.Label(body, text="Period:", font=("Segoe UI", 9, "bold")).grid(
-            row=1, column=2, sticky=W, pady=4, padx=(10, 0))
-        ttk.Combobox(body, textvariable=self._per_var, state="readonly", width=6,
-                     values=["All"] + PERIOD_OPTIONS).grid(row=1, column=3, sticky=W, padx=4)
-        self._per_var.trace_add("write", lambda *_: self._generate())
+            ttk.Label(body, text="Period:", font=("Segoe UI", 9, "bold")).grid(
+                row=1, column=2, sticky=W, pady=4, padx=(10, 0))
+            ttk.Combobox(body, textvariable=self._per_var, state="readonly", width=6,
+                         values=["All"] + PERIOD_OPTIONS).grid(row=1, column=3, sticky=W, padx=4)
+            self._per_var.trace_add("write", lambda *_: self._generate())
 
         ttk.Label(body, text="Instrument:", font=("Segoe UI", 9, "bold")).grid(
             row=2, column=0, sticky=W, pady=4)
+        _instr = (fifth_grade_instruments(self.program_type) if self.site_id
+                  else instruments_for(self.program_type))
         ttk.Combobox(body, textvariable=self._instr_var, state="readonly", width=20,
-                     values=["All"] + instruments_for(self.program_type)).grid(
+                     values=["All"] + _instr).grid(
             row=2, column=1, sticky=W, padx=4)
         self._instr_var.trace_add("write", lambda *_: self._generate())
 
@@ -2359,16 +2421,46 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
         ttk.Button(btn, text="✉ Open in Outlook", bootstyle=SUCCESS,
                    command=self._send).pack(side=RIGHT, padx=4)
 
+    def _site_groups(self):
+        """The groups this school's children are actually in.
+
+        Read off the roster rather than a configured list: a section nobody is
+        in cannot be emailed, and offering it only invites the question of why
+        that send reached nobody.
+        """
+        seen = []
+        for s in self.db.get_students_for_email(school_year=self.school_year,
+                                                site_id=self.site_id):
+            held = (s["ensembles"] if "ensembles" in s.keys() else "") or ""
+            for part in held.split(","):
+                p = part.strip()
+                if p and p not in seen:
+                    seen.append(p)
+        return sorted(seen)
+
     def _generate(self):
-        ens = self._ens_var.get()
-        per = self._per_var.get()
         instr = self._instr_var.get()
-        students = self.db.get_students_for_email(
-            school_year=self.school_year,
-            ensemble=None if ens == "All" else ens,
-            period=None if per == "All" else per,
-            instrument=None if instr == "All" else instr,
-        )
+        if self.site_id:
+            students = list(self.db.get_students_for_email(
+                school_year=self.school_year, site_id=self.site_id,
+                instrument=None if instr == "All" else instr))
+            wanted = {g.lower() for g, v in self._group_vars.items() if v.get()}
+            picked = []
+            for s in students:
+                held = (s["ensembles"] if "ensembles" in s.keys() else "") or ""
+                mine = {p.strip().lower() for p in held.split(",") if p.strip()}
+                if wanted & mine:
+                    picked.append(s)
+            students = picked
+        else:
+            ens = self._ens_var.get()
+            per = self._per_var.get()
+            students = self.db.get_students_for_email(
+                school_year=self.school_year,
+                ensemble=None if ens == "All" else ens,
+                period=None if per == "All" else per,
+                instrument=None if instr == "All" else instr,
+            )
 
         recip = self._recip_var.get()
         emails = []

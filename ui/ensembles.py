@@ -40,7 +40,10 @@ def _configured_labels(program_type, base_dir):
     except Exception:
         return None
 
-PERIOD_OPTIONS = ["1", "2", "3", "4", "5", "6", "7"]
+# Period 0 is before school.  Every jazz band in the district meets then,
+# whatever the program, so it is not a band-only option.  Elementary has no
+# periods at all and never sees this list.
+PERIOD_OPTIONS = ["0", "1", "2", "3", "4", "5", "6", "7"]
 
 BAND_INSTRUMENTS = [
     "Flute", "Oboe", "Bassoon", "Clarinet", "Bass Clarinet",
