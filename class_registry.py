@@ -74,6 +74,21 @@ TEMPLATES = {
         "percussion": False,
         "desc": "Blank agendas, no percussion rotation.",
     },
+    "guitar": {
+        "label": "MS/HS Guitar", "book": None, "class_type": None,
+        "percussion": False,
+        "desc": "Blank agendas, no rotation.",
+    },
+    "steel_drum": {
+        "label": "HS Steel Drum", "book": None, "class_type": None,
+        "percussion": False,
+        "desc": "Blank agendas, no rotation.",
+    },
+    # Guitar and steel drum shared one template until teachers pointed out they
+    # are plainly different courses.  The old key stays so a class already
+    # using it keeps its kind -- _sanitize falls back to "generic" for an
+    # unknown template, which would quietly demote somebody's class -- but it
+    # is out of TEMPLATE_ORDER, so it is never offered again.
     "guitar_steel": {
         "label": "MS/HS Guitar / Steel Drum", "book": None, "class_type": None,
         "percussion": False,
@@ -99,7 +114,7 @@ TEMPLATES = {
 # The order templates are offered in the Manage Classes / onboarding picker.
 TEMPLATE_ORDER = ["generic", "band_5", "orch_5",
                   "band_entry", "band_intermediate", "band_advanced",
-                  "orch_mshs", "choir_mshs", "guitar_steel",
+                  "orch_mshs", "choir_mshs", "guitar", "steel_drum",
                   "hs_band_winds", "hs_band_perc", "jazz"]
 
 

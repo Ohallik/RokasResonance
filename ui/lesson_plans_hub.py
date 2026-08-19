@@ -418,7 +418,9 @@ _TMPL_DISPLAY = {
     "band_advanced": "MS Band (Advanced)",
     "orch_mshs": "MS/HS Orchestra",
     "choir_mshs": "MS/HS Choir",
-    "guitar_steel": "MS/HS Guitar / Steel Drum",
+    "guitar": "MS/HS Guitar",
+    "steel_drum": "HS Steel Drum",
+    "guitar_steel": "MS/HS Guitar / Steel Drum",   # retired; see class_registry
     "hs_band_winds": "HS Band (Winds)",
     "hs_band_perc": "HS Band (Percussion)",
     "jazz": "Jazz",

@@ -54,18 +54,11 @@ def _money(v):
         return "$0.00"
 
 
-# Funding source → curricular vs extracurricular use.  Building/department money
-# is curricular (during-the-day classes); ASB & Boosters fund extracurriculars.
-FUNDING_CLASS = {
-    "Building": "Curricular",
-    "ASB": "Extracurricular",
-    "Boosters": "Extracurricular",
-    "Other": "Other",
-}
-
-
-def funding_class(src):
-    return FUNDING_CLASS.get(src or "", "Other")
+def funding_class(src, recorded=None):
+    """What goes in the Use column: what the row actually records, falling back
+    to what its funding source implies.  See Database.USES / DEFAULT_USE."""
+    from database import Database
+    return Database.use_for(src, recorded)
 
 
 class BudgetManager(ttk.Frame):
@@ -131,7 +124,7 @@ class BudgetManager(ttk.Frame):
         ttk.Label(fb, text="Use:").pack(side=LEFT, padx=(0, 4))
         self._use_var = tk.StringVar(value="All")
         ttk.Combobox(fb, textvariable=self._use_var, state="readonly", width=14,
-                     values=["All", "Curricular", "Extracurricular", "Other"]).pack(side=LEFT)
+                     values=["All"] + self.db.USES).pack(side=LEFT)
         self._use_var.trace_add("write", lambda *_: self._apply())
 
         # Content: transactions + summary side panel
@@ -206,7 +199,9 @@ class BudgetManager(ttk.Frame):
         if kind != "all":
             rows = [r for r in rows if (r.get("kind") or "") == kind]
         if use != "All":
-            rows = [r for r in rows if funding_class(r.get("funding_source")) == use]
+            rows = [r for r in rows
+                    if funding_class(r.get("funding_source"),
+                                     r.get("use_type")) == use]
         self._rows = rows
         self._fill(rows)
         self._build_summary(rows)
@@ -269,7 +264,7 @@ class BudgetManager(ttk.Frame):
                 r.get("vendor") or "",
                 r.get("invoice_no") or "",
                 r.get("funding_source") or "",
-                funding_class(r.get("funding_source")),
+                funding_class(r.get("funding_source"), r.get("use_type")),
                 r.get("student_name") or "",
                 amt,
             ))
@@ -313,13 +308,13 @@ class BudgetManager(ttk.Frame):
         # Curricular vs Extracurricular rollup
         by_use = {}
         for r in rows:
-            u = funding_class(r.get("funding_source"))
+            u = funding_class(r.get("funding_source"), r.get("use_type"))
             d = by_use.setdefault(u, {"expense": 0.0, "income": 0.0})
             d[r.get("kind") or "expense"] += float(r.get("amount") or 0)
         if by_use:
             ubox = ttk.Labelframe(self._summary_frame, text=" By Use ")
             ubox.pack(fill=X, pady=(4, 6))
-            for u in ("Curricular", "Extracurricular", "Other"):
+            for u in self.db.USES:
                 if u in by_use:
                     d = by_use[u]
                     line(ubox, u, f"net {_money(d['income'] - d['expense'])}", bold=True)
@@ -423,7 +418,7 @@ class BudgetManager(ttk.Frame):
                 t.get("description") or "",
                 t.get("vendor") or "", t.get("invoice_no") or "",
                 t.get("funding_source") or "",
-                funding_class(t.get("funding_source")),
+                funding_class(t.get("funding_source"), t.get("use_type")),
                 t.get("student_name") or "", float(t.get("amount") or 0),
             ], 1):
                 cell = ws.cell(row=r, column=c, value=val)
@@ -526,8 +521,29 @@ class _TxnDialog(ttk.Toplevel):
 
         field("Funding Source")
         self._src = tk.StringVar(value=(self.txn or {}).get("funding_source", "Building"))
-        ttk.Combobox(m, textvariable=self._src, state="readonly", width=16,
-                     values=self.db.FUNDING_SOURCES).pack(anchor=W)
+        src_cb = ttk.Combobox(m, textvariable=self._src, state="readonly", width=16,
+                              values=self.db.FUNDING_SOURCES)
+        src_cb.pack(anchor=W)
+
+        # Use follows the funding source until somebody says otherwise -- most
+        # rows never need touching, and the ones that do are the reason the
+        # column is worth having.
+        field("Use")
+        self._use = tk.StringVar(
+            value=funding_class((self.txn or {}).get("funding_source", "Building"),
+                                (self.txn or {}).get("use_type")))
+        ttk.Combobox(m, textvariable=self._use, state="readonly", width=16,
+                     values=self.db.USES).pack(anchor=W)
+        ttk.Label(m, text="Curricular is the school day, Extracurricular is "
+                          "outside it, Supplemental goes alongside a course "
+                          "(shirts, books, a festival trip).",
+                  font=("Segoe UI", 8), foreground="#888",
+                  wraplength=330, justify=LEFT).pack(anchor=W)
+        self._use_touched = False
+        self._use.trace_add("write", lambda *_: setattr(self, "_use_touched", True))
+        src_cb.bind("<<ComboboxSelected>>", lambda e: (
+            None if self._use_touched
+            else self._use.set(funding_class(self._src.get()))))
 
         # Optional paperwork trail: what a district business office asks for
         # months later when reconciling a purchase.
@@ -585,6 +601,7 @@ class _TxnDialog(ttk.Toplevel):
             "kind": self._kind.get(),
             "amount": amount,
             "funding_source": self._src.get().strip(),
+            "use_type": self._use.get().strip(),
             "student_id": sid,
             "vendor": self._vendor.get().strip(),
             "invoice_no": self._invoice.get().strip(),
@@ -986,7 +1003,7 @@ class _FeesDialog(ttk.Toplevel):
                    command=self._manage_types).pack(side=LEFT, padx=8)
 
         tb = ttk.Frame(self); tb.pack(fill=X, padx=12, pady=4)
-        ttk.Button(tb, text="➕ Add Students…", bootstyle=SUCCESS,
+        ttk.Button(tb, text="➕ Charge a Student…", bootstyle=SUCCESS,
                    command=self._add_students).pack(side=LEFT, padx=2)
         ttk.Button(tb, text="🎓 Add fee to a class…", bootstyle=(SUCCESS, OUTLINE),
                    command=self._add_class).pack(side=LEFT, padx=2)
@@ -1170,16 +1187,25 @@ class _FeesDialog(ttk.Toplevel):
                 "Paid as the student pays.", title="Duplicated", parent=self)
 
     def _add_students(self):
-        fee = self._fee_var.get()
-        if not fee:
-            Messagebox.show_warning("Add a fee type first.", title="No Fee", parent=self)
-            return
-        dlg = _StudentPickerDialog(self, self.db, self.program_type, self.school_year)
+        """Charge a fee to one student, or a few.
+
+        This used to require the fee to already exist and to already be the one
+        selected at the top of the window: charging a child for something new
+        meant Manage Fee Types, then back here, then change the dropdown, then
+        this.  The fee is chosen -- or created -- inside the dialog now.
+        """
+        dlg = _StudentPickerDialog(self, self.db, self.program_type,
+                                   self.school_year,
+                                   fee=self._fee_var.get())
         self.wait_window(dlg)
-        if dlg.chosen_ids:
-            amt = self._fee_amount()
+        if dlg.chosen_ids and dlg.chosen_fee:
             for sid in dlg.chosen_ids:
-                self.db.ensure_student_fee(sid, fee, self.school_year, amt)
+                self.db.ensure_student_fee(sid, dlg.chosen_fee, self.school_year,
+                                           dlg.chosen_amount)
+            # Land on the fee just charged, otherwise the window still shows
+            # whatever was selected before and the work looks like it vanished.
+            self._reload()
+            self._fee_var.set(dlg.chosen_fee)
             self._reload_list()
 
     def _add_class(self):
@@ -1329,17 +1355,25 @@ class _FeesDialog(ttk.Toplevel):
                   bootstyle=INFO).pack(anchor=W, padx=14, pady=(12, 4))
         add = ttk.Frame(win); add.pack(fill=X, padx=14)
         name = tk.StringVar(); amt = tk.StringVar()
-        ttk.Entry(add, textvariable=name, width=20).pack(side=LEFT)
+        # A fee is classified when it is created, not every time it is charged.
+        # A rental is curricular (no instrument, no class); a festival entry is
+        # extracurricular; a concert shirt is neither.
+        use = tk.StringVar(value="Curricular")
+        ttk.Entry(add, textvariable=name, width=18).pack(side=LEFT)
         ttk.Label(add, text="$").pack(side=LEFT, padx=(6, 0))
-        ttk.Entry(add, textvariable=amt, width=8).pack(side=LEFT, padx=(0, 4))
-        lst = tk.Listbox(win, height=8, width=40)
+        ttk.Entry(add, textvariable=amt, width=7).pack(side=LEFT, padx=(0, 4))
+        ttk.Combobox(add, textvariable=use, state="readonly", width=14,
+                     values=self.db.USES).pack(side=LEFT, padx=(0, 4))
+        lst = tk.Listbox(win, height=8, width=46)
         lst.pack(fill=BOTH, expand=True, padx=14, pady=6)
 
         def fill():
             lst.delete(0, END)
             self._types = self.db.get_fee_types()
             for t in self._types:
-                lst.insert(END, f"{t['name']}  —  {_money(t['default_amount'])}")
+                u = (t["use_type"] if "use_type" in t.keys() else "") or "Curricular"
+                lst.insert(END, f"{t['name']}  —  {_money(t['default_amount'])}"
+                                f"  —  {u}")
 
         def add_type():
             if name.get().strip():
@@ -1347,23 +1381,47 @@ class _FeesDialog(ttk.Toplevel):
                     a = float(amt.get() or 0)
                 except ValueError:
                     a = 0
-                self.db.add_fee_type(name.get().strip(), a)
-                name.set(""); amt.set(""); fill(); self._reload()
+                self.db.add_fee_type(name.get().strip(), a, use.get())
+                name.set(""); amt.set(""); use.set("Curricular")
+                fill(); self._reload()
 
         def del_type():
             sel = lst.curselection()
             if sel:
                 self.db.delete_fee_type(self._types[sel[0]]["id"]); fill(); self._reload()
 
+        def change_use():
+            """Reclassify the selected fee -- the answer changes as a program
+            changes, and retyping the fee to fix it would lose its history."""
+            sel = lst.curselection()
+            if not sel:
+                Messagebox.show_info("Pick a fee first.", title="No fee", parent=win)
+                return
+            t = self._types[sel[0]]
+            cur = (t["use_type"] if "use_type" in t.keys() else "") or "Curricular"
+            nxt = self.db.USES[(self.db.USES.index(cur) + 1) % len(self.db.USES)] \
+                if cur in self.db.USES else self.db.USES[0]
+            self.db.set_fee_type_use(t["id"], nxt)
+            fill()
+            lst.selection_set(sel[0])
+            self._reload()
+
         ttk.Button(add, text="Add", bootstyle=SUCCESS, command=add_type).pack(side=LEFT, padx=2)
+        ttk.Label(win, text="Use decides where a fee lands in the budget "
+                            "summary. Select one and press Change Use to "
+                            "reclassify it.",
+                  font=("Segoe UI", 8), foreground="#888",
+                  wraplength=390, justify=LEFT).pack(anchor=W, padx=14, pady=(4, 0))
         bb = ttk.Frame(win); bb.pack(fill=X, padx=14, pady=8)
         ttk.Button(bb, text="Close", bootstyle=(SECONDARY, OUTLINE),
                    command=win.destroy).pack(side=RIGHT, padx=4)
         ttk.Button(bb, text="Delete Selected", bootstyle=(DANGER, OUTLINE),
                    command=del_type).pack(side=RIGHT, padx=4)
+        ttk.Button(bb, text="Change Use", bootstyle=(SECONDARY, OUTLINE),
+                   command=change_use).pack(side=LEFT, padx=4)
         fill()
         from ui.theme import fit_window
-        fit_window(win, 380, 340)
+        fit_window(win, 460, 380)
 
     def _export(self):
         try:
@@ -1399,28 +1457,87 @@ class _FeesDialog(ttk.Toplevel):
             subprocess.Popen(["start", "", path], shell=True)
 
 
+_NEW_FEE = "➕ New fee type…"
+
+
 class _StudentPickerDialog(ttk.Toplevel):
-    """Tick students (optionally filtered by ensemble) to add to a fee."""
-    def __init__(self, parent, db, program_type, school_year):
+    """Charge a fee to a student.
+
+    Built around one child, because that is the common case -- a late joiner, a
+    replacement reed, a festival entry -- with the list underneath for the times
+    it is a handful.  Whole classes have their own button.
+    """
+    def __init__(self, parent, db, program_type, school_year, fee=""):
         super().__init__(parent)
         self.db = db
         self.base_dir = getattr(parent, "base_dir", "")
         self.program_type = program_type
         self.school_year = school_year
         self.chosen_ids = []
+        self.chosen_fee = ""
+        self.chosen_amount = 0.0
         self._checked = set()
         self._filter = tk.StringVar(value="All")
-        self.title("Add Students to Fee")
+        self._fee = tk.StringVar(value=fee)
+        self._amount = tk.StringVar()
+        self._student = tk.StringVar()
+        self.title("Charge a Fee")
         self.grab_set()
         self.lift()
         self._build()
+        self._reload_fees()
         self._reload()
         from ui.theme import fit_window
-        fit_window(self, 520, 520)
+        fit_window(self, 560, 600)
 
+    # ── what they are being charged ─────────────────────────────────────
     def _build(self):
-        bar = ttk.Frame(self); bar.pack(fill=X, padx=12, pady=(12, 4))
-        ttk.Label(bar, text="Ensemble filter:").pack(side=LEFT, padx=(0, 4))
+        top = ttk.Labelframe(self, text=" The fee ", padding=10)
+        top.pack(fill=X, padx=12, pady=(12, 4))
+        row = ttk.Frame(top); row.pack(fill=X)
+        ttk.Label(row, text="Fee:", font=("Segoe UI", 9, "bold")).pack(side=LEFT)
+        self._fee_cb = ttk.Combobox(row, textvariable=self._fee, state="readonly",
+                                    width=28)
+        self._fee_cb.pack(side=LEFT, padx=(4, 10))
+        self._fee_cb.bind("<<ComboboxSelected>>", lambda e: self._fee_chosen())
+        ttk.Label(row, text="Amount: $", font=("Segoe UI", 9, "bold")).pack(side=LEFT)
+        ttk.Entry(row, textvariable=self._amount, width=9).pack(side=LEFT)
+
+        # Creating the fee here is the whole point: a teacher who needs to
+        # charge for something new should not have to leave, define it, come
+        # back and find their place again.
+        self._new_box = ttk.Frame(top)
+        nb = ttk.Frame(self._new_box); nb.pack(fill=X, pady=(8, 0))
+        ttk.Label(nb, text="Name it:", font=("Segoe UI", 9, "bold")).pack(side=LEFT)
+        self._new_name = tk.StringVar()
+        ttk.Entry(nb, textvariable=self._new_name, width=24).pack(side=LEFT, padx=(4, 10))
+        ttk.Label(nb, text="Use:", font=("Segoe UI", 9, "bold")).pack(side=LEFT)
+        self._new_use = tk.StringVar(value="Curricular")
+        ttk.Combobox(nb, textvariable=self._new_use, state="readonly", width=14,
+                     values=self.db.USES).pack(side=LEFT, padx=(4, 0))
+        ttk.Label(self._new_box,
+                  text="Saved as one of your fee types, so next time it is "
+                       "already in the list. Use decides where it lands in the "
+                       "budget summary: an instrument rental is Curricular, a "
+                       "festival entry is Extracurricular, a concert shirt is "
+                       "Supplemental.",
+                  font=("Segoe UI", 8), foreground="#888",
+                  wraplength=470, justify=LEFT).pack(anchor=W, pady=(4, 0))
+
+        # ── who pays it ─────────────────────────────────────────────────
+        who = ttk.Labelframe(self, text=" Who pays it ", padding=10)
+        who.pack(fill=BOTH, expand=True, padx=12, pady=4)
+        pick = ttk.Frame(who); pick.pack(fill=X)
+        ttk.Label(pick, text="Student:", font=("Segoe UI", 9, "bold")).pack(side=LEFT)
+        self._student_cb = ttk.Combobox(pick, textvariable=self._student, width=32)
+        self._student_cb.pack(side=LEFT, padx=(4, 6))
+        self._student_cb.bind("<<ComboboxSelected>>", lambda e: self._add_one())
+        self._student_cb.bind("<Return>", lambda e: self._add_one())
+        ttk.Button(pick, text="Add", bootstyle=SUCCESS,
+                   command=self._add_one).pack(side=LEFT)
+
+        bar = ttk.Frame(who); bar.pack(fill=X, pady=(8, 4))
+        ttk.Label(bar, text="or pick from:").pack(side=LEFT, padx=(0, 4))
         ttk.Combobox(bar, textvariable=self._filter, state="readonly", width=28,
                      values=["All"] + all_class_options(
                          self.db, self.base_dir, self.program_type,
@@ -1429,7 +1546,7 @@ class _StudentPickerDialog(ttk.Toplevel):
         ttk.Button(bar, text="Select All", bootstyle=(SECONDARY, OUTLINE),
                    command=self._all).pack(side=RIGHT, padx=2)
 
-        frame = ttk.Frame(self); frame.pack(fill=BOTH, expand=True, padx=12, pady=6)
+        frame = ttk.Frame(who); frame.pack(fill=BOTH, expand=True, pady=6)
         sb = ttk.Scrollbar(frame, orient=VERTICAL)
         self.tree = ttk.Treeview(frame, columns=("chk", "name", "grade", "ens"),
                                  show="headings", yscrollcommand=sb.set, selectmode="browse")
@@ -1441,22 +1558,71 @@ class _StudentPickerDialog(ttk.Toplevel):
             self.tree.column(c, width=w, anchor=(CENTER if c == "chk" else W))
         self.tree.bind("<Button-1>", self._click, add="+")
 
+        self._count = ttk.Label(self, text="", font=("Segoe UI", 8),
+                                foreground="#666")
+        self._count.pack(anchor=W, padx=16)
         b = ttk.Frame(self); b.pack(fill=X, padx=14, pady=12)
         ttk.Button(b, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
                    command=self.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(b, text="Add Selected", bootstyle=SUCCESS,
+        ttk.Button(b, text="Charge It", bootstyle=SUCCESS,
                    command=self._ok).pack(side=RIGHT, padx=4)
+
+    def _reload_fees(self):
+        """The fee list, with the option to make a new one at the bottom."""
+        self._types = {t["name"]: t for t in self.db.get_fee_types()}
+        names = sorted(self._types)
+        self._fee_cb["values"] = names + [_NEW_FEE]
+        if self._fee.get() not in names:
+            self._fee.set(names[0] if names else _NEW_FEE)
+        self._fee_chosen()
+
+    def _fee_chosen(self):
+        """Show the naming fields for a new fee; fill the amount for a known one."""
+        if self._fee.get() == _NEW_FEE:
+            self._new_box.pack(fill=X)
+            self._amount.set("")
+            return
+        self._new_box.pack_forget()
+        t = self._types.get(self._fee.get())
+        if t is not None:
+            self._amount.set(f"{float(t['default_amount'] or 0):.2f}")
+
+    def _students_now(self):
+        return list(self.db.get_all_students(school_year=self.school_year))
+
+    def _add_one(self):
+        """Tick the student named in the box.  The list below is the record of
+        who will be charged, so one path leads to one place."""
+        want = (self._student.get() or "").strip().lower()
+        if not want:
+            return
+        for s in self._students_now():
+            if display_last_first(s).lower() == want:
+                self._checked.add(s["id"])
+                self._student.set("")
+                self._reload()
+                self.tree.see(str(s["id"]))
+                return
+        Messagebox.show_info(
+            f"No student called “{self._student.get().strip()}” on this year's "
+            f"roster. Pick one from the list.",
+            title="Not found", parent=self)
 
     def _reload(self):
         self.tree.delete(*self.tree.get_children())
         filt = self._filter.get()
-        for s in self.db.get_all_students(school_year=self.school_year):
+        names = []
+        for s in self._students_now():
+            names.append(display_last_first(s))
             ens = _FeesDialog.db_sval(s, "ensembles")
             if filt != "All" and filt not in [x.strip() for x in ens.split(",")]:
                 continue
             self.tree.insert("", "end", iid=str(s["id"]),
                              values=("☑" if s["id"] in self._checked else "☐",
                                      display_last_first(s), s["grade"] or "", ens))
+        self._student_cb["values"] = sorted(names)
+        if getattr(self, "_count", None) is not None:
+            self._count.config(text=f"{len(self._checked)} student(s) ticked")
 
     def _click(self, e):
         if self.tree.identify("region", e.x, e.y) != "cell" or self.tree.identify_column(e.x) != "#1":
@@ -1467,11 +1633,41 @@ class _StudentPickerDialog(ttk.Toplevel):
         sid = int(iid)
         self._checked.symmetric_difference_update({sid})
         self.tree.set(iid, "chk", "☑" if sid in self._checked else "☐")
+        self._count.config(text=f"{len(self._checked)} student(s) ticked")
 
     def _all(self):
         for iid in self.tree.get_children():
             self._checked.add(int(iid)); self.tree.set(iid, "chk", "☑")
+        self._count.config(text=f"{len(self._checked)} student(s) ticked")
 
     def _ok(self):
+        if not self._checked:
+            Messagebox.show_warning("Pick a student first.", title="Nobody chosen",
+                                    parent=self)
+            return
+        fee = self._fee.get()
+        if fee == _NEW_FEE:
+            fee = self._new_name.get().strip()
+            if not fee:
+                Messagebox.show_warning("Give the new fee a name.",
+                                        title="Name needed", parent=self)
+                return
+            if fee in self._types:
+                Messagebox.show_warning(f"“{fee}” is already one of your fees.",
+                                        title="Already there", parent=self)
+                return
+        try:
+            amount = float(str(self._amount.get()).replace("$", "").replace(",", "")
+                           or 0)
+        except ValueError:
+            Messagebox.show_warning("Amount must be a number.", title="Invalid",
+                                    parent=self)
+            return
+        if self._fee.get() == _NEW_FEE:
+            # Saved as a fee type, so the next child who owes it is two clicks
+            # rather than a second round of typing.
+            self.db.add_fee_type(fee, amount, self._new_use.get())
+        self.chosen_fee = fee
+        self.chosen_amount = amount
         self.chosen_ids = list(self._checked)
         self.destroy()

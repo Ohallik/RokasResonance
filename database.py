@@ -654,6 +654,26 @@ class Database:
                 conn.commit()
             except Exception:
                 pass
+            # Use ("Curricular" / "Extracurricular" / "Supplemental" / "Other")
+            # on a transaction, and on a fee type so a fee is classified once
+            # when it is created rather than every time it is charged.
+            for table, col, decl in (("budget_transactions", "use_type", "TEXT"),
+                                     ("fee_types", "use_type",
+                                      "TEXT DEFAULT 'Curricular'")):
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+                    conn.commit()
+                except Exception:
+                    pass
+            # The two BSD rentals are curricular: a child cannot be in the
+            # class without an instrument.  Only fills blanks.
+            try:
+                conn.execute("UPDATE fee_types SET use_type = 'Curricular' "
+                             "WHERE use_type IS NULL OR TRIM(use_type) = ''")
+                conn.commit()
+            except Exception:
+                pass
+
             # Migrate: student ensemble / class-period / instrument fields.
             # Stored as comma-separated strings (e.g. "Advanced Band,Jazz 1"
             # and "1,3,5") so a student can belong to several at once.
@@ -3026,7 +3046,34 @@ class Database:
     # district-run festivals a high school enters, above all -- and without it
     # those landed under "Other" alongside everything else nobody could
     # categorise.
-    FUNDING_SOURCES = ["Building", "District", "ASB", "Boosters", "Other"]
+    # Where the money came FROM.  "Fee" is money a family paid, which is most
+    # of the income in a school music budget and used to land in "Other" --
+    # a whole column of rows saying nothing.
+    FUNDING_SOURCES = ["Building", "District", "ASB", "Fee", "Boosters", "Other"]
+
+    # What the money was FOR.  Two options could not describe a school music
+    # program: an instrument rental fee is curricular (a child cannot take the
+    # class without one) and a Solo & Ensemble entry is extracurricular, but a
+    # concert shirt or a method book is neither -- it goes alongside the
+    # course rather than being the course or an activity outside it.
+    USES = ["Curricular", "Extracurricular", "Supplemental", "Other"]
+
+    # The use a funding source implies when nothing more specific is recorded.
+    # Building and district money pays for the school day; ASB and boosters
+    # pay for what happens around it.  Fee money is deliberately Supplemental
+    # rather than guessed -- the fee type itself says which it really is.
+    DEFAULT_USE = {"Building": "Curricular", "District": "Curricular",
+                   "ASB": "Extracurricular", "Boosters": "Extracurricular",
+                   "Fee": "Supplemental", "Other": "Other"}
+
+    @classmethod
+    def use_for(cls, funding_source, recorded=None):
+        """What to show in the Use column: what was recorded, else what the
+        funding source implies."""
+        recorded = (recorded or "").strip()
+        if recorded in cls.USES:
+            return recorded
+        return cls.DEFAULT_USE.get((funding_source or "").strip(), "Other")
 
     @staticmethod
     def school_year_bounds(school_year: str):
@@ -3068,7 +3115,8 @@ class Database:
 
     def add_budget_transaction(self, data: dict) -> int:
         cols = ["txn_date", "description", "category", "kind", "amount",
-                "funding_source", "student_id", "invoice_no", "vendor", "notes"]
+                "funding_source", "use_type", "student_id", "invoice_no",
+                "vendor", "notes"]
         vals = [data.get(c) for c in cols]
         with self._connect() as conn:
             cur = conn.execute(
@@ -3078,7 +3126,8 @@ class Database:
 
     def update_budget_transaction(self, txn_id: int, data: dict):
         cols = ["txn_date", "description", "category", "kind", "amount",
-                "funding_source", "student_id", "invoice_no", "vendor", "notes"]
+                "funding_source", "use_type", "student_id", "invoice_no",
+                "vendor", "notes"]
         set_clause = ", ".join(f"{c}=?" for c in cols)
         with self._connect() as conn:
             conn.execute(f"UPDATE budget_transactions SET {set_clause} WHERE id=?",
@@ -3131,8 +3180,19 @@ class Database:
                 "description": f"{rp['inst'] or ''} — {rp['description'] or ''}".strip(" —"),
                 "category": "Instrument Repair", "kind": "expense",
                 "amount": float(rp["act_cost"] or 0), "funding_source": "Building",
+                "use_type": "Curricular",
                 "student_id": None, "student_name": "", "notes": "",
             })
+        # A fee is classified once, on its fee type, rather than every time it
+        # is charged -- so the Use column can say Curricular for a rental and
+        # Extracurricular for a festival entry without asking again.
+        fee_use = {}
+        try:
+            for t in self.get_fee_types():
+                fee_use[t["name"]] = (t["use_type"] if "use_type" in t.keys()
+                                      else None) or "Curricular"
+        except Exception:
+            pass
         for f in fees:
             ftype = f["fee_type"] or "Student Fee"
             cat = ("Instrument Rental Fees"
@@ -3148,7 +3208,8 @@ class Database:
                 # is, so that is all this says.
                 "description": _fee_description(ftype),
                 "category": cat, "kind": "income",
-                "amount": float(f["amount"] or 0), "funding_source": "Other",
+                "amount": float(f["amount"] or 0), "funding_source": "Fee",
+                "use_type": fee_use.get(ftype, "Curricular"),
                 "student_id": f["student_id"], "student_name": who, "notes": "",
             })
         rows.sort(key=lambda r: r.get("txn_date") or "", reverse=True)
@@ -3230,24 +3291,38 @@ class Database:
         with self._connect() as conn:
             return conn.execute("SELECT * FROM fee_types ORDER BY name").fetchall()
 
-    def add_fee_type(self, name: str, default_amount: float = 0) -> int:
+    def add_fee_type(self, name: str, default_amount: float = 0,
+                     use_type: str = "Curricular") -> int:
         with self._connect() as conn:
             cur = conn.execute(
-                "INSERT INTO fee_types (name, default_amount) VALUES (?, ?)",
-                (name, default_amount))
+                "INSERT INTO fee_types (name, default_amount, use_type) "
+                "VALUES (?, ?, ?)", (name, default_amount, use_type))
             return cur.lastrowid
 
-    def ensure_fee_type(self, name: str, default_amount: float = 0):
-        """Create the fee type if absent; update its default amount if present."""
+    def ensure_fee_type(self, name: str, default_amount: float = 0,
+                        use_type: str = None):
+        """Create the fee type if absent; update its default amount if present.
+        The use is only written when one is given, so an existing fee keeps the
+        classification the teacher gave it."""
         with self._connect() as conn:
             row = conn.execute("SELECT id FROM fee_types WHERE name=?", (name,)).fetchone()
             if row:
                 conn.execute("UPDATE fee_types SET default_amount=? WHERE id=?",
                              (default_amount, row["id"]))
+                if use_type:
+                    conn.execute("UPDATE fee_types SET use_type=? WHERE id=?",
+                                 (use_type, row["id"]))
                 return row["id"]
-            cur = conn.execute("INSERT INTO fee_types (name, default_amount) VALUES (?, ?)",
-                               (name, default_amount))
+            cur = conn.execute(
+                "INSERT INTO fee_types (name, default_amount, use_type) "
+                "VALUES (?, ?, ?)", (name, default_amount, use_type or "Curricular"))
             return cur.lastrowid
+
+    def set_fee_type_use(self, fee_id: int, use_type: str):
+        with self._connect() as conn:
+            conn.execute("UPDATE fee_types SET use_type=? WHERE id=?",
+                         (use_type, fee_id))
+            conn.commit()
 
     def delete_fee_type(self, fee_id: int):
         with self._connect() as conn:
