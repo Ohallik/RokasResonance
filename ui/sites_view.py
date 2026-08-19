@@ -336,16 +336,24 @@ class SiteDialog(ttk.Toplevel):
         fields = dict(name=name, level=self._level.get(), program=program,
                       charges_fees=1 if self._fees.get() else 0,
                       choir_default=1 if (elementary and self._choir.get()) else 0)
+        # One name, one school -- on the way in and on a rename alike.  Names
+        # are how a school is recognized: add_site matches on the name to tell
+        # "add this school" from "I already have it", and two identical rows in
+        # the list are two rows a teacher cannot tell apart.
+        clash = [dict(s) for s in self.db.get_sites(include_inactive=True)
+                 if (dict(s)["name"] or "").strip().lower() == name.lower()
+                 and dict(s)["id"] != self.site_id]
+        if clash:
+            Messagebox.show_warning(
+                f"{name} is already on your list."
+                + ("\n\nTick Show archived to find it and Restore it, rather "
+                   "than giving this one the same name."
+                   if not clash[0]["is_active"] else ""),
+                title="Already added", parent=self)
+            return
         if self.site_id:
             self.db.update_site(self.site_id, **fields)
         else:
-            existing = {(dict(s)["name"] or "").strip().lower()
-                        for s in self.db.get_sites(include_inactive=True)}
-            if name.lower() in existing:
-                Messagebox.show_warning(
-                    f"{name} is already on your list.",
-                    title="Already added", parent=self)
-                return
             self.db.add_site(name, fields["level"], program, self._fees.get(),
                              choir_default=bool(fields["choir_default"]))
         self.destroy()

@@ -80,6 +80,10 @@ def save_settings(base_dir: str, settings: dict):
 
 
 class SettingsDialog(ttk.Toplevel):
+    # Set from settings on the way in; see _save's rename guard.  A
+    # default here means a load that fell over cannot rename anything.
+    _school_name_at_open = ""
+
     def __init__(self, parent, base_dir: str, app_dir: str = None, db=None):
         super().__init__(parent)
         self.base_dir = base_dir
@@ -252,7 +256,9 @@ class SettingsDialog(ttk.Toplevel):
         # home school -- six schools and none of them the main one -- and the
         # loan form takes its school from the instrument being lent, so there
         # is nothing left for a default to do.
-        self._school_box = ttk.Frame(outer)
+        self._school_slot = ttk.Frame(outer)
+        self._school_slot.pack(fill=X)
+        self._school_box = ttk.Frame(self._school_slot)
         self._school_box.pack(fill=X)
         for label, attr in [
             ("School District", "_school_district_var"),
@@ -266,7 +272,7 @@ class SettingsDialog(ttk.Toplevel):
                 anchor=W, pady=(2, 10))
 
         self._elem_hint = ttk.Label(
-            outer,
+            self._school_slot,
             text="Elementary Only: your schools are listed on the Schools tab, "
                  "and each one keeps its own instruments and children. There is "
                  "no home school to set here.",
@@ -767,6 +773,9 @@ class SettingsDialog(ttk.Toplevel):
         self._program_type_changed()
         self._school_district_var.set(teacher.get("school_district", ""))
         self._school_name_var.set(teacher.get("school_name", ""))
+        # What the school field said on the way in.  _save compares against
+        # this to tell "I renamed my school" from "I changed schools".
+        self._school_name_at_open = teacher.get("school_name", "")
         self._display_name_var.set(teacher.get("display_name", ""))
         self._email_var.set(teacher.get("email", ""))
         ext_path = teacher.get("external_db_path", "")
@@ -868,16 +877,29 @@ class SettingsDialog(ttk.Toplevel):
                                   parent=self)
             return
 
-        # A teacher with one school should not have to rename it twice.  The
-        # site was created from this field in the first place, so renaming the
-        # school here renames it there.  With several schools there is no
-        # single one to rename, and the Schools tab is where they are edited.
+        # A teacher with one school should not have to rename it twice, so
+        # editing the name in this field renames the school it came from.
+        #
+        # It has to be certain it is renaming the SAME school, though.  The
+        # first version fired whenever there happened to be exactly one active
+        # school whose name differed from this field -- which is also what you
+        # get after archiving your old school and adding a new one on the
+        # Schools tab in the same visit.  This field was then simply stale, and
+        # saving quietly renamed the new school to the old one's name.  The
+        # school vanished from the list under a name that was not its own.
+        #
+        # So: rename only when the field itself was edited here, and only when
+        # the single school still carries the value it had when the window
+        # opened.  Anything else means the school changed, not its name.
         try:
             if self.db is not None:
-                sites = [dict(x) for x in self.db.get_sites()]
+                was = (self._school_name_at_open or "").strip()
                 new_name = self._settings["teacher"].get("school_name", "").strip()
-                if len(sites) == 1 and new_name and sites[0]["name"] != new_name:
-                    self.db.update_site(sites[0]["id"], name=new_name)
+                if was and new_name and new_name != was:
+                    sites = [dict(x) for x in self.db.get_sites()]
+                    if (len(sites) == 1
+                            and (sites[0]["name"] or "").strip() == was):
+                        self.db.update_site(sites[0]["id"], name=new_name)
         except Exception:
             pass
 

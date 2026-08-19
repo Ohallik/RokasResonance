@@ -134,7 +134,8 @@ def import_students(db, csv_source, ensemble_label, period, school_year,
             "total": len(studs)}
 
 
-def import_students_sectioned(db, csv_source, section_to_class, period, school_year):
+def import_students_sectioned(db, csv_source, section_to_class, period,
+                              school_year, site_id=None):
     """Import a Synergy CSV that contains MORE THAN ONE class section, routing
     each student to the class mapped from their Section.
 
@@ -142,10 +143,24 @@ def import_students_sectioned(db, csv_source, section_to_class, period, school_y
     a blank/None label is skipped (e.g. the co-director's section you don't want
     to pull in).  A student appearing in several mapped sections is tagged with
     all of them.  Dedups across the run by district Student ID, merging the
-    ensembles/periods onto the existing record rather than duplicating."""
+    ensembles/periods onto the existing record rather than duplicating.
+
+    ``site_id`` says which school these children are at, for the 5th grade
+    case where one export holds both of a school's sections.  It carries the
+    same two rules as ``import_students``: a school whose choir is the whole
+    year group puts everyone in it, and a child who turns up here loses the
+    sections they held at whatever school they were at before."""
     studs = synergy_import.parse_synergy_students(csv_source)
     existing = {s["student_id"]: s for s in db.get_all_students(school_year)
                 if s["student_id"]}
+    choir_label = site_name = None
+    if site_id:
+        site = db.get_site(site_id)
+        if site:
+            site_name = dict(site)["name"]
+            if dict(site).get("choir_default"):
+                from ui.ensembles import choir_ensemble
+                choir_label = choir_ensemble(site_name)
     per = str(period) if period else None
     added = updated = skipped = 0
     per_class = {}
@@ -158,16 +173,35 @@ def import_students_sectioned(db, csv_source, section_to_class, period, school_y
         if not labels:
             skipped += 1
             continue
+        if choir_label and choir_label not in labels:
+            labels.append(choir_label)
         prior = existing.get(s.get("student_id"))
         if prior:
             merged = dict(prior)
             ens = prior.get("ensembles")
+            if site_name:
+                # One section per school, so arriving on this list means the
+                # child moved section rather than joined a second one.
+                ens = _drop_site_classes(ens, site_name, sections_only=True)
             for lab in labels:
                 ens = _merge_csv(ens, lab)
             merged["ensembles"] = ens
             merged["class_periods"] = _merge_csv(prior.get("class_periods"), per or "")
             merged["provisional"] = 0     # official roster confirms an incoming student
+            prior_site = prior["site_id"] if "site_id" in prior.keys() else None
+            transferred = bool(site_id and prior_site and prior_site != site_id)
+            if transferred:
+                old_site = db.get_site(prior_site)
+                if old_site:
+                    merged["ensembles"] = _drop_site_classes(
+                        merged["ensembles"], dict(old_site)["name"])
             db.update_student(prior["id"], merged)
+            # site_id is deliberately absent from update_student's column list,
+            # so the school is set separately -- same as import_students.
+            if site_id and prior_site != site_id:
+                db.set_student_site(prior["id"], site_id)
+            if site_id:
+                merged["site_id"] = site_id
             merged["id"] = prior["id"]
             existing[s["student_id"]] = merged
             updated += 1
@@ -176,6 +210,7 @@ def import_students_sectioned(db, csv_source, section_to_class, period, school_y
             rec["school_year"] = school_year
             rec["ensembles"] = ", ".join(labels)
             rec["class_periods"] = per
+            rec["site_id"] = site_id
             new_id = db.add_student(rec)
             rec["id"] = new_id
             existing[s["student_id"]] = rec

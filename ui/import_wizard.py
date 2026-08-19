@@ -35,6 +35,17 @@ class ImportWizard(ttk.Toplevel):
         import class_registry
         program = self._program_type()
         self._classes = class_registry.load_classes(base_dir, program)
+        # An elementary profile has no classes and no periods: it has schools,
+        # and two sections at each.  The roster rows below are built from
+        # whichever of those two shapes applies.
+        self._elem_sites = []
+        if program == "elementary":
+            try:
+                from ui.fifth_grade_view import elementary_sites
+                self._elem_sites = elementary_sites(main_db)
+            except Exception:
+                self._elem_sites = []
+        self._elementary = bool(self._elem_sites)
 
         hdr = ttk.Frame(self, bootstyle=PRIMARY)
         hdr.pack(fill=X)
@@ -129,41 +140,63 @@ class ImportWizard(ttk.Toplevel):
     def _build_rosters(self, parent):
         box = ttk.Labelframe(parent, text=" 2. Class rosters (Synergy) ", padding=10)
         box.pack(fill=X, pady=(0, 10))
-        ttk.Label(box, text="Your classes are listed below (from the setup you just "
-                            "did). Export each one from Synergy as a CSV, then Browse "
-                            "to attach it and pick its period. Skip any you don't have "
-                            "yet, or use “Add class list” for anything extra. A student "
-                            "in two of your classes is merged, not duplicated.",
+        if self._elementary:
+            blurb = ("One CSV per section. Export each from Synergy, attach it "
+                     "here, and say which school and section it is. A child who "
+                     "turns up on a second list is moved, not duplicated.")
+        else:
+            blurb = ("Your classes are listed below (from the setup you just "
+                     "did). Export each one from Synergy as a CSV, then Browse "
+                     "to attach it and pick its period. Skip any you don't have "
+                     "yet, or use “Add class list” for anything extra. A "
+                     "student in two of your classes is merged, not duplicated.")
+        ttk.Label(box, text=blurb,
                   font=("Segoe UI", 9), wraplength=640, justify=LEFT).pack(anchor=W)
         cols = ttk.Frame(box)
         cols.pack(fill=X, pady=(6, 2))
         ttk.Label(cols, text="CSV file", font=("Segoe UI", 9, "bold"),
                   width=40).pack(side=LEFT)
-        ttk.Label(cols, text="Class", font=("Segoe UI", 9, "bold"),
-                  width=22).pack(side=LEFT)
-        ttk.Label(cols, text="Period", font=("Segoe UI", 9, "bold")).pack(side=LEFT)
+        ttk.Label(cols, text="School" if self._elementary else "Class",
+                  font=("Segoe UI", 9, "bold"), width=22).pack(side=LEFT)
+        ttk.Label(cols, text="Section" if self._elementary else "Period",
+                  font=("Segoe UI", 9, "bold")).pack(side=LEFT)
         self._roster_frame = ttk.Frame(box)
         self._roster_frame.pack(fill=X)
         self._rosters = []
-        # One row per class the teacher entered during setup, so they just attach
-        # a CSV to each instead of re-typing their class list.
-        if self._classes:
+        # One row per thing the teacher will actually attach a file to: a class
+        # at secondary, a school at elementary.  Either way they attach files
+        # rather than re-typing what they already told the setup wizard.
+        if self._elementary:
+            for site in self._elem_sites:
+                self._add_roster(site=site)
+        elif self._classes:
             for c in self._classes:
                 self._add_roster(preset=c["label"])
         else:
             self._add_roster()
-        ttk.Button(box, text="➕ Add class list", bootstyle=(SUCCESS, OUTLINE),
-                   command=lambda: self._add_roster()).pack(anchor=W, pady=(6, 0))
+        ttk.Button(box,
+                   text="➕ Add another section" if self._elementary
+                        else "➕ Add class list",
+                   bootstyle=(SUCCESS, OUTLINE),
+                   command=lambda: self._add_roster(
+                       site=self._elem_sites[0] if self._elementary else None)
+                   ).pack(anchor=W, pady=(6, 0))
 
-    def _add_roster(self, preset=None):
+    def _add_roster(self, preset=None, site=None):
         row = ttk.Frame(self._roster_frame)
         row.pack(fill=X, pady=2)
         path = tk.StringVar()
-        default_cls = preset or (self._classes[0]["label"] if self._classes else "")
+        if self._elementary:
+            site = site or self._elem_sites[0]
+            default_cls = site["name"]
+        else:
+            default_cls = preset or (self._classes[0]["label"]
+                                     if self._classes else "")
         cls = tk.StringVar(value=default_cls)
         per = tk.StringVar(value="1")
         rec = {"path": path, "cls": cls, "per": per, "row": row,
-               "sections": [], "section_map": None}
+               "sections": [], "section_map": None,
+               "site": site if self._elementary else None}
         ent = ttk.Entry(row, textvariable=path, width=26)
         ent.pack(side=LEFT)
 
@@ -190,11 +223,29 @@ class ImportWizard(ttk.Toplevel):
                 rec["cls_cb"].config(state="readonly")
         ttk.Button(row, text="…", width=3, bootstyle=(SECONDARY, OUTLINE),
                    command=browse).pack(side=LEFT, padx=(2, 6))
-        rec["cls_cb"] = ttk.Combobox(row, textvariable=cls, state="readonly",
-                                     width=18, values=[c["label"] for c in self._classes])
-        rec["cls_cb"].pack(side=LEFT)
-        ttk.Combobox(row, textvariable=per, state="readonly", width=5,
-                     values=["(all)"] + PERIOD_OPTIONS).pack(side=LEFT, padx=(6, 0))
+        if self._elementary:
+            # A school and one of its two sections.  There are no class periods
+            # at elementary -- the sections run back to back in the same room --
+            # so offering one would be offering a number that means nothing.
+            rec["cls_cb"] = ttk.Combobox(
+                row, textvariable=cls, state="readonly", width=18,
+                values=[x["name"] for x in self._elem_sites])
+            rec["cls_cb"].pack(side=LEFT)
+            sec_cb = ttk.Combobox(row, textvariable=per, state="readonly",
+                                  width=10)
+            sec_cb.pack(side=LEFT, padx=(6, 0))
+            rec["sec_cb"] = sec_cb
+            self._fill_sections(rec)
+            rec["cls_cb"].bind(
+                "<<ComboboxSelected>>",
+                lambda e, r=rec: self._school_changed(r))
+        else:
+            rec["cls_cb"] = ttk.Combobox(row, textvariable=cls, state="readonly",
+                                         width=18,
+                                         values=[c["label"] for c in self._classes])
+            rec["cls_cb"].pack(side=LEFT)
+            ttk.Combobox(row, textvariable=per, state="readonly", width=5,
+                         values=["(all)"] + PERIOD_OPTIONS).pack(side=LEFT, padx=(6, 0))
         rec["status"] = ttk.Label(row, text="", font=("Segoe UI", fs(8)),
                                   foreground=muted_fg())
         rec["status"].pack(side=LEFT, padx=(6, 0))
@@ -205,6 +256,32 @@ class ImportWizard(ttk.Toplevel):
         ttk.Button(row, text="✕", width=2, bootstyle=(DANGER, OUTLINE, LINK),
                    command=remove).pack(side=RIGHT, padx=(6, 0))
         self._rosters.append(rec)
+
+    def _fill_sections(self, rec):
+        """The sections on offer for whichever school this row is set to."""
+        from ui.ensembles import site_sections
+        site = rec["site"] or {}
+        opts = [x.split(": ", 1)[-1] for x in site_sections(site.get("name", ""))]
+        rec["sec_cb"]["values"] = opts
+        if rec["per"].get() not in opts:
+            rec["per"].set(opts[0] if opts else "")
+
+    def _school_changed(self, rec):
+        """Point the row at the school just chosen, and re-offer its sections."""
+        name = rec["cls"].get()
+        for site in self._elem_sites:
+            if site["name"] == name:
+                rec["site"] = site
+                break
+        self._fill_sections(rec)
+
+    def _elem_label(self, rec):
+        """What a 5th grade class list is tagged with: the school's own section,
+        e.g. "Clyde Hill Elementary School: Section 1".  Naming it after the
+        school is what lets the roster tell one school's Section 1 from
+        another's -- there are up to six of each."""
+        site = rec["site"] or {}
+        return f"{site.get('name', '')}: {rec['per'].get()}".strip()
 
     def _own_name(self):
         """The current teacher's name (lowercased) for matching the CSV's Teacher
@@ -250,9 +327,14 @@ class ImportWizard(ttk.Toplevel):
             "<MouseWheel>", lambda ev: cv.yview_scroll(int(-ev.delta / 120), "units")))
         cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
 
-        opts = ["— skip —"] + [c["label"] for c in self._classes]
+        if self._elementary:
+            from ui.ensembles import site_sections
+            opts = ["— skip —"] + site_sections((rec["site"] or {}).get("name", ""))
+            preset = self._elem_label(rec)
+        else:
+            opts = ["— skip —"] + [c["label"] for c in self._classes]
+            preset = rec["cls"].get()
         own = self._own_name()
-        preset = rec["cls"].get()
         pickers = {}
         for s in secs:
             r = ttk.Frame(body)
@@ -385,6 +467,27 @@ class ImportWizard(ttk.Toplevel):
                     lines.append(f"{os.path.basename(p)}: skipped — this file has "
                                  "more than one class; click Browse again and map "
                                  "the sections first.")
+                    continue
+                if self._elementary:
+                    # No period, and the label carries the school's name so two
+                    # schools' Section 1s stay apart.
+                    site_id = (r["site"] or {}).get("id")
+                    label = self._elem_label(r)
+                    if r.get("section_map"):
+                        res = isvc.import_students_sectioned(
+                            self.db, p, r["section_map"], None,
+                            self.school_year, site_id=site_id)
+                        by = ", ".join(f"{k}: {v}" for k, v in
+                                       (res.get("per_class") or {}).items()) or "none"
+                        lines.append(f"{os.path.basename(p)}: {res['added']} added, "
+                                     f"{res['updated']} merged, {res['skipped']} "
+                                     f"skipped → {by}")
+                    else:
+                        res = isvc.import_students(self.db, p, label, None,
+                                                   self.school_year,
+                                                   site_id=site_id)
+                        lines.append(f"{label}: {res['added']} added, "
+                                     f"{res['updated']} merged (of {res['total']})")
                     continue
                 per = r["per"].get()
                 per = "" if per == "(all)" else per
