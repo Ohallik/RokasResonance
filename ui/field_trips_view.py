@@ -1509,37 +1509,6 @@ def _ask_text(parent, title, prompt, hint="", initial="", ok="Add"):
     return out["v"]
 
 
-def _pick_one(parent, title, prompt, options):
-    """A small single-choice list.  Returns the chosen string or None."""
-    win = ttk.Toplevel(master=parent)
-    win.title(title)
-    win.grab_set()
-    ttk.Label(win, text=prompt, font=("Segoe UI", 10, "bold")).pack(
-        anchor=W, padx=16, pady=(14, 6))
-    box = tk.Listbox(win, height=min(8, len(options)), width=44)
-    for o in options:
-        box.insert(END, o)
-    box.selection_set(0)
-    box.pack(fill=BOTH, expand=True, padx=16)
-    chosen = {"v": None}
-
-    def ok():
-        sel = box.curselection()
-        if sel:
-            chosen["v"] = options[sel[0]]
-        win.destroy()
-
-    bar = ttk.Frame(win)
-    bar.pack(fill=X, padx=16, pady=12)
-    ttk.Button(bar, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
-               command=win.destroy).pack(side=RIGHT, padx=4)
-    ttk.Button(bar, text="OK", bootstyle=SUCCESS, command=ok).pack(side=RIGHT,
-                                                                   padx=4)
-    fit_window(win, 380, 260)
-    parent.wait_window(win)
-    return chosen["v"]
-
-
 # ═══════════════════════════════════════ District application ════════════════
 
 class _ApplicationDialog(ttk.Toplevel):
@@ -1948,9 +1917,11 @@ class _RosterFormsDialog(ttk.Toplevel):
         self._email_btn = ttk.Button(btns, text="\u2709 Email who is missing one",
                                      bootstyle=(WARNING, OUTLINE),
                                      command=self._email_missing)
-        self._all_in_btn = ttk.Button(btns, text="Everyone handed one in",
-                                      bootstyle=(SUCCESS, OUTLINE),
-                                      command=self._all_in)
+        # A holder rather than a button: with one column this is a button that
+        # acts, with several it is a menu that lists them.  It used to be one
+        # button that opened a dialog to ask which column -- a second window
+        # every single time, for a choice that fits on the button itself.
+        self._all_in_box = ttk.Frame(btns)
 
         # No "everyone / nobody is going": the roster already arrives as
         # everyone in the chosen groups, which is the answer nine times in ten,
@@ -2033,15 +2004,17 @@ class _RosterFormsDialog(ttk.Toplevel):
         self.tree.bind("<Button-1>", self._click, add="+")
 
         has = bool(self.columns)
-        for btn, show in ((self._email_btn, has), (self._all_in_btn, has),
+        for btn, show in ((self._email_btn, has),
+                          (self._all_in_box, has),
                           (self._del_btn, bool(ft.custom_forms(self.trip)))):
             if show:
                 btn.pack(side=LEFT, padx=(0, 6))
             else:
                 btn.pack_forget()
+        self._build_all_in()
 
         why = ("Everyone in the groups on this trip. Untick anyone who is not "
-               "going.")
+               "going: they drop to the bottom and stop being chased.")
         if self.columns:
             why += "  Tick each column as it comes back."
         elif ft.uses_finalforms(self.trip, self._elementary):
@@ -2049,6 +2022,29 @@ class _RosterFormsDialog(ttk.Toplevel):
                     "permission record. Add a checklist item for anything else "
                     "you chase.")
         self._why.config(text=why)
+
+    def _build_all_in(self):
+        """One column: a button that does it.  Several: a menu that names
+        them.  Either way the choice is on screen, not behind a dialog."""
+        for w in self._all_in_box.winfo_children():
+            w.destroy()
+        if not self.columns:
+            return
+        if len(self.columns) == 1:
+            key, label = self.columns[0]
+            ttk.Button(self._all_in_box,
+                       text=f"Everyone handed in {label}",
+                       bootstyle=(SUCCESS, OUTLINE),
+                       command=lambda k=key: self._mark_all(k)).pack()
+            return
+        mb = ttk.Menubutton(self._all_in_box, text="Mark everyone in…",
+                            bootstyle=(SUCCESS, OUTLINE))
+        menu = tk.Menu(mb, tearoff=False)
+        for key, label in self.columns:
+            menu.add_command(label=label,
+                             command=lambda k=key: self._mark_all(k))
+        mb["menu"] = menu
+        mb.pack()
 
     def _add_column(self):
         label = _ask_text(self, "Add checklist item",
@@ -2170,16 +2166,37 @@ class _RosterFormsDialog(ttk.Toplevel):
     # ── data ────────────────────────────────────────────────────────────
 
     def _reload(self):
+        """Everyone going, then everyone not.
+
+        A student who has said they are not coming still has to be ON the list
+        -- untick them and they vanish is alarming, and they may change their
+        mind -- but they should not sit between the students still being
+        chased, where an absent-minded click marks a form for somebody who is
+        not going.  So they drop to the bottom, greyed, with nothing tickable
+        beside them.
+        """
         from concert_tools import _display_name
         self.tree.delete(*self.tree.get_children())
-        for stu in self._students:
-            vals = ["\u2611" if self._going.get(stu["id"]) else "\u2610",
+        self.tree.tag_configure("notgoing", foreground=subtle_fg())
+
+        def order(stu):
+            return (0 if self._going.get(stu["id"]) else 1,
+                    (stu.get("last_name") or "").lower(),
+                    (stu.get("first_name") or "").lower())
+
+        for stu in sorted(self._students, key=order):
+            going = bool(self._going.get(stu["id"]))
+            vals = ["\u2611" if going else "\u2610",
                     _display_name(stu), stu.get("grade") or ""]
             for f in self.forms:
-                vals.append("\u2611" if self._have.get((stu["id"], f))
-                            else "\u2610")
+                if not going:
+                    vals.append("\u2014")        # nothing to chase
+                else:
+                    vals.append("\u2611" if self._have.get((stu["id"], f))
+                                else "\u2610")
             vals.append("")                       # the filler column
-            self.tree.insert("", "end", iid=str(stu["id"]), values=vals)
+            self.tree.insert("", "end", iid=str(stu["id"]), values=vals,
+                             tags=() if going else ("notgoing",))
         self._recalc()
 
     def _recalc(self):
@@ -2229,6 +2246,8 @@ class _RosterFormsDialog(ttk.Toplevel):
         if col == 0:
             self._going[sid] = not self._going.get(sid)
         elif col >= 3 and col - 3 < len(self.forms):
+            if not self._going.get(sid):
+                return              # nothing is chased from somebody not going
             form = self.forms[col - 3]
             now = not self._have.get((sid, form))
             self.db.set_trip_form(self.trip["id"], sid, form, now)
@@ -2239,19 +2258,12 @@ class _RosterFormsDialog(ttk.Toplevel):
         self.tree.selection_set(iid)
         self.tree.see(iid)
 
-    def _all_in(self):
-        """One tick for a form the whole class handed in together, which is
+    def _mark_all(self, form):
+        """One tick for a column the whole class handed in together, which is
         what happens when they are collected in the room."""
-        form = self.forms[0]
-        if len(self.forms) > 1:
-            sel = _pick_one(self, "Which column?",
-                            "Mark every student as done for:",
-                            [ft.form_label(self.trip, f) for f in self.forms])
-            if not sel:
-                return
-            form = self.forms[[ft.form_label(self.trip, f)
-                               for f in self.forms].index(sel)]
         for stu in self._students:
+            if not self._going.get(stu["id"]):
+                continue            # they are not going; there is nothing in
             self.db.set_trip_form(self.trip["id"], stu["id"], form, True)
             self._have[(stu["id"], form)] = 1
         self._reload()
