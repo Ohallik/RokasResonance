@@ -511,6 +511,17 @@ def uses_asb_money(trip):
     return "asb" in (trip.get("budget_code") or "").lower()
 
 
+def short_date(date_str):
+    """"Sep 17" -- short enough to sit inside a checklist item without pushing
+    the row onto two lines."""
+    d = parse_date(date_str)
+    if not d:
+        return ""
+    # Built rather than strftime'd: the no-leading-zero flag is %-d on one
+    # platform and %#d on another, and neither is worth a bug.
+    return f"{d.strftime('%b')} {d.day}"
+
+
 def checklist_for(trip, elementary=False):
     """The checklist items this trip actually has.
 
@@ -529,6 +540,14 @@ def checklist_for(trip, elementary=False):
             continue
         if key == "asb_minutes" and not uses_asb_money(trip):
             continue
+        if key == "board_approved":
+            # Say WHICH meeting is being waited on.  "School board approval"
+            # on its own is a box that could be waiting on any of twenty-two
+            # meetings, and the date is the thing the teacher is counting down
+            # to.
+            when = short_date(trip.get("board_date"))
+            if when:
+                label += f"  (expected {when})"
         out.append((key, label))
     return out
 
