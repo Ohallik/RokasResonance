@@ -1376,14 +1376,24 @@ class _FeesDialog(ttk.Toplevel):
                                 f"  —  {u}")
 
         def add_type():
-            if name.get().strip():
-                try:
-                    a = float(amt.get() or 0)
-                except ValueError:
-                    a = 0
-                self.db.add_fee_type(name.get().strip(), a, use.get())
-                name.set(""); amt.set(""); use.set("Curricular")
-                fill(); self._reload()
+            nm = name.get().strip()
+            if not nm:
+                return
+            twin = self.db.find_fee_type(nm)
+            if twin is not None:
+                Messagebox.show_warning(
+                    f"“{twin['name']}” is already on your list, and “{nm}” "
+                    f"would be the same fee under a second name. Edit the "
+                    f"existing one if the amount or wording is wrong.",
+                    title="Already have this fee", parent=win)
+                return
+            try:
+                a = float(amt.get() or 0)
+            except ValueError:
+                a = 0
+            self.db.add_fee_type(nm, a, use.get())
+            name.set(""); amt.set(""); use.set("Curricular")
+            fill(); self._reload()
 
         def del_type():
             sel = lst.curselection()
@@ -1646,16 +1656,32 @@ class _StudentPickerDialog(ttk.Toplevel):
                                     parent=self)
             return
         fee = self._fee.get()
-        if fee == _NEW_FEE:
+        making_new = fee == _NEW_FEE
+        if making_new:
             fee = self._new_name.get().strip()
             if not fee:
                 Messagebox.show_warning("Give the new fee a name.",
                                         title="Name needed", parent=self)
                 return
-            if fee in self._types:
-                Messagebox.show_warning(f"“{fee}” is already one of your fees.",
-                                        title="Already there", parent=self)
-                return
+            # Loose match, not an exact one.  Typing a fee here is quick, which
+            # is the point, and it is also how you end up with "Solo &
+            # Ensemble", "Solo and Ensemble fee" and "solo/ensemble" all
+            # charging different children for the same thing.
+            twin = self.db.find_fee_type(fee)
+            if twin is not None:
+                if Messagebox.yesno(
+                        f"You already have “{twin['name']}”"
+                        f" ({_money(twin['default_amount'])}).\n\n"
+                        f"Charge that one instead of adding “{fee}”?",
+                        title="Already have this fee", parent=self) == "Yes":
+                    fee = twin["name"]
+                    making_new = False
+                elif twin["name"].strip().lower() == fee.strip().lower():
+                    # Same name outright: there is nothing to add.
+                    Messagebox.show_warning(
+                        f"“{fee}” is already one of your fees.",
+                        title="Already there", parent=self)
+                    return
         try:
             amount = float(str(self._amount.get()).replace("$", "").replace(",", "")
                            or 0)
@@ -1663,7 +1689,7 @@ class _StudentPickerDialog(ttk.Toplevel):
             Messagebox.show_warning("Amount must be a number.", title="Invalid",
                                     parent=self)
             return
-        if self._fee.get() == _NEW_FEE:
+        if making_new:
             # Saved as a fee type, so the next child who owes it is two clicks
             # rather than a second round of typing.
             self.db.add_fee_type(fee, amount, self._new_use.get())

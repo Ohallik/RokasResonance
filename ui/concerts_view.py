@@ -231,6 +231,14 @@ class ConcertsView(ttk.Frame):
         for w in self._done_rows.winfo_children():
             w.destroy()
         concerts = [dict(c) for c in self.db.get_concerts(self._year())]
+        # A concert that has now happened puts its repertoire into the music
+        # library's performance history.  Idempotent, so running it on every
+        # refresh costs nothing and means the teacher never has to remember.
+        for c in concerts:
+            try:
+                ct.sync_performances(self.db, self.main_db, c)
+            except Exception:
+                pass
 
         def is_done(c):
             days = ct.days_until(c.get("concert_date"))
@@ -470,7 +478,7 @@ class ConcertsView(ttk.Frame):
     # ── Tools ────────────────────────────────────────────────────────────────
 
     def _repertoire(self, c):
-        dlg = _RepertoireDialog(self, self.db, dict(c))
+        dlg = _RepertoireDialog(self, self.db, dict(c), self.main_db)
         self.wait_window(dlg)
         self.refresh()
 
@@ -1080,9 +1088,12 @@ class _RepertoireDialog(ttk.Toplevel):
     """Pieces per ensemble — add, revise, remove, reorder as the cycle
     progresses.  Empty is fine early in the cycle."""
 
-    def __init__(self, parent, db, concert):
+    def __init__(self, parent, db, concert, main_db=None):
         super().__init__(parent.winfo_toplevel())
         self.db = db
+        # The music library lives in the main database, not this year's
+        # lesson-plan one, so a programmed piece is linked across the two.
+        self.main_db = main_db
         self.concert = concert
         self.title(f"Repertoire — {concert['title']}")
         self.resizable(True, True)
@@ -1093,8 +1104,12 @@ class _RepertoireDialog(ttk.Toplevel):
                   bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(12, 2))
         ttk.Label(self, text="Pieces can be added, revised, or removed any "
                              "time — the printed program always uses the "
-                             "current list.",
-                  font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W, padx=16)
+                             "current list. A ♪ means the piece was found in "
+                             "your sheet music library, and playing it will "
+                             "be added to its performance history after the "
+                             "concert.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=580, justify=LEFT).pack(anchor=W, padx=16)
 
         bar = ttk.Frame(self)
         bar.pack(fill=X, padx=16, pady=(8, 4))
@@ -1114,7 +1129,8 @@ class _RepertoireDialog(ttk.Toplevel):
         side = ttk.Frame(body)
         side.pack(side=LEFT, fill=Y, padx=(8, 0))
         for label, cmd in [("▲", self._up), ("▼", self._down),
-                           ("✏ Edit", self._edit), ("🗑 Remove", self._remove)]:
+                           ("✏ Edit", self._edit), ("♪ Link…", self._link),
+                           ("🗑 Remove", self._remove)]:
             ttk.Button(side, text=label, bootstyle=(SECONDARY, OUTLINE),
                        command=cmd, width=9).pack(pady=2)
 
@@ -1150,7 +1166,9 @@ class _RepertoireDialog(ttk.Toplevel):
             credit = (p.get("composer") or "").strip()
             if (p.get("arranger") or "").strip():
                 credit = (credit + ", " if credit else "") + f"arr. {p['arranger'].strip()}"
-            self._list.insert(END, f"{p['title']}" + (f"  —  {credit}" if credit else ""))
+            mark = "♪ " if p.get("music_id") else "   "
+            self._list.insert(END, mark + f"{p['title']}"
+                              + (f"  —  {credit}" if credit else ""))
         self._editing_id = None
         self._add_btn.config(text="➕ Add Piece")
         for v in self._piece_vars.values():
@@ -1169,6 +1187,11 @@ class _RepertoireDialog(ttk.Toplevel):
         data = {"title": title,
                 "composer": self._piece_vars["composer"].get().strip(),
                 "arranger": self._piece_vars["arranger"].get().strip()}
+        # Match it to the library while the title is still in front of the
+        # teacher, so a typo is obvious now rather than the history being
+        # quietly short a piece three months later.
+        if self.main_db is not None:
+            data["music_id"] = ct.link_piece(self.main_db, data)
         if self._editing_id:
             self.db.update_concert_piece(self._editing_id, data)
         else:
@@ -1177,6 +1200,84 @@ class _RepertoireDialog(ttk.Toplevel):
                          "position": len(self._pieces())})
             self.db.add_concert_piece(data)
         self._reload()
+
+    def _link(self):
+        """Point a piece at its library copy by hand.
+
+        The title search gets most of them, but a program says "Sea Songs" and
+        the library says "Sea Songs (Vaughan Williams)", and no amount of
+        normalizing bridges that safely.  Guessing wrong writes the wrong
+        piece's history, so the teacher chooses.
+        """
+        p = self._sel_piece()
+        if not p:
+            Messagebox.show_info("Pick a piece first.", title="No piece",
+                                 parent=self)
+            return
+        if self.main_db is None:
+            return
+        try:
+            library = sorted(self.main_db.get_music_for_matching(),
+                             key=lambda m: (m["title"] or "").lower())
+        except Exception:
+            library = []
+        if not library:
+            Messagebox.show_info(
+                "There is no sheet music in your library yet, so there is "
+                "nothing to link this to.",
+                title="Library empty", parent=self)
+            return
+
+        # master= on purpose: ttkbootstrap's Toplevel takes the TITLE as its
+        # first positional argument, so ttk.Toplevel(self) silently parents the
+        # window to the root and names it after the widget.
+        dlg = ttk.Toplevel(master=self)
+        dlg.title("Link to sheet music")
+        dlg.grab_set()
+        ttk.Label(dlg, text=f"Which piece in your library is “{p['title']}”?",
+                  font=("Segoe UI", 10, "bold")).pack(anchor=W, padx=16, pady=(14, 2))
+        ttk.Label(dlg, text="Linking is what puts this concert into that "
+                            "piece's performance history.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=430, justify=LEFT).pack(anchor=W, padx=16)
+        search = tk.StringVar()
+        ttk.Entry(dlg, textvariable=search, width=44).pack(anchor=W, padx=16, pady=(8, 2))
+        box = tk.Listbox(dlg, height=12, width=54)
+        box.pack(fill=BOTH, expand=True, padx=16)
+        shown = []
+
+        def fill(*_):
+            want = search.get().strip().lower()
+            box.delete(0, END)
+            shown.clear()
+            for m in library:
+                label = (m["title"] or "")
+                if m.get("composer"):
+                    label += f"  —  {m['composer']}"
+                if want and want not in label.lower():
+                    continue
+                shown.append(m)
+                box.insert(END, label)
+
+        search.trace_add("write", fill)
+        fill()
+
+        def choose(mid):
+            self.db.update_concert_piece(p["id"], {"music_id": mid})
+            dlg.destroy()
+            self._reload()
+
+        btns = ttk.Frame(dlg)
+        btns.pack(fill=X, padx=16, pady=12)
+        ttk.Button(btns, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=dlg.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btns, text="Link", bootstyle=SUCCESS,
+                   command=lambda: (choose(shown[box.curselection()[0]]["id"])
+                                    if box.curselection() else None)
+                   ).pack(side=RIGHT, padx=4)
+        ttk.Button(btns, text="Not in my library", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: choose(None)).pack(side=LEFT)
+        fit_window(dlg, 520, 480)
 
     def _edit(self):
         p = self._sel_piece()
@@ -1399,15 +1500,14 @@ class _RemindersDialog(ttk.Toplevel):
         today = datetime.today().date()
 
         # ── Staff / facilities email — the one that can't be skipped ──
-        sbox = tk.LabelFrame(self, text=" Office / custodians / PE / admin "
+        sbox = tk.LabelFrame(self, text=" Office / custodians / admin "
                                         "(2 weeks before) ",
                              font=("Segoe UI", 9, "bold"), padx=10, pady=6)
         sbox.pack(fill=X, padx=16, pady=(8, 4))
-        ttk.Label(sbox, text="One email for the whole concert week: custodial "
-                             "needs, set-up, doors, tear down, and the 5th "
-                             "grade performance. Send to the office manager, "
-                             "assistant office manager, PE teachers, "
-                             "custodians, and admin.",
+        ttk.Label(sbox, text="One email covering custodial needs, set-up, "
+                             "doors, and the schedule. Send it to the office, "
+                             "the custodians, admin, and anyone whose space "
+                             "you are borrowing.",
                   font=("Segoe UI", 8), foreground=muted_fg(),
                   wraplength=540, justify=LEFT).pack(anchor=W)
         d14 = dict(ct.reminder_schedule(concert.get("concert_date"))

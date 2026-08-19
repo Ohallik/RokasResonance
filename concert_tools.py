@@ -250,7 +250,10 @@ REMINDER_STAGES = [("2 weeks", 14), ("1 week", 7), ("2 days", 2)]
 CHECK_TODO, CHECK_DONE, CHECK_NA = 0, 1, 2
 
 CONCERT_CHECKLIST_ITEMS = [
-    ("venue_reserved", "Venue / gym reserved"),
+    # Not "Venue / gym".  A gym is where THIS teacher's concerts happen; an
+    # elementary program is in a commons or a cafeteria, and a high school has
+    # a theater.  The venue is already named on the concert itself.
+    ("venue_reserved", "Venue reserved"),
     ("tutorials_scheduled", "Tutorials scheduled"),
     ("repertoire_final", "Repertoire finalized"),
     ("details_sent", "Details page sent home"),
@@ -346,48 +349,107 @@ def staff_due(date_str, sent_stages, today=None):
 
 
 def staff_email(concert, school_name=""):
-    """(subject, body) skeleton for the staff/facilities email, modeled on
-    the teacher's real December and March versions: one block per event in
-    the concert week. The band block is pre-filled from the planner; the
-    orchestra, choir, and 5th grade blocks get added by hand."""
-    d = parse_date(concert.get("concert_date"))
-    month = d.strftime("%B") if d else "concert"
+    """(subject, body) skeleton for the staff/facilities email.
+
+    A list of labels with the planner's answers filled in, and blanks where it
+    has none.  The earlier version was one teacher's December email turned into
+    a template: it assumed a gym with bleachers, thanked the PE staff for
+    lending their space, and carried a paragraph of instructions about adding a
+    block per ensemble that had to be deleted before sending.  None of that is
+    true of an elementary concert in a commons, and a teacher should not have
+    to delete two paragraphs before they can send.
+
+    It also said "concert concert week" whenever no date was set, because the
+    month name was standing in for the whole subject.
+    """
     title = (concert.get("title") or "Concert").strip()
-    when = fmt_date(concert.get("concert_date")) or "(date)"
-    location = (concert.get("location") or "(location)").strip()
-    start = (concert.get("start_time") or "7:00pm").strip()
-    arrival = (concert.get("arrival") or "(arrival window)").strip()
-    setup = (concert.get("setup") or "(set-up time and plan)").strip()
-    subject = (f"{month} concert week: custodial, set-up, and schedule "
-               f"details ({when})")
+    when = fmt_date(concert.get("concert_date")) or ""
+    subject = f"{title}: custodial, set-up, and schedule details"
+    if when:
+        subject += f" ({when})"
+
+    def line(label, value):
+        value = (value or "").strip()
+        return f"{label} = {value}".rstrip()
+
     body = "\n".join([
         "Hi all,",
         "",
-        f"Here are the details for our {month} concert week. As always, we "
-        "will do our best to not disrupt anyone else more than absolutely "
-        "necessary. Please ask if you see any issues or have any questions.",
+        "Here are the details for our upcoming concert. Please ask if you see "
+        "any issues or have any questions.",
         "",
-        f"{when} = {title}",
-        f"Location: {location}",
-        "Custodial needs = ALL bleachers (large and small) pulled out by "
-        "(time)",
-        f"Set up plan = {setup}",
-        f"Doors open at (time), kids arrive {arrival}",
-        f"Start time {start}",
-        "Tear down = immediately after performance",
-        "",
-        "(Add a block like the one above for each of the other concerts the "
-        "same week: orchestra, choir, and the 5th grade performance if "
-        "there is one. Note any attendance impacts for the office, for "
-        "example which periods the Advanced students will be out. Delete "
-        "this note before sending.)",
-        "",
-        "PE staff, thank you as always for letting us borrow your space. "
-        "Please let us know if there are any issues or questions.",
+        line("Date", when),
+        line("Location", concert.get("location")),
+        line("Custodial needs", ""),
+        line("Set up plan", concert.get("setup")),
+        line("Kids arrive at", concert.get("arrival")),
+        line("Doors open at", ""),
+        line("Start time", concert.get("start_time")),
+        line("End time", concert.get("end_time")),
         "",
         "Thanks everyone!",
     ])
     return subject, body
+
+
+# ── Repertoire → the music library's performance history ─────────────────────
+
+
+def link_piece(main_db, piece):
+    """The library id for a programmed piece, or None.  Used when a piece is
+    typed in so the link is made while the title is in front of the teacher."""
+    try:
+        m = main_db.find_music_by_title(piece.get("title"), piece.get("composer"))
+    except Exception:
+        return None
+    return m["id"] if m else None
+
+
+def sync_performances(lp_db, main_db, concert, today=None):
+    """Write this concert's repertoire into the music library's performance
+    history -- but only once the concert has actually happened.
+
+    A teacher enters December's programme in October.  Logging it then would
+    put a future date in "last played", and the whole point of that column is
+    choosing what NOT to programme again this year: a piece that shows as
+    recently played when it has not yet been performed is worse than a blank.
+    So nothing is written until the date has passed, and then it is written
+    without being asked for.
+
+    Idempotent -- safe to call on every load, which is how it runs.
+    """
+    date_str = (concert.get("concert_date") or "").strip()
+    d = parse_date(date_str)
+    if not d:
+        return {"added": 0, "unlinked": 0}
+    today = today or datetime.today().date()
+    if d > today:
+        return {"added": 0, "unlinked": 0}
+
+    title = (concert.get("title") or "Concert").strip()
+    added = unlinked = 0
+    for row in lp_db.get_concert_pieces(concert["id"]):
+        piece = dict(row)
+        mid = piece.get("music_id")
+        if not mid:
+            # Not linked when it was typed -- try again now, in case it has
+            # been catalogued since.
+            mid = link_piece(main_db, piece)
+            if mid:
+                try:
+                    lp_db.update_concert_piece(piece["id"], {"music_id": mid})
+                except Exception:
+                    pass
+        if not mid:
+            unlinked += 1
+            continue
+        try:
+            if main_db.record_performance(mid, date_str, piece.get("ensemble"),
+                                          title):
+                added += 1
+        except Exception:
+            pass
+    return {"added": added, "unlinked": unlinked}
 
 
 # ── Text builders ─────────────────────────────────────────────────────────────

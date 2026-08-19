@@ -317,6 +317,13 @@ class LessonPlanDatabase:
                     composer TEXT,
                     arranger TEXT,
                     position INTEGER DEFAULT 0,
+                    -- The sheet_music row in the MAIN database this piece is,
+                    -- when the library has it.  Concerts live in the per-year
+                    -- lesson-plan database and the music library does not, so
+                    -- this is a cross-database link and stays nullable: a
+                    -- piece can be programmed before it has been catalogued,
+                    -- or borrowed and never catalogued at all.
+                    music_id INTEGER,
                     FOREIGN KEY (concert_id) REFERENCES concerts(id)
                 );
 
@@ -407,6 +414,13 @@ class LessonPlanDatabase:
                     conn.commit()
                 except Exception:
                     pass
+            # Migration: a programmed piece can point at its library copy, so
+            # the performance history writes itself once the concert is past.
+            try:
+                conn.execute("ALTER TABLE concert_pieces ADD COLUMN music_id INTEGER")
+                conn.commit()
+            except Exception:
+                pass
             # Migration: per-trip saved email templates (reused year to year)
             # + tri-state checklist items (0 = to do, 1 = done, 2 = N/A).
             # FinalForms replaced paper permission slips: the office builds a
@@ -1514,7 +1528,8 @@ class LessonPlanDatabase:
                 "ORDER BY ensemble, position, id", (concert_id,)).fetchall()
 
     def add_concert_piece(self, data):
-        cols = ["concert_id", "ensemble", "title", "composer", "arranger", "position"]
+        cols = ["concert_id", "ensemble", "title", "composer", "arranger",
+                "position", "music_id"]
         vals = [data.get(c) for c in cols]
         with self._connect() as conn:
             cur = conn.execute(
@@ -1523,7 +1538,8 @@ class LessonPlanDatabase:
             return cur.lastrowid
 
     def update_concert_piece(self, piece_id, data):
-        cols = [c for c in ("ensemble", "title", "composer", "arranger", "position")
+        cols = [c for c in ("ensemble", "title", "composer", "arranger",
+                            "position", "music_id")
                 if c in data]
         if not cols:
             return

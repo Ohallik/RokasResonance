@@ -3291,6 +3291,32 @@ class Database:
         with self._connect() as conn:
             return conn.execute("SELECT * FROM fee_types ORDER BY name").fetchall()
 
+    @staticmethod
+    def _fee_key(name) -> str:
+        """A fee name reduced to what actually distinguishes it.
+
+        "Instrument Rental (Summer)", "instrument rental - summer" and
+        "Instrument  Rental Summer" are one fee typed three ways, and a budget
+        that lists all three is worse than useless: the totals are wrong and
+        neither row is the real one.
+        """
+        import re
+        s = (name or "").lower()
+        s = re.sub(r"[^a-z0-9 ]+", " ", s)          # punctuation is not meaning
+        s = re.sub(r"\b(the|a|an|and|of|for|fee|fees)\b", " ", s)
+        return " ".join(s.split())
+
+    def find_fee_type(self, name):
+        """An existing fee type that means the same as ``name``, or None.
+        Matches loosely on purpose -- see _fee_key."""
+        key = self._fee_key(name)
+        if not key:
+            return None
+        for t in self.get_fee_types():
+            if self._fee_key(t["name"]) == key:
+                return t
+        return None
+
     def add_fee_type(self, name: str, default_amount: float = 0,
                      use_type: str = "Curricular") -> int:
         with self._connect() as conn:
@@ -3856,6 +3882,70 @@ class Database:
                 f"INSERT INTO performances ({col_str}) VALUES ({placeholders})", values
             )
             return cur.lastrowid
+
+    @staticmethod
+    def _title_key(title) -> str:
+        """A piece title reduced to what identifies it.  Programs and catalogues
+        punctuate differently -- "Sea Songs", "Sea Songs!", "sea  songs" -- and
+        a leading article is not part of the piece."""
+        import re
+        t = (title or "").lower()
+        t = re.sub(r"[^a-z0-9 ]+", " ", t)
+        t = " ".join(t.split())
+        for article in ("the ", "a ", "an "):
+            if t.startswith(article):
+                t = t[len(article):]
+                break
+        return t
+
+    def find_music_by_title(self, title, composer=None):
+        """The library copy of a piece, matched on title, or None.
+
+        Composer only breaks a tie: two different pieces genuinely share a
+        title ("Fanfare"), and the same piece is credited half a dozen ways
+        ("Holst", "Gustav Holst", "G. Holst / arr. Smith").  Matching on the
+        composer as well would miss far more than it would catch.
+        """
+        key = self._title_key(title)
+        if not key:
+            return None
+        hits = [m for m in self.get_music_for_matching()
+                if self._title_key(m["title"]) == key]
+        if not hits:
+            return None
+        if len(hits) > 1 and composer:
+            ckey = self._title_key(composer)
+            for m in hits:
+                if ckey and ckey in self._title_key(m["composer"]):
+                    return m
+        return hits[0]
+
+    def record_performance(self, music_id, performance_date, ensemble,
+                           event_name) -> bool:
+        """Log that a piece was performed, unless that is already logged.
+
+        Idempotent on (piece, date, ensemble, event): the concert planner calls
+        this every time it loads, and a history that gains a duplicate row on
+        every launch would be worse than no history.  Returns True if a row was
+        written.
+        """
+        if not music_id or not performance_date:
+            return False
+        with self._connect() as conn:
+            dup = conn.execute(
+                "SELECT 1 FROM performances WHERE music_id=? AND "
+                "performance_date=? AND IFNULL(ensemble,'')=IFNULL(?,'') AND "
+                "IFNULL(event_name,'')=IFNULL(?,'')",
+                (music_id, performance_date, ensemble or "",
+                 event_name or "")).fetchone()
+            if dup:
+                return False
+            conn.execute(
+                "INSERT INTO performances (music_id, performance_date, "
+                "ensemble, event_name) VALUES (?, ?, ?, ?)",
+                (music_id, performance_date, ensemble or "", event_name or ""))
+            conn.commit()
+        return True
 
     def get_performances(self, music_id: int):
         with self._connect() as conn:

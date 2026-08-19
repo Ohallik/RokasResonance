@@ -475,36 +475,21 @@ class MainMenu(ttk.Frame):
         for c in (0, 1, 2):
             prep.columnconfigure(c, weight=1)
         self._nav_button(
-            prep, "  💵  Budget", lambda: self._not_yet("Budget"), "teal"
+            prep, "  💵  Budget", self._open_budget, "teal"
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
         self._nav_button(
-            prep, "  🧰  Teacher Tools", lambda: self._not_yet("Teacher Tools"), "blue"
+            prep, "  🧰  Teacher Tools", self._open_lesson_plans, "blue"
         ).grid(row=0, column=1, sticky="ew", padx=3, ipady=btn_pad)
         self._nav_button(
             prep, "  📦  New School Year…", self._open_year_wizard, "purple"
         ).grid(row=0, column=2, sticky="ew", padx=(3, 0), ipady=btn_pad)
 
-    # What each one will eventually be, said plainly.  "Not yet" on its own
-    # reads as "never"; naming the pieces says it is on a list.
-    _NOT_YET = {
-        "Budget": "Fees, purchases and reporting are built around a secondary "
-                  "program's accounts. 5th grade loans are free, so what an "
-                  "elementary budget needs is a different and smaller thing.",
-        "Teacher Tools": "Seating charts, concerts and field trips all happen "
-                         "at 5th grade too, just on a smaller scale, so this "
-                         "is coming. What is in here today assumes a middle "
-                         "or high school timetable, and the percussion "
-                         "rotations and agendas do not apply.",
-    }
-
-    def _not_yet(self, what):
-        from ttkbootstrap.dialogs import Messagebox
-        detail = self._NOT_YET.get(what, "")
-        Messagebox.show_info(
-            f"{what} is still being built for 5th grade."
-            + (f"\n\n{detail}" if detail else "")
-            + "\n\nIt works for middle and high school programs today.",
-            title=f"{what} — not yet", parent=self.winfo_toplevel())
+    # Budget and Teacher Tools used to show a "not yet" notice here, on the
+    # reasoning that both assumed a secondary program.  They no longer do: the
+    # class pickers offer each elementary school's own sections, the concert
+    # planner has had its gym assumptions taken out, and an elementary teacher
+    # runs concerts, seating charts and field trips like anybody else.  A
+    # teacher who does not need a part of it simply does not open that tab.
 
     def _open_fifth_grade(self, site_id=None):
         from ui.fifth_grade_view import open_fifth_grade_window
