@@ -183,3 +183,160 @@ def suggested_filename(site, kind: str) -> str:
     name = "".join(ch for ch in _site_name(site) if ch.isalnum() or ch in " -_").strip()
     name = name.replace(" ", "_") or "School"
     return f"{name}_{kind}_{date.today():%Y%m%d}.xlsx"
+
+
+# ── Reading one back in ──────────────────────────────────────────────────────
+# The export is only half a handoff. Teacher A leaving Clyde Hill is no use
+# unless Teacher B can pick the file up in September and carry on, so the same
+# workbook reads back in.
+
+def _header_map(ws, fields):
+    """{column index: field name} from the header row of an exported sheet.
+
+    Matched on the printed heading rather than position, so a file somebody has
+    reordered or added a column to still reads.
+    """
+    by_head = {head.lower(): key for key, head in fields}
+    for r in range(1, min(ws.max_row, 12) + 1):
+        found = {}
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(row=r, column=c).value
+            if v is None:
+                continue
+            key = by_head.get(str(v).strip().lower())
+            if key:
+                found[c] = key
+        if len(found) >= 3:          # a real header row, not the title stamp
+            return r, found
+    return None, {}
+
+
+def _read_sheet(ws, fields):
+    header_row, cols = _header_map(ws, fields)
+    if not header_row:
+        return []
+    out = []
+    for r in range(header_row + 1, ws.max_row + 1):
+        row = {}
+        for c, key in cols.items():
+            v = ws.cell(row=r, column=c).value
+            row[key] = "" if v is None else v
+        if any(str(v).strip() for v in row.values()):
+            out.append(row)
+    return out
+
+
+def read_handoff(path):
+    """{"instruments": [...], "repairs": [...]} from a handoff workbook.
+
+    Checkout history is deliberately not read back. Those rows name children
+    who have moved on to middle school by the time anybody imports this; they
+    are in the file so the incoming teacher can see which horn has been through
+    four players, not so they can be recreated as live loans.
+    """
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path, data_only=True)
+    inst = _read_sheet(wb["Instruments"], INSTRUMENT_FIELDS)         if "Instruments" in wb.sheetnames else []
+    reps = _read_sheet(wb["Repair History"], REPAIR_FIELDS)         if "Repair History" in wb.sheetnames else []
+    return {"instruments": inst, "repairs": reps}
+
+
+def _fingerprints(row):
+    """The ways one instrument can be recognised as one already here."""
+    out = []
+    for key in ("serial_no", "barcode", "district_no"):
+        v = str(row.get(key) or "").strip().lower()
+        if v:
+            out.append((key, v))
+    return out
+
+
+def import_handoff(db, site, path):
+    """Load a handoff workbook into one school.
+
+    Runs twice safely. An instrument already here -- matched on serial number,
+    barcode or district number -- is left alone rather than added again, since
+    a teacher who imports the same file twice should end up with one cupboard,
+    not two.
+    """
+    site = dict(site)
+    sid = site["id"]
+    data = read_handoff(path)
+
+    existing = [dict(r) for r in db.get_instruments_with_status(
+        include_inactive=True, site_id=sid)]
+    seen = {}
+    for row in existing:
+        for fp in _fingerprints(row):
+            seen[fp] = row["id"]
+
+    added, matched, no_id = 0, 0, 0
+    id_for_row = {}
+    for row in data["instruments"]:
+        fps = _fingerprints(row)
+        hit = next((seen[f] for f in fps if f in seen), None)
+        if hit:
+            matched += 1
+            id_for_row[id(row)] = hit
+            continue
+        payload = {k: row.get(k) for k, _h in INSTRUMENT_FIELDS}
+        payload["site_id"] = sid
+        new_id = db.add_instrument(payload)
+        id_for_row[id(row)] = new_id
+        added += 1
+        if not fps:
+            # Nothing to recognise it by, so a second import would add it
+            # again.  Worth telling the teacher rather than silently risking it.
+            no_id += 1
+        for f in fps:
+            seen[f] = new_id
+
+    repairs = 0
+    if data["repairs"]:
+        repairs = _import_repairs(db, sid, data["repairs"], seen)
+
+    return {"added": added, "matched": matched, "repairs": repairs,
+            "unidentifiable": no_id,
+            "checkouts_skipped": True}
+
+
+def _import_repairs(db, site_id, rows, seen):
+    """Repair history, attached to whichever instrument it names.
+
+    A repair whose instrument is not here is dropped: a repair record floating
+    free of the thing repaired is noise in the history, and the export always
+    carries the instruments alongside.
+    """
+    n = 0
+    with db._connect() as conn:
+        for row in rows:
+            hit = next((seen[f] for f in _fingerprints(row) if f in seen), None)
+            if not hit:
+                continue
+            dup = conn.execute(
+                "SELECT 1 FROM repairs WHERE instrument_id = ? "
+                "AND IFNULL(description,'') = ? AND IFNULL(date_added,'') = ?",
+                (hit, str(row.get("description") or ""),
+                 str(row.get("date_added") or ""))).fetchone()
+            if dup:
+                continue
+            conn.execute(
+                "INSERT INTO repairs (instrument_id, description, date_added, "
+                "date_repaired, assigned_to, location, est_cost, act_cost, "
+                "invoice_number, notes) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (hit, row.get("description"), row.get("date_added"),
+                 row.get("date_repaired"), row.get("assigned_to"),
+                 row.get("location"), _num(row.get("est_cost")),
+                 _num(row.get("act_cost")), row.get("invoice_number"),
+                 row.get("notes")))
+            n += 1
+        conn.commit()
+    return n
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0

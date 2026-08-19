@@ -48,19 +48,29 @@ def _match_instrument(db, inst):
     return row
 
 
-def _clean(inst):
-    return {k: v for k, v in inst.items() if not k.startswith("_")}
+def _clean(inst, site_id=None):
+    out = {k: v for k, v in inst.items() if not k.startswith("_")}
+    if site_id:
+        out["site_id"] = site_id
+    return out
 
 
 # ── Students (Synergy) ────────────────────────────────────────────────────────
 
-def import_students(db, csv_source, ensemble_label, period, school_year):
+def import_students(db, csv_source, ensemble_label, period, school_year,
+                    site_id=None):
     """Import one class's Synergy CSV, tagging every student with ``ensemble_label``
     and ``period`` for ``school_year``.  A student already imported (same district
     Student ID this year — e.g. they're in two of your classes) gets the new
-    ensemble/period merged onto their record rather than duplicated."""
+    ensemble/period merged onto their record rather than duplicated.
+
+    ``site_id`` puts them at one school.  Matching is then against that school
+    only: two elementary schools can each have a Ben Carter, and the same
+    district ID cannot mean the same child twice in a 5th grade programme
+    spread over six buildings."""
     studs = synergy_import.parse_synergy_students(csv_source)
-    existing = {s["student_id"]: s for s in db.get_all_students(school_year)
+    existing = {s["student_id"]: s
+                for s in db.get_all_students(school_year, site_id=site_id)
                 if s["student_id"]}
     added = updated = 0
     for s in studs:
@@ -78,6 +88,7 @@ def import_students(db, csv_source, ensemble_label, period, school_year):
             db.update_student(prior["id"], merged)
             updated += 1
         else:
+            rec["site_id"] = site_id
             db.add_student(rec)
             added += 1
     return {"added": added, "updated": updated, "total": len(studs)}
@@ -145,9 +156,12 @@ def _merge_csv(existing, new):
 # ── Inventory (CutTime + Charms) ──────────────────────────────────────────────
 
 def import_inventory(db, cuttime_path=None, charms_inv_path=None,
-                     charms_repair_path=None):
+                     charms_repair_path=None, site_id=None):
     """Import inventory from CutTime and/or Charms and recreate current loans +
-    repair history.  Returns a summary of what happened."""
+    repair history.  Returns a summary of what happened.
+
+    ``site_id`` puts the instruments at one school, for a 5th grade teacher
+    bringing an elementary cupboard across in their first year."""
     summary = {"added": 0, "enriched": 0, "charms_only_added": 0,
                "repairs": 0, "loans": 0, "loans_unmatched": 0}
     pending_loans = []                    # (instrument_id, checkout dict)
@@ -157,7 +171,7 @@ def import_inventory(db, cuttime_path=None, charms_inv_path=None,
         for inst in cuttime_import.parse_cuttime_inventory(cuttime_path):
             co = inst.get("_checkout")
             row = _match_instrument(db, inst)
-            iid = row["id"] if row else db.add_instrument(_clean(inst))
+            iid = row["id"] if row else db.add_instrument(_clean(inst, site_id))
             if not row:
                 summary["added"] += 1
             if co:
@@ -182,7 +196,7 @@ def import_inventory(db, cuttime_path=None, charms_inv_path=None,
                     summary["enriched"] += 1
                 iid = row["id"]
             elif not cuttime_path:
-                iid = db.add_instrument(_clean(inst))
+                iid = db.add_instrument(_clean(inst, site_id))
                 summary["charms_only_added"] += 1
             else:
                 iid = None                # in Charms but not CutTime → skip add

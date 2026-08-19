@@ -117,6 +117,27 @@ class FifthGradeView(ttk.Frame):
                    command=lambda s=site: self._export(s, "repair_history")
                    ).pack(side=RIGHT)
 
+        # Start-of-year jobs, in the order a teacher actually meets them:
+        # bring the cupboard across (once), then load this year's children
+        # (every year).  Same wording and same file types as the secondary
+        # Import Data wizard, because plenty of people do both jobs.
+        setup = ttk.Frame(outer)
+        setup.pack(fill=X, padx=10, pady=(0, 6))
+        ttk.Label(setup, text="Start of year:", font=("Segoe UI", 9, "bold"),
+                  foreground=muted_fg()).pack(side=LEFT, padx=(0, 8))
+        ttk.Button(setup, text="📥 Import Inventory From Another Teacher",
+                   bootstyle=(PRIMARY, OUTLINE),
+                   command=lambda s=site: self._import_handoff(s)
+                   ).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(setup, text="🗄 Import From CutTime / Charms",
+                   bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda s=site: self._import_legacy(s)
+                   ).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(setup, text="🎓 Import Class List (CSV)",
+                   bootstyle=(SUCCESS, OUTLINE),
+                   command=lambda s=site: self._import_roster(s)
+                   ).pack(side=LEFT)
+
         inner = ttk.Notebook(outer, bootstyle=SECONDARY)
         inner.pack(fill=BOTH, expand=True, padx=6, pady=(0, 6))
 
@@ -133,6 +154,163 @@ class FifthGradeView(ttk.Frame):
 
         self._tabs[site["id"]] = {"inventory": inv, "students": stu}
         return outer
+
+    # ── Start-of-year imports ───────────────────────────────────────────────
+
+    def _import_handoff(self, site):
+        """Pick up where the last teacher left off at this school."""
+        from tkinter import filedialog
+        import site_export as SE
+
+        path = filedialog.askopenfilename(
+            parent=self.winfo_toplevel(),
+            title=f"Inventory handed over for {site['name']}",
+            filetypes=[("Roka handover file", "*.xlsx"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            res = SE.import_handoff(self.db, site, path)
+        except ImportError:
+            Messagebox.show_error(
+                "Reading a spreadsheet needs openpyxl:  pip install openpyxl",
+                title="Missing Dependency", parent=self.winfo_toplevel())
+            return
+        except Exception as e:
+            Messagebox.show_error(
+                "That file could not be read as a Roka handover."
+                f"\n\n{e}\n\nIt should be the file the previous teacher saved "
+                "with Hand Over This School.",
+                title="Could not import", parent=self.winfo_toplevel())
+            return
+
+        lines = [f"{res['added']} instrument(s) added to {site['name']}."]
+        if res["matched"]:
+            lines.append(f"{res['matched']} were already here and were left alone, "
+                         f"so running this twice is safe.")
+        if res["repairs"]:
+            lines.append(f"{res['repairs']} repair record(s) came across with them.")
+        if res["unidentifiable"]:
+            lines.append(f"{res['unidentifiable']} had no serial number, barcode or "
+                         f"district number, so importing this file again would add "
+                         f"them a second time.")
+        lines.append("Last year's check-outs were not brought over — those "
+                     "children have moved on.")
+        Messagebox.show_info("\n\n".join(lines), title="Inventory imported",
+                             parent=self.winfo_toplevel())
+        self.refresh()
+
+    def _import_legacy(self, site):
+        """First year only: bring a cupboard across from CutTime or Charms."""
+        from tkinter import filedialog
+        import import_service
+
+        path = filedialog.askopenfilename(
+            parent=self.winfo_toplevel(),
+            title=f"CutTime or Charms inventory export for {site['name']}",
+            filetypes=[("Spreadsheet or CSV", "*.xlsx *.xls *.csv"),
+                       ("All files", "*.*")])
+        if not path:
+            return
+        # Which one it is decides how the columns are read, and the two look
+        # nothing alike, so ask rather than sniff and get it subtly wrong.
+        answer = Messagebox.yesno(
+            "Is this a CutTime export?\n\nYes — CutTime.\nNo — Charms.",
+            title="Which program?", parent=self.winfo_toplevel())
+        is_cuttime = (answer == "Yes")
+        try:
+            res = import_service.import_inventory(
+                self.db,
+                cuttime_path=path if is_cuttime else None,
+                charms_inv_path=None if is_cuttime else path,
+                site_id=site["id"])
+        except Exception as e:
+            Messagebox.show_error(
+                f"That file could not be read as {'CutTime' if is_cuttime else 'Charms'}"
+                f" inventory.\n\n{e}",
+                title="Could not import", parent=self.winfo_toplevel())
+            return
+
+        added = res.get("added", 0) + res.get("charms_only_added", 0)
+        Messagebox.show_info(
+            f"{added} instrument(s) added to {site['name']}."
+            + (f"\n\n{res['enriched']} existing record(s) were filled in with "
+               f"purchase details." if res.get("enriched") else "")
+            + (f"\n\n{res['repairs']} repair record(s) imported."
+               if res.get("repairs") else ""),
+            title="Inventory imported", parent=self.winfo_toplevel())
+        self.refresh()
+
+    def _import_roster(self, site):
+        """This year's children, from the district class list."""
+        from tkinter import filedialog
+        import import_service
+
+        section = self._ask_section(site)
+        if not section:
+            return
+        path = filedialog.askopenfilename(
+            parent=self.winfo_toplevel(),
+            title=f"Class list for {section}",
+            filetypes=[("CSV file", "*.csv"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            res = import_service.import_students(
+                self.db, path, section, None,
+                self.db.current_school_year(), site_id=site["id"])
+        except Exception as e:
+            Messagebox.show_error(
+                f"That class list could not be read.\n\n{e}",
+                title="Could not import", parent=self.winfo_toplevel())
+            return
+        Messagebox.show_info(
+            f"{res['added']} child(ren) added to {section}."
+            + (f"\n\n{res['updated']} were already on this school's roster and "
+               f"were updated." if res["updated"] else ""),
+            title="Class list imported", parent=self.winfo_toplevel())
+        self.refresh()
+
+    def _ask_section(self, site):
+        """Which of this school's sections the class list belongs to.
+
+        Named after the school rather than the programme: inside a Clyde Hill
+        tab, "Clyde Hill: Section 1" says everything, and repeating "Band"
+        would only repeat what the school record already knows.
+        """
+        options = [f"{site['name']}: Section {n}" for n in (1, 2)]
+        dlg = ttk.Toplevel(self.winfo_toplevel())
+        dlg.title("Which section?")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        chosen = {"value": None}
+
+        body = ttk.Frame(dlg)
+        body.pack(fill=BOTH, expand=True, padx=18, pady=14)
+        ttk.Label(body, text="Which section is this class list for?",
+                  font=("Segoe UI", 10, "bold")).pack(anchor=W)
+        ttk.Label(body, text="Most schools run two, back to back in the same "
+                             "room. Import each one separately.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=340, justify=LEFT).pack(anchor=W, pady=(2, 10))
+        pick = tk.StringVar(value=options[0])
+        for opt in options:
+            ttk.Radiobutton(body, text=opt, value=opt, variable=pick,
+                            bootstyle=PRIMARY).pack(anchor=W, pady=1)
+
+        btns = ttk.Frame(dlg)
+        btns.pack(fill=X, padx=18, pady=(4, 14))
+
+        def ok():
+            chosen["value"] = pick.get()
+            dlg.destroy()
+
+        ttk.Button(btns, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=dlg.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btns, text="Choose File…", bootstyle=SUCCESS,
+                   command=ok).pack(side=RIGHT, padx=4)
+        fit_window(dlg, 400, 260)
+        self.wait_window(dlg)
+        return chosen["value"]
 
     _EXPORTS = {
         "handoff": ("Hand over this school",
