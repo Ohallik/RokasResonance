@@ -20,6 +20,12 @@ from ui.theme import fs, muted_fg, subtle_fg, fit_window, scroll_body, px
 import concert_tools as ct
 import field_trip_tools as ft
 
+# Amber is "coming up, mind it"; red is "you have missed it".  A missed
+# district deadline can cost the trip, so it does not share a colour with a
+# reminder that is merely due soon.
+_OVERDUE = "#D00000"
+_SOON = "#B45309"
+
 
 def _copy(widget, text):
     widget.clipboard_clear()
@@ -96,6 +102,7 @@ class FieldTripsView(ttk.Frame):
             canvas.yview_scroll(-1 * (e.delta // 120), "units")
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        inner._canvas = canvas          # so refresh can put the view back
         return inner
 
     # ── Context ──────────────────────────────────────────────────────────────
@@ -176,6 +183,15 @@ class FieldTripsView(ttk.Frame):
         # check before touching anything.
         if not (self.winfo_exists() and self._cards.winfo_exists()):
             return
+        # Where the list was scrolled to, so editing the fourth trip does not
+        # bounce the window back to the first.  Everything on this tab calls
+        # refresh() when it closes, so without this every single edit throws
+        # the reader back to the top.
+        try:
+            was_at = self._cards._canvas.yview()[0]
+        except Exception:
+            was_at = None
+
         for w in self._cards.winfo_children():
             w.destroy()
         for w in self._done_rows.winfo_children():
@@ -203,6 +219,16 @@ class FieldTripsView(ttk.Frame):
                       ).pack(anchor=W, padx=8, pady=14)
         for t in upcoming:
             self._trip_card(t, students)
+
+        if was_at is not None:
+            # After the new cards have been laid out, not before: the scroll
+            # region does not exist yet at this point.
+            def _restore(pos=was_at):
+                try:
+                    self._cards._canvas.yview_moveto(pos)
+                except Exception:
+                    pass
+            self.after_idle(_restore)
 
         # Completed: this year's finished trips, then previous years
         def done_row(label, opener):
@@ -232,6 +258,22 @@ class FieldTripsView(ttk.Frame):
                       font=("Segoe UI", fs(9)), foreground=muted_fg()
                       ).pack(anchor=W, padx=6, pady=6)
 
+    def _collapsed(self, trip_id):
+        return trip_id in getattr(self, "_folded", set())
+
+    def _toggle_collapsed(self, trip_id):
+        """Fold a trip away while working on another one.
+
+        Deliberately not saved: it is a way of clearing the desk for ten
+        minutes, not a property of the trip.  Four trips on screen is enough
+        to have to scroll past the three that are not today's problem.
+        """
+        folded = getattr(self, "_folded", None)
+        if folded is None:
+            folded = self._folded = set()
+        folded.symmetric_difference_update({trip_id})
+        self.refresh()
+
     def _trip_card(self, t, students):
         days = ct.days_until(t.get("depart_date"))
         when = ct.fmt_date(t.get("depart_date")) if t.get("depart_date") else "no date yet"
@@ -243,8 +285,14 @@ class FieldTripsView(ttk.Frame):
         card.pack(fill=X, padx=6, pady=6)
 
         # ── Info line + countdown ──
+        collapsed = self._collapsed(t["id"])
         top = ttk.Frame(card)
         top.pack(fill=X)
+        fold = ttk.Label(top, text="\u25b8  " if collapsed else "\u25be  ",
+                         font=("Segoe UI", fs(10), "bold"),
+                         foreground=subtle_fg(), cursor="hand2")
+        fold.pack(side=LEFT)
+        fold.bind("<Button-1>", lambda e, i=t["id"]: self._toggle_collapsed(i))
         attending = ft.roster(students, t,
                               self.db.get_trip_exclusions(t["id"]))
         n = len(attending)
@@ -276,6 +324,11 @@ class FieldTripsView(ttk.Frame):
             badge, style = f"in {days} days", SUCCESS
         ttk.Label(top, text=badge, font=("Segoe UI", fs(10), "bold"),
                   bootstyle=style).pack(side=RIGHT)
+
+        if collapsed:
+            # Folded: the heading, the one-line summary and the countdown, and
+            # nothing else.  Click the arrow to bring it back.
+            return
 
         # ── Checklist: click any item to cycle its state ──
         sent = {r["stage"] for r in self.db.get_trip_reminders(t["id"])
@@ -351,10 +404,11 @@ class FieldTripsView(ttk.Frame):
             overdue = [x for x in dl if x["overdue"]]
             nxt = next((x for x in dl if not x["overdue"] and x["due"]), None)
             missing_anchor = [x for x in dl if not x["due"]]
+            bold = False
             if overdue:
-                text = ("District deadlines:  ⚠ past due — "
+                text = ("District deadlines:  ⚠ PAST DUE — "
                         + ", ".join(x["label"] for x in overdue[:3]))
-                color = "#B45309"
+                color, bold = _OVERDUE, True
             elif nxt:
                 left = nxt["school_weeks_left"]
                 when = ct.fmt_date(nxt["due"].isoformat())
@@ -381,9 +435,12 @@ class FieldTripsView(ttk.Frame):
                 note = f"set {what} to work the rest out"
                 text = (f"{text}   ·   {note}" if text
                         else f"District deadlines: {note}.")
-                color = "#B45309"
+                if not overdue:
+                    color = _SOON
             if text:
-                lbl = ttk.Label(card, text=text, font=("Segoe UI", fs(9)),
+                lbl = ttk.Label(card, text=text,
+                                font=("Segoe UI", fs(9),
+                                      "bold") if bold else ("Segoe UI", fs(9)),
                                 foreground=color, cursor="hand2")
                 lbl.pack(anchor=W, pady=(0, 2))
                 lbl.bind("<Button-1>", lambda e, tr=t: self._deadlines(tr))
@@ -1112,14 +1169,15 @@ class _TripDialog(ttk.Toplevel):
         this trip: the packet deadline, and whether it is still in reach."""
         import school_calendar as sc
         year = self._school_year_of(self._vars["depart_date"].get().strip())
+        # Only meetings this trip could actually be approved at.  The board
+        # holds twenty-odd a year, and a list including the ones whose packet
+        # deadline has already gone is a haystack, not a choice.
+        trip = {"depart_date": self._vars["depart_date"].get()}
         opts, labels = [], []
-        for o in ft.board_meeting_options(year, {"depart_date":
-                                                 self._vars["depart_date"].get()}):
+        for o in ft.usable_board_meetings(year, trip):
             tail = o["label"]
             if o["packet_due"]:
                 tail += f", packet due {o['packet_due'].isoformat()}"
-            if not o["reachable"]:
-                tail += " — too late"
             labels.append(o["date"].isoformat() + self._BOARD_SEP + tail)
             opts.append(o)
         self._board_opts = opts
@@ -1152,9 +1210,9 @@ class _TripDialog(ttk.Toplevel):
         known = {o["date"] for o in ft.board_meeting_options(year)}
         if typed and known and typed not in known:
             self._board_note.config(
-                text="That is not one of the meetings Roka knows about, which "
-                     "is fine — the district only publishes the next few. "
-                     "Check it against " + sc.BOARD_MEETINGS_URL,
+                text="That is not one of the board's regular meetings. Trips "
+                     "are approved at regular meetings, so check it against "
+                     + sc.BOARD_MEETINGS_URL,
                 foreground=muted_fg())
             return
         advice = ft.board_meeting_advice(
@@ -1311,12 +1369,12 @@ class _DeadlinesDialog(ttk.Toplevel):
                 when = ct.fmt_date(d["due"].isoformat())
                 left = d["school_weeks_left"]
                 if d["overdue"]:
-                    line, color = f"⚠ was due {when}", "#B00000"
+                    line, color = f"⚠ PAST DUE — was due {when}", _OVERDUE
                 else:
                     line = f"by {when}"
                     if left is not None:
                         line += f"  ·  {left:.0f} school week(s) from today"
-                    color = "#1a7a1a" if (left or 0) > 2 else "#B45309"
+                    color = "#1a7a1a" if (left or 0) > 2 else _SOON
             else:
                 line = ("Set the school board meeting date on the trip to "
                         "work this one out.")
@@ -2367,7 +2425,7 @@ class _RemindersDialog(ttk.Toplevel):
                 if key in sent:
                     status, color = f"{label}: ✓ sent {sent[key]}", "#1a7a1a"
                 elif due and today >= due:
-                    status, color = f"{label}: ⚠ due (was {due})", "#B45309"
+                    status, color = f"{label}: ⚠ due (was {due})", _OVERDUE
                 elif due:
                     status, color = f"{label}: send on {due}", "#555555"
                 else:

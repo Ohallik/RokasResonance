@@ -73,23 +73,42 @@ _BSD_2026_2027_WINDOWS = {
     "unknown_windows": ["state testing"],
 }
 
-# School board meeting dates.  An overnight or out-of-state trip is approved by
-# the BOARD, and every approval deadline counts back from the meeting rather
-# than from the trip -- so which meeting a trip is aiming at is the first thing
-# that has to be known and the easiest thing to get wrong.
+# School board meeting dates, from the board's published schedule.
 #
-# Kept as plain data, and deliberately only the dates that are actually
-# published.  BSD lists the next couple of meetings at
+# REGULAR meetings only.  The board also holds pre-meeting planning sessions,
+# school visits and retreats, and a field trip is not approved at any of them --
+# offering those would hand a teacher a date that cannot approve their trip and
+# a deadline counted back from it.
+#
+# Kept flat rather than per school year on purpose: an overnight trip in
+# September is approved at a meeting the previous spring, so the meeting and
+# the trip routinely sit in different school years.
+#
+# To extend: add (date, label) pairs from
 #   https://www.bsd405.org/about-us/school-board/meetings
-# and keeps the full year's schedule on a Diligent portal that needs a browser
-# to read.  Roka does not guess the rest from "roughly monthly": a made-up
-# meeting date produces a confident, wrong deadline months out, which is worse
-# than admitting the list is short.
-#
-# To extend: add (date, label) pairs.  Nothing else needs changing.
-_BSD_2026_2027_BOARD = [
-    (date(2026, 8, 24), "Special meeting (planning)"),
+_BSD_BOARD_MEETINGS = [
     (date(2026, 8, 27), "Regular board meeting"),
+    (date(2026, 9, 3), "Regular board meeting"),
+    (date(2026, 9, 17), "Regular board meeting"),
+    (date(2026, 10, 1), "Regular board meeting"),
+    (date(2026, 10, 15), "Regular board meeting"),
+    (date(2026, 11, 5), "Regular board meeting"),
+    (date(2026, 12, 3), "Regular board meeting"),
+    (date(2026, 12, 17), "Regular board meeting"),
+    (date(2027, 1, 7), "Regular board meeting"),
+    (date(2027, 1, 21), "Regular board meeting"),
+    (date(2027, 2, 11), "Regular board meeting"),
+    (date(2027, 3, 4), "Regular board meeting"),
+    (date(2027, 3, 18), "Regular board meeting"),
+    (date(2027, 4, 1), "Regular board meeting"),
+    (date(2027, 4, 22), "Regular board meeting"),
+    (date(2027, 5, 6), "Regular board meeting"),
+    (date(2027, 5, 20), "Regular board meeting"),
+    (date(2027, 6, 3), "Regular board meeting"),
+    (date(2027, 6, 24), "Regular board meeting"),
+    (date(2027, 7, 29), "Regular board meeting"),
+    (date(2027, 8, 5), "Regular board meeting"),
+    (date(2027, 8, 19), "Regular board meeting"),
 ]
 
 CALENDARS = {
@@ -98,7 +117,6 @@ CALENDARS = {
         "last_day": date(2027, 6, 23),
         "no_school": _BSD_2026_2027_NO_SCHOOL,
         "windows": _BSD_2026_2027_WINDOWS,
-        "board_meetings": _BSD_2026_2027_BOARD,
     },
 }
 
@@ -276,7 +294,12 @@ def unchecked_windows(cal):
 BOARD_MEETINGS_URL = "https://www.bsd405.org/about-us/school-board/meetings"
 
 
-def board_meetings(cal):
-    """[(date, label)] for the year, soonest first.  Empty when none are
-    recorded, which callers must handle by saying so rather than by guessing."""
-    return sorted((cal or {}).get("board_meetings") or [], key=lambda x: x[0])
+def board_meetings(cal=None):
+    """[(date, label)] of every regular board meeting on file, soonest first.
+
+    Not filtered by school year: the meeting that approves an autumn trip is
+    held the previous spring, so tying the list to the trip's year would hide
+    exactly the meetings a teacher needs.  ``cal`` is accepted and ignored, so
+    older callers keep working.
+    """
+    return sorted(_BSD_BOARD_MEETINGS, key=lambda x: x[0])

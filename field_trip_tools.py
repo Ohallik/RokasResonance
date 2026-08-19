@@ -348,19 +348,44 @@ def board_meeting_options(school_year, trip=None):
     """
     import school_calendar as sc
 
-    cal = sc.get_calendar(school_year)
     today = datetime.today().date()
     trip_d = parse_date((trip or {}).get("depart_date"))
     weeks = dict((k, w) for k, w, a, _l, _d in DEADLINES_OVERNIGHT
                  if a == "board").get("application", 5)
     out = []
-    for when, label in sc.board_meetings(cal):
-        due = sc.school_weeks_before(cal, when, weeks) if cal else None
+    for when, label in sc.board_meetings():
+        # Count the packet deadline back through the calendar the DEADLINE
+        # falls in, not the trip's: five school weeks before an early-September
+        # meeting lands in the previous school year.
+        cal = (sc.get_calendar(school_year_of(when))
+               or sc.get_calendar(school_year))
+        due = sc.school_weeks_before(cal, when, weeks) if cal else \
+            when - timedelta(days=weeks * 7)
         out.append({
             "date": when, "label": label, "packet_due": due,
             "reachable": bool(due and due >= today),
             "before_trip": bool(trip_d and when < trip_d),
         })
+    return out
+
+
+def school_year_of(d):
+    """The school year a date falls in ("2026-2027"), July to June."""
+    if not d:
+        return None
+    start = d.year if d.month >= 7 else d.year - 1
+    return f"{start}-{start + 1}"
+
+
+def usable_board_meetings(school_year, trip):
+    """The meetings worth offering for this trip: still in reach, and before
+    the trip itself.  A list of every meeting the board will ever hold is not
+    a choice, it is a haystack."""
+    opts = board_meeting_options(school_year, trip)
+    trip_d = parse_date((trip or {}).get("depart_date"))
+    out = [o for o in opts if o["reachable"]]
+    if trip_d:
+        out = [o for o in out if o["date"] < trip_d]
     return out
 
 
@@ -375,16 +400,17 @@ def board_meeting_advice(school_year, trip):
                 "them and it can work out every approval deadline for you; "
                 "until then, type the meeting date yourself. "
                 + sc.BOARD_MEETINGS_URL)
-    usable = [o for o in opts if o["reachable"] and (o["before_trip"] or
-                                                     not parse_date(trip.get("depart_date")))]
+    usable = usable_board_meetings(school_year, trip)
     if not usable:
         return ("None of the board meetings Roka knows about are still in "
                 "reach for this trip. Check the district's list for a later "
                 "one: " + sc.BOARD_MEETINGS_URL)
     first = usable[0]
-    return (f"Soonest meeting you can still make: "
-            f"{fmt_date(first['date'].isoformat())} — packet to the principal "
-            f"by {fmt_date(first['packet_due'].isoformat())}.")
+    return (f"{len(usable)} meeting(s) still in reach. The soonest is "
+            f"{fmt_date(first['date'].isoformat())}, with the packet to the "
+            f"principal by {fmt_date(first['packet_due'].isoformat())}. A "
+            f"later meeting is fine, so long as the trip still has room after "
+            f"it for payments and forms.")
 
 
 def blackout_warning(depart_date, school_year=None):
