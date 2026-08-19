@@ -145,10 +145,16 @@ def required_forms(trip, elementary=False):
     listing them anyway would have teachers ticking boxes for paperwork nobody
     collects.
     """
+    # The medication authorisation (3416P Exhibit A) is covered by FinalForms
+    # wherever FinalForms applies -- which is middle and high school. Meagan
+    # has not collected one on paper in years, and a column of boxes nobody
+    # ticks trains people to ignore the whole list. It stays only at
+    # elementary, which both district procedures put outside FinalForms.
     if trip_type(trip) == TRIP_OVERNIGHT:
-        # Exhibit E and the medication form are due together, from everybody,
-        # six school weeks out -- not only from students who take medication.
-        return [FORM_EXHIBIT_C, FORM_EXHIBIT_E, FORM_MEDICATION]
+        forms = [FORM_EXHIBIT_C, FORM_EXHIBIT_E]
+        if elementary:
+            forms.append(FORM_MEDICATION)
+        return forms
     if elementary:
         return [FORM_EXHIBIT_A, FORM_MEDICATION]
     return []
