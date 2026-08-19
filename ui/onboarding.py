@@ -105,54 +105,81 @@ class OnboardingWizard(ttk.Toplevel):
 
     # ── 1. About ──
     def _build_about(self, parent, profile_name):
+        """Name, then what they teach, then their school(s), then backup.
+
+        What they teach comes SECOND on purpose.  It decides whether the next
+        question is "which school?" or "which schools?", and asking for a home
+        school first means an itinerant answers a question that has no true
+        answer for them -- six schools and none of them the main one -- before
+        being told they did not have to.
+        """
         box = ttk.Labelframe(parent, text=" 1. About you ", padding=10)
         box.pack(fill=X, pady=(0, 10))
         grid = ttk.Frame(box)
         grid.pack(fill=X)
         grid.columnconfigure(1, weight=1)
+
+        r = 0
         ttk.Label(grid, text="Your name", font=("Segoe UI", 9, "bold")).grid(
-            row=0, column=0, sticky=W, pady=4, padx=(0, 10))
+            row=r, column=0, sticky=W, pady=4, padx=(0, 10))
         self._name_var = tk.StringVar(value=profile_name or "")
-        ttk.Entry(grid, textvariable=self._name_var).grid(row=0, column=1, sticky="ew", pady=4)
-        self._school_lbl = ttk.Label(grid, text="School",
-                                     font=("Segoe UI", 9, "bold"))
-        self._school_lbl.grid(row=1, column=0, sticky=W, pady=4, padx=(0, 10))
-        self._school = tk.StringVar()
-        self._school_combo = ttk.Combobox(grid, textvariable=self._school,
-                                          values=BSD_SCHOOLS)
-        self._school_combo.grid(row=1, column=1, sticky="ew", pady=4)
-        self._school_note = ttk.Label(grid, text="(Bellevue School District)",
-                                      font=("Segoe UI", 8),
-                                      foreground=muted_fg())
-        self._school_note.grid(row=2, column=1, sticky=W)
+        ttk.Entry(grid, textvariable=self._name_var).grid(
+            row=r, column=1, sticky="ew", pady=4)
 
-        ttk.Label(grid, text="Backup folder", font=("Segoe UI", 9, "bold")).grid(
-            row=3, column=0, sticky=W, pady=(8, 4), padx=(0, 10))
-        self._backup = tk.StringVar()
-        brow = ttk.Frame(grid)
-        brow.grid(row=3, column=1, sticky="ew", pady=(8, 0))
-        ttk.Button(brow, text="Browse…", bootstyle=(SECONDARY, OUTLINE),
-                   command=self._browse_backup).pack(side=RIGHT, padx=(6, 0))
-        ttk.Entry(brow, textvariable=self._backup).pack(side=LEFT, fill=X, expand=True)
-        ttk.Label(grid, text="Recommended: a OneDrive folder, so a copy of your "
-                            "data is saved off this computer automatically.",
-                  font=("Segoe UI", 8), foreground=muted_fg(),
-                  wraplength=430, justify=LEFT).grid(row=4, column=1, sticky=W)
-
-        ttk.Label(box, text="What do you teach?",
-                  font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(8, 2))
+        r += 1
+        ttk.Label(grid, text="What do you teach?",
+                  font=("Segoe UI", 9, "bold")).grid(
+            row=r, column=0, sticky=W, pady=(8, 2), padx=(0, 10))
         self._focus = tk.StringVar(value="band")
-        frow = ttk.Frame(box)
-        frow.pack(anchor=W)
+        frow = ttk.Frame(grid)
+        frow.grid(row=r, column=1, sticky=W, pady=(8, 2))
         for label, val in FOCUS:
             ttk.Radiobutton(frow, text=label, value=val,
                             variable=self._focus,
-                            command=self._focus_changed).pack(side=LEFT, padx=(0, 12))
-        self._build_elementary_schools(box)
-        ttk.Label(box, text="Choir and orchestra skip the percussion rotation; "
-                            "band gets it. You can rename or add classes below.",
+                            command=self._focus_changed).pack(side=LEFT,
+                                                              padx=(0, 12))
+        r += 1
+        self._focus_note = ttk.Label(
+            grid, text="Choir and orchestra skip the percussion rotation; band "
+                       "gets it. You can rename or add classes below.",
+            font=("Segoe UI", 8), foreground=muted_fg(),
+            wraplength=430, justify=LEFT)
+        self._focus_note.grid(row=r, column=1, sticky=W)
+
+        r += 1
+        self._school_lbl = ttk.Label(grid, text="School",
+                                     font=("Segoe UI", 9, "bold"))
+        self._school_lbl.grid(row=r, column=0, sticky=W, pady=4, padx=(0, 10))
+        self._school = tk.StringVar()
+        self._school_combo = ttk.Combobox(grid, textvariable=self._school,
+                                          values=BSD_SCHOOLS)
+        self._school_combo.grid(row=r, column=1, sticky="ew", pady=4)
+        r += 1
+        self._school_note = ttk.Label(grid, text="(Bellevue School District)",
+                                      font=("Segoe UI", 8),
+                                      foreground=muted_fg())
+        self._school_note.grid(row=r, column=1, sticky=W)
+
+        r += 1
+        self._elem_row = r
+        self._build_elementary_schools(grid)
+
+        r += 1
+        ttk.Label(grid, text="Backup folder",
+                  font=("Segoe UI", 9, "bold")).grid(
+            row=r, column=0, sticky=W, pady=(8, 4), padx=(0, 10))
+        self._backup = tk.StringVar()
+        brow = ttk.Frame(grid)
+        brow.grid(row=r, column=1, sticky="ew", pady=(8, 0))
+        ttk.Button(brow, text="Browse…", bootstyle=(SECONDARY, OUTLINE),
+                   command=self._browse_backup).pack(side=RIGHT, padx=(6, 0))
+        ttk.Entry(brow, textvariable=self._backup).pack(side=LEFT, fill=X,
+                                                        expand=True)
+        r += 1
+        ttk.Label(grid, text="Recommended: a OneDrive folder, so a copy of your "
+                            "data is saved off this computer automatically.",
                   font=("Segoe UI", 8), foreground=muted_fg(),
-                  wraplength=620, justify=LEFT).pack(anchor=W, pady=(4, 0))
+                  wraplength=430, justify=LEFT).grid(row=r, column=1, sticky=W)
 
     def _build_elementary_schools(self, parent):
         """The schools an itinerant teaches at -- however many that is.
@@ -163,6 +190,9 @@ class OnboardingWizard(ttk.Toplevel):
         box is replaced by a list.
         """
         self._elem_box = ttk.Frame(parent)
+        self._elem_box.grid(row=self._elem_row, column=0, columnspan=2,
+                            sticky="ew", pady=(4, 0))
+        self._elem_box.grid_remove()          # shown by _focus_changed
         self._elem_rows = []          # (name, program)
 
         ttk.Label(self._elem_box,
@@ -218,9 +248,9 @@ class OnboardingWizard(ttk.Toplevel):
             else:
                 w.grid()
         if elementary:
-            self._elem_box.pack(fill=X, anchor=W, pady=(4, 0))
+            self._elem_box.grid()
         else:
-            self._elem_box.pack_forget()
+            self._elem_box.grid_remove()
 
     # ── 2. Classes ──
     def _build_classes(self, parent):
