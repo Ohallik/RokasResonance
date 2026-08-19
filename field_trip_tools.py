@@ -95,10 +95,12 @@ FORM_LABELS = {
     FORM_MEDICATION: "3416P — medication authorization (retired)",
 }
 
+# Named for what they are.  "Exhibit C" is what the district calls its own
+# filing cabinet; a column heading has to say what the teacher is chasing.
 FORM_SHORT = {
-    FORM_EXHIBIT_A: "Exhibit A",
-    FORM_EXHIBIT_C: "Exhibit C",
-    FORM_EXHIBIT_E: "Exhibit E",
+    FORM_EXHIBIT_A: "Parent Authorization",
+    FORM_EXHIBIT_C: "Parent Authorization",
+    FORM_EXHIBIT_E: "Emergency Health",
     FORM_MEDICATION: "Medication",
 }
 
@@ -517,6 +519,33 @@ def trip_template(trip):
     return {k: trip.get(k) for k in TEMPLATE_FIELDS}
 
 
+def effective_return_date(trip):
+    """The date the trip gets back.
+
+    A day trip returns the day it left, and saying so beats a dash: on the
+    district form a blank Return Date is a question left unanswered, and on
+    screen it reads as though somebody forgot.  Trips saved before Roka filled
+    this in automatically still have it empty, so it is worked out on the way
+    out rather than trusted from the record.
+    """
+    back = (trip.get("return_date") or "").strip()
+    if back:
+        return back
+    if trip_type(trip) == TRIP_DAY:
+        return (trip.get("depart_date") or "").strip()
+    return ""
+
+
+def when_line(date_str, time_str):
+    """"Tuesday, March 9, 2027, 8:45am" -- one comma between the date and the
+    time, rather than a gap wide enough to read as two separate answers."""
+    when = fmt_date(date_str) or ""
+    at = (time_str or "").strip()
+    if when and at:
+        return f"{when}, {at}"
+    return when or at
+
+
 def groups_list(trip):
     return [g.strip() for g in (trip.get("groups_list") or "").split(",")
             if g.strip()]
@@ -549,8 +578,10 @@ def chaperones_needed(n_students):
 
 
 def _money(value):
+    """A cost as a number.  A box holding "TBD" or "N/A" counts as nothing
+    towards the total -- the form says what is missing beside it."""
     try:
-        return float(value or 0)
+        return float(str(value).replace("$", "").replace(",", "").strip() or 0)
     except (TypeError, ValueError):
         return 0.0
 

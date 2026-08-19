@@ -1420,10 +1420,10 @@ class _ApplicationDialog(ttk.Toplevel):
         self._n_chaps = chaps
         rows = [("Class or group", trip.get("groups_list")),
                 ("Destination", trip.get("destination")),
-                ("Departure", f"{ct.fmt_date(trip.get('depart_date')) or '—'}"
-                              f"   {trip.get('depart_time') or ''}"),
-                ("Return", f"{ct.fmt_date(trip.get('return_date')) or '—'}"
-                           f"   {trip.get('return_time') or ''}"),
+                ("Departure", ft.when_line(trip.get("depart_date"),
+                                           trip.get("depart_time")) or "—"),
+                ("Return", ft.when_line(ft.effective_return_date(trip),
+                                        trip.get("return_time")) or "—"),
                 ("Method of travel", trip.get("travel_method")),
                 ("Number of students", f"{self._n_students} "
                                        f"(from the roster)"),
@@ -1485,9 +1485,11 @@ class _ApplicationDialog(ttk.Toplevel):
         costs = tk.LabelFrame(body, text=" Trip costs ",
                               font=("Segoe UI", 9, "bold"), padx=10, pady=6)
         costs.pack(fill=X, pady=(0, 8))
-        ttk.Label(costs, text="One-time totals the school pays. The district "
-                              "form works out the cost per student from these "
-                              "and the roster, and so does Roka.",
+        ttk.Label(costs, text="One-time totals the school pays; the cost per "
+                              "student is worked out from these and the "
+                              "roster. Leave a box empty to leave it empty on "
+                              "the form, type 0 to print $0.00, or write TBD "
+                              "or N/A for something you do not know yet.",
                   font=("Segoe UI", 8), foreground=muted_fg(),
                   wraplength=560, justify=LEFT).pack(anchor=W)
         self._cost_vars = {}
@@ -1502,7 +1504,7 @@ class _ApplicationDialog(ttk.Toplevel):
                 row=i, column=0, sticky=W, padx=(0, 8), pady=2)
             ttk.Label(grid, text="$", font=("Segoe UI", 9)).grid(
                 row=i, column=1, sticky=E)
-            v = tk.StringVar(value=str(trip.get(key) or "") or "0")
+            v = tk.StringVar(value=str(trip.get(key) or ""))
             v.trace_add("write", lambda *a: self._recalc())
             self._cost_vars[key] = v
             ttk.Entry(grid, textvariable=v, width=12).grid(row=i, column=2,
@@ -1525,7 +1527,7 @@ class _ApplicationDialog(ttk.Toplevel):
         rate_cb.bind("<<ComboboxSelected>>", lambda e: self._rate_picked())
         ttk.Label(srow, text="$", font=("Segoe UI", 9)).pack(side=LEFT,
                                                              padx=(10, 0))
-        sv = tk.StringVar(value=str(trip.get("sub_cost") or "") or "0")
+        sv = tk.StringVar(value=str(trip.get("sub_cost") or ""))
         sv.trace_add("write", lambda *a: self._recalc())
         self._cost_vars["sub_cost"] = sv
         ttk.Entry(srow, textvariable=sv, width=10).pack(side=LEFT)
@@ -1584,6 +1586,9 @@ class _ApplicationDialog(ttk.Toplevel):
 
     def _rate_picked(self):
         key = self._rate_key()
+        # Choosing "no substitute needed" is an ANSWER, so it writes 0 rather
+        # than clearing the box: a blank means the question is still open, and
+        # the two should not look the same on a form somebody signs.
         self._cost_vars["sub_cost"].set(
             f"{ft.SUB_RATE_AMOUNT[key]:.2f}" if key in ft.SUB_RATE_AMOUNT
             else "0")
@@ -1595,12 +1600,11 @@ class _ApplicationDialog(ttk.Toplevel):
             out[k] = v.get().strip()
         for k, box in self._texts.items():
             out[k] = box.get("1.0", "end").strip()
+        # Kept as typed.  Blank means the question is open, "0" means the
+        # answer is nothing, and "TBD" means it is not a number yet -- three
+        # different answers that all became 0.0 before, and all printed blank.
         for k, v in self._cost_vars.items():
-            try:
-                out[k] = float(str(v.get()).replace("$", "").replace(",", "")
-                               or 0)
-            except ValueError:
-                out[k] = 0.0
+            out[k] = str(v.get()).strip()
         out["sub_rate"] = self._rate_key()
         out["funding"] = self._funding.get()
         out["covered"] = 1 if self._covered.get() else 0
@@ -1786,8 +1790,12 @@ class _RosterFormsDialog(ttk.Toplevel):
         self.tree = None
         self._build_tree()
 
-        self._summary = ttk.Label(self, text="", font=("Segoe UI", 10, "bold"))
+        self._summary = ttk.Label(self, text="", font=("Segoe UI", 10, "bold"),
+                                  justify=LEFT)
         self._summary.pack(anchor=W, padx=16)
+        self._outstanding = ttk.Label(self, text="", font=("Segoe UI", 9),
+                                      justify=LEFT)
+        self._outstanding.pack(anchor=W, padx=16)
         self._costs = ttk.Label(self, text="", font=("Segoe UI", 9),
                                 foreground=muted_fg())
         self._costs.pack(anchor=W, padx=16, pady=(0, 4))
@@ -1808,20 +1816,27 @@ class _RosterFormsDialog(ttk.Toplevel):
         one code path for however many columns there are."""
         for w in self._tree_holder.winfo_children():
             w.destroy()
-        cols = ["going", "name", "grade"] + self.forms
+        cols = ["going", "name", "grade"] + self.forms + ["filler"]
         self.tree = ttk.Treeview(self._tree_holder, columns=cols,
                                  show="headings", selectmode="browse",
                                  bootstyle=PRIMARY)
         self.tree.heading("going", text="Going", anchor=CENTER)
         self.tree.column("going", width=px(56), anchor=CENTER, stretch=False)
         self.tree.heading("name", text="Student", anchor=W)
-        self.tree.column("name", width=px(210), anchor=W, stretch=True)
+        # Fixed, not stretchy.  A stretching name column swallows every pixel
+        # the window is wider than its contents, which put a hand's width of
+        # nothing between a student and their tick box.
+        self.tree.column("name", width=px(200), anchor=W, stretch=False)
         self.tree.heading("grade", text="Gr", anchor=CENTER)
         self.tree.column("grade", width=px(40), anchor=CENTER, stretch=False)
         for key, label in self.columns:
             self.tree.heading(key, text=label, anchor=CENTER)
-            self.tree.column(key, width=px(max(90, 9 * len(label))),
+            self.tree.column(key, width=px(max(96, int(7.6 * len(label)))),
                              anchor=CENTER, stretch=False)
+        # The slack goes here instead, at the far right where it reads as
+        # margin rather than as a gap in the row.
+        self.tree.heading("filler", text="")
+        self.tree.column("filler", width=px(10), stretch=True)
         self.tree.pack(fill=BOTH, expand=True)
         self.tree.bind("<Button-1>", self._click, add="+")
 
@@ -1901,15 +1916,18 @@ class _RosterFormsDialog(ttk.Toplevel):
             for f in self.forms:
                 vals.append("\u2611" if self._have.get((stu["id"], f))
                             else "\u2610")
+            vals.append("")                       # the filler column
             self.tree.insert("", "end", iid=str(stu["id"]), values=vals)
         self._recalc()
 
     def _recalc(self):
         n = sum(1 for v in self._going.values() if v)
         need = ft.chaperones_needed(n)
-        line = (f"{n} student(s) attending      "
-                f"\u2248 {need} adult chaperone(s) suggested "
-                f"(1 per {ft.STUDENTS_PER_CHAPERONE}, plus you)")
+        self._summary.config(
+            text=f"{n} student(s) attending      "
+                 f"\u2248 {need} adult chaperone(s) suggested "
+                 f"(1 per {ft.STUDENTS_PER_CHAPERONE}, plus you)")
+        line, colour = "", muted_fg()
         if self.forms:
             going = [s for s in self._students if self._going.get(s["id"])]
             missing = sum(1 for s in going for f in self.forms
@@ -1918,13 +1936,14 @@ class _RosterFormsDialog(ttk.Toplevel):
             cannot = [s for s in going
                       if any(not self._have.get((s["id"], f)) for f in gate)]
             if missing:
-                line += f"      {missing} form(s) still to come back"
+                line = f"{missing} still to come back"
                 if cannot:
-                    line += (f", and {len(cannot)} cannot travel without "
-                             f"{ft.FORM_SHORT[gate[0]]}")
+                    line += (f"  \u00b7  {len(cannot)} cannot travel without "
+                             f"the {ft.FORM_SHORT[gate[0]]} form")
+                colour = "#B45309"
             else:
-                line += "      all forms in \u2713"
-        self._summary.config(text=line)
+                line, colour = "Everything is in \u2713", "#1a7a1a"
+        self._outstanding.config(text=line, foreground=colour)
         costs = ft.trip_costs(self.trip, n)
         per = ("$0.00 (covered)" if self.trip.get("covered")
                else f"${costs['per_student']:,.2f}")

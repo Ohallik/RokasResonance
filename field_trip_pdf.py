@@ -74,6 +74,48 @@ def _money(v, blank=""):
     return f"{f:,.2f}"
 
 
+def _cost_cell(v):
+    """What goes in a Trip Costs box.
+
+    Three different things were all printing as an empty box, and only one of
+    them meant "empty":
+
+      nothing typed  -> "$"          the question is still open
+      0              -> "$ 0.00"     answered, and the answer is nothing
+      "TBD" / "N/A"  -> "TBD"        answered, and the answer is not a number
+
+    A zero that prints blank is the planner quietly editing the teacher's
+    answer, and on a form somebody signs that is not a small thing.
+    """
+    raw = ("" if v is None else str(v)).strip()
+    if not raw:
+        return "$"
+    try:
+        return f"$ {float(raw.replace('$', '').replace(',', '')):,.2f}"
+    except ValueError:
+        return raw
+
+
+def _is_number(v):
+    try:
+        float(str(v).replace("$", "").replace(",", "").strip() or 0)
+        return True
+    except ValueError:
+        return False
+
+
+def _unknowns(trip):
+    """The cost boxes holding words rather than figures, so a total can say
+    what it does not include instead of pretending to be complete."""
+    out = []
+    for key in ("entry_fee", "transport_cost", "sub_cost", "food_cost",
+                "other_cost"):
+        raw = ("" if trip.get(key) is None else str(trip.get(key))).strip()
+        if raw and not _is_number(raw):
+            out.append(raw)
+    return out
+
+
 def _num(v):
     try:
         return float(v or 0)
@@ -174,11 +216,11 @@ def _sub_row(trip, s, note=True, note_w=1.95):
 def _costs_day(trip, s):
     """The day form's cost table: one column of rows, total boxed at the foot."""
     rows = [
-        ("Entry fee/participation:", "$ " + _money(trip.get("entry_fee"))),
-        ("Transportation:", "$ " + _money(trip.get("transport_cost"))),
+        ("Entry fee/participation:", _cost_cell(trip.get("entry_fee"))),
+        ("Transportation:", _cost_cell(trip.get("transport_cost"))),
         None,                                   # substitute row, built below
-        ("Food:", "$ " + _money(trip.get("food_cost"))),
-        ("Other:", "$ " + _money(trip.get("other_cost"))),
+        ("Food:", _cost_cell(trip.get("food_cost"))),
+        ("Other:", _cost_cell(trip.get("other_cost"))),
     ]
     data, styles = [], []
     for i, r in enumerate(rows):
@@ -188,7 +230,7 @@ def _costs_day(trip, s):
         else:
             data.append([Paragraph(r[0], s["lbl"]), Paragraph(r[1], s["val"])])
     data.append([Paragraph("<b>Total Trip Cost:</b>", s["lblb"]),
-                 Paragraph("<b>$ " + _money(_total(trip)) + "</b>", s["val"])])
+                 Paragraph("<b>" + _total_cell(trip) + "</b>", s["val"])])
     t = Table(data, colWidths=[2.10 * inch, 4.90 * inch])
     t.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -207,13 +249,13 @@ def _costs_overnight(trip, s):
     substitute rates."""
     data = [
         [Paragraph("Entry fee/participation:", s["lbl"]),
-         Paragraph("$ " + _money(trip.get("entry_fee")), s["val"]),
+         Paragraph(_cost_cell(trip.get("entry_fee")), s["val"]),
          Paragraph("Food:", s["lbl"]),
-         Paragraph("$ " + _money(trip.get("food_cost")), s["val"])],
+         Paragraph(_cost_cell(trip.get("food_cost")), s["val"])],
         [Paragraph("Transportation:", s["lbl"]),
-         Paragraph("$ " + _money(trip.get("transport_cost")), s["val"]),
+         Paragraph(_cost_cell(trip.get("transport_cost")), s["val"]),
          Paragraph("Other:", s["lbl"]),
-         Paragraph("$ " + _money(trip.get("other_cost")), s["val"])],
+         Paragraph(_cost_cell(trip.get("other_cost")), s["val"])],
     ]
     t = Table(data, colWidths=[1.55 * inch, 1.95 * inch, 1.55 * inch, 1.95 * inch])
     t.setStyle(TableStyle([
@@ -228,7 +270,7 @@ def _costs_overnight(trip, s):
           _sub_row(trip, s, note=False), "", ""],
          [Paragraph(f"* {ft.SUB_RATE_NOTE}", s["tinyr"]), "",
           Paragraph("<b>Total:</b>", s["lblb"]),
-          Paragraph("<b>$ " + _money(_total(trip)) + "</b>", s["val"])]],
+          Paragraph("<b>" + _total_cell(trip) + "</b>", s["val"])]],
         colWidths=[1.90 * inch, 3.00 * inch, 0.60 * inch, 1.50 * inch])
     sub.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -247,6 +289,20 @@ def _total(trip):
     return sum(_num(trip.get(k)) for k in
                ("entry_fee", "transport_cost", "sub_cost", "food_cost",
                 "other_cost"))
+
+
+def _total_cell(trip):
+    """The Total box.  Adds up what is a number and names what is not."""
+    unknown = _unknowns(trip)
+    filled = any(("" if trip.get(k) is None else str(trip.get(k))).strip()
+                 for k in ("entry_fee", "transport_cost", "sub_cost",
+                           "food_cost", "other_cost"))
+    if not filled:
+        return "$"
+    text = f"$ {_total(trip):,.2f}"
+    if unknown:
+        text += "  + " + " + ".join(sorted(set(unknown)))
+    return text
 
 
 def _question(question, answer, s, lines=2):
@@ -363,8 +419,12 @@ def build_application(trip, path, students=0, chaperones=0, teacher_name="",
     when_req = trip.get("date_of_request") or datetime.today().strftime("%Y-%m-%d")
     per = ""
     if students:
-        per = ("$0.00 (covered)" if trip.get("covered")
-               else "$" + _money(_total(trip) / students, blank="0.00"))
+        if trip.get("covered"):
+            per = "$0.00 (covered)"
+        else:
+            per = f"${_total(trip) / students:,.2f}"
+            if _unknowns(trip):
+                per += "  + " + " + ".join(sorted(set(_unknowns(trip))))
     n_students = str(students) if students else ""
     n_chaps = str(chaperones) if chaperones else ""
 
@@ -375,7 +435,7 @@ def build_application(trip, path, students=0, chaperones=0, teacher_name="",
             (("Class or Group:", trip.get("groups_list")),
              ("Teacher/Advisor Cell Phone:", trip.get("advisor_phone"))),
             (("Departure Date:", fmt_date(trip.get("depart_date"))),
-             ("Return Date:", fmt_date(trip.get("return_date")))),
+             ("Return Date:", fmt_date(ft.effective_return_date(trip)))),
             (("Departure Time from School:", trip.get("depart_time")),
              ("Arrival at Destination:", trip.get("arrive_dest_time"))),
             (("Departure from Destination:", trip.get("depart_dest_time")),
@@ -399,7 +459,7 @@ def build_application(trip, path, students=0, chaperones=0, teacher_name="",
              ("Anticipated Cost / Student:", per)),
             (("Departure Time:", trip.get("depart_time")),
              ("Method of Travel:", trip.get("travel_method"))),
-            (("Return Date:", fmt_date(trip.get("return_date"))),
+            (("Return Date:", fmt_date(ft.effective_return_date(trip))),
              ("Charge to Budget Code:", trip.get("budget_code"))),
             (("Return Time:", trip.get("return_time")),
              ("Dept. Chair's Signature:", "")),
