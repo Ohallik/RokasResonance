@@ -423,6 +423,30 @@ class MainMenu(ttk.Frame):
             btn_area, "  🧰  Teacher Tools", self._open_lesson_plans, "blue"
         ).grid(row=cur_row, column=1, sticky="ew", padx=(3, 0), pady=2, ipady=btn_pad)
 
+        # 5th grade, and only for the teachers who actually teach it.  Most
+        # have no elementary posting and should never see this button; the ones
+        # who do carry up to six schools behind it.
+        try:
+            from ui.fifth_grade_view import has_fifth_grade
+            show_fifth = has_fifth_grade(self.db)
+        except Exception:
+            show_fifth = False
+        if show_fifth:
+            cur_row += 1
+            self._nav_button(
+                btn_area, "  🎺  5th Grade", self._open_fifth_grade, "purple"
+            ).grid(row=cur_row, column=0, columnspan=2, sticky="ew",
+                   pady=2, ipady=btn_pad)
+
+    def _open_fifth_grade(self):
+        from ui.fifth_grade_view import open_fifth_grade_window
+        if getattr(self, "_fifth_window", None) and self._fifth_window.winfo_exists():
+            self._fifth_window.lift()
+            self._fifth_window.focus_force()
+            return
+        self._fifth_window = open_fifth_grade_window(
+            self.winfo_toplevel(), self.db, self.base_dir)
+
     def _make_stat(self, parent, value: str, label: str, col: int):
         f = ttk.Frame(parent)
         f.grid(row=0, column=col, padx=14)

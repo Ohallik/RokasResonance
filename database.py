@@ -898,11 +898,27 @@ class Database:
         the district's elementary form says so in as many words."""
         if charges_fees is None:
             charges_fees = (level != self.ELEMENTARY)
+        name = (name or "").strip()
         with self._connect() as conn:
+            # Two schools with the same name is never what anybody meant, and a
+            # twin is worse than useless -- its instruments and children are
+            # split across two tabs with identical labels.  Adding a school
+            # that is already here, including one retired earlier, brings that
+            # one back rather than making a second.
+            existing = conn.execute(
+                "SELECT id FROM sites WHERE lower(trim(name)) = lower(?)",
+                (name,)).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE sites SET is_active = 1, level = ?, program = ?, "
+                    "charges_fees = ? WHERE id = ?",
+                    (level, program, 1 if charges_fees else 0, existing["id"]))
+                conn.commit()
+                return existing["id"]
             cur = conn.execute(
                 "INSERT INTO sites (name, level, program, charges_fees) "
                 "VALUES (?, ?, ?, ?)",
-                ((name or "").strip(), level, program, 1 if charges_fees else 0))
+                (name, level, program, 1 if charges_fees else 0))
             conn.commit()
             return cur.lastrowid
 
@@ -1156,7 +1172,7 @@ class Database:
             "category", "description", "size", "brand", "model", "barcode", "quantity",
             "district_no", "case_no", "condition", "serial_no", "date_purchased",
             "year_purchased", "year_manufactured", "po_number", "last_service", "amount_paid", "est_value",
-            "locker", "lock_no", "combo", "comments", "accessories"
+            "locker", "lock_no", "combo", "comments", "accessories", "site_id"
         ]
         values = [data.get(c) for c in cols]
         placeholders = ",".join(["?"] * len(cols))
@@ -2215,7 +2231,7 @@ class Database:
             "parent1_phone", "parent1_email", "parent2_name", "parent2_relation",
             "parent2_phone", "parent2_email", "notes",
             "ensembles", "class_periods", "primary_instrument", "secondary_instrument",
-            "preferred_name", "jazz_instrument", "provisional"
+            "preferred_name", "jazz_instrument", "provisional", "site_id"
         ]
         values = [data.get(c) for c in cols]
         placeholders = ",".join(["?"] * len(cols))

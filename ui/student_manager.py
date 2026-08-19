@@ -126,10 +126,12 @@ class _ClassOptionsMixin:
 
 
 class StudentManager(_ClassOptionsMixin, ttk.Frame):
-    def __init__(self, parent, db, program_type: str = "band"):
+    def __init__(self, parent, db, program_type: str = "band", site_id=None):
         super().__init__(parent)
         self.db = db
         self.program_type = program_type or "band"
+        # Set: this is one school's roster.  Unset: the secondary program.
+        self.site_id = site_id
         self._year_var = tk.StringVar()
         self._search_var = tk.StringVar()
         self._show_inactive_var = tk.BooleanVar(value=False)
@@ -438,7 +440,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         # them out of this roster is what keeps them off secondary mailings.
         self._all_students = list(self.db.get_all_students(
             school_year=year, include_inactive=include_inactive,
-            level="secondary"))
+            site_id=self.site_id,
+            level=None if self.site_id else "secondary"))
         # Keep only ticks for students still in the loaded roster
         loaded_ids = {s["id"] for s in self._all_students}
         self._checked &= loaded_ids
@@ -812,12 +815,40 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         self.refresh()
 
     def _add_student(self):
+        high_water = self._max_student_id()
         dlg = StudentDialog(self.winfo_toplevel(), self.db,
                              student_id=None,
                              default_year=self._year_var.get(),
                              program_type=self.program_type)
         self.wait_window(dlg)
+        self._claim_new_students(high_water)
         self.refresh()
+
+    def _max_student_id(self):
+        try:
+            with self.db._connect() as conn:
+                row = conn.execute("SELECT MAX(id) AS m FROM students").fetchone()
+            return (row["m"] or 0) if row else 0
+        except Exception:
+            return 0
+
+    def _claim_new_students(self, since_id):
+        """A child added here belongs to this school.
+
+        Rows created before the dialog opened are left alone: a profile with
+        several schools also has older unassigned rows, and claiming those for
+        whichever school is on screen is the mix-up all of this exists to stop.
+        """
+        if self.site_id is None:
+            return
+        try:
+            with self.db._connect() as conn:
+                conn.execute(
+                    "UPDATE students SET site_id = ? "
+                    "WHERE site_id IS NULL AND id > ?", (self.site_id, since_id))
+                conn.commit()
+        except Exception:
+            pass
 
     def _edit_student(self):
         sid = self._get_selected()

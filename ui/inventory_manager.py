@@ -45,10 +45,13 @@ COL_WIDTHS = {
 
 
 class InventoryManager(ttk.Frame):
-    def __init__(self, parent, db, base_dir: str, on_checkouts=None):
+    def __init__(self, parent, db, base_dir: str, on_checkouts=None, site_id=None):
         super().__init__(parent)
         self.db = db
         self.base_dir = base_dir
+        # When set, this is one school's inventory and nothing else appears in
+        # it.  Left unset, it is the secondary program, as it has always been.
+        self.site_id = site_id
         self._on_checkouts = on_checkouts
         self._all_rows = []
         self._selected_id = None
@@ -518,7 +521,9 @@ class InventoryManager(ttk.Frame):
         # live at that school and are managed from the 5th Grade window, so
         # they are not in this list to be checked out to the wrong child.
         self._all_rows = list(self.db.get_instruments_with_status(
-            include_inactive=self._show_inactive.get(), level="secondary"
+            include_inactive=self._show_inactive.get(),
+            site_id=self.site_id,
+            level=None if self.site_id else "secondary",
         ))
         self._update_category_filter()
         self._apply_filters()
@@ -818,9 +823,38 @@ class InventoryManager(ttk.Frame):
 
     def _add_instrument(self):
         from ui.instrument_dialog import InstrumentDialog
+        high_water = self._max_instrument_id()
         dlg = InstrumentDialog(self.winfo_toplevel(), self.db, instrument_id=None)
         self.wait_window(dlg)
+        self._claim_new_instruments(high_water)
         self.refresh()
+
+    def _max_instrument_id(self):
+        try:
+            with self.db._connect() as conn:
+                row = conn.execute("SELECT MAX(id) AS m FROM instruments").fetchone()
+            return (row["m"] or 0) if row else 0
+        except Exception:
+            return 0
+
+    def _claim_new_instruments(self, since_id):
+        """Put an instrument just added here into this school.
+
+        Only rows created since the dialog opened are touched.  A profile with
+        several schools also has older rows the migration declined to guess at,
+        and sweeping every unassigned instrument into whichever school happened
+        to be on screen is exactly the mix-up this is all meant to prevent.
+        """
+        if not self.site_id or not since_id and since_id != 0:
+            return
+        try:
+            with self.db._connect() as conn:
+                conn.execute(
+                    "UPDATE instruments SET site_id = ? "
+                    "WHERE site_id IS NULL AND id > ?", (self.site_id, since_id))
+                conn.commit()
+        except Exception:
+            pass
 
     def _edit_instrument(self):
         iid = self._get_selected_instrument()
