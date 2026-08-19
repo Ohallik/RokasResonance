@@ -125,6 +125,79 @@ def site_groups(db, site, school_year=None):
     return groups
 
 
+def all_class_options(db, base_dir=None, program_type="band", school_year=None):
+    """Every group a whole-class action can be pointed at -- a fee, a field
+    trip -- named the way the roster names it.
+
+    Three sources, because no one of them is complete on its own:
+
+      * Each elementary school's own sections, always, and always carrying the
+        school's name.  Six schools each have a Section 1, and "Section 1" on
+        its own is not an answer to which children get the bill.
+      * What this year's students are ACTUALLY in.  The configured class list
+        is what the teacher told the setup wizard; this is what the data holds,
+        and a fee lands on the second one.  A teacher whose roster says "Entry
+        Band" was being offered "MS Band (Entry)" and nothing else.
+      * The configured classes, so a class nobody has been imported into yet
+        can still be picked.  At the start of a year that is all of them.
+
+    De-duplicated by class identity, so "Entry Band" and "MS Band (Entry)" do
+    not both appear -- but two schools' Section 1 do, because they are two
+    different sets of children.
+    """
+    from class_registry import class_identity
+    elementary, rest, seen = [], [], set()
+
+    def add(bucket, label):
+        label = (label or "").strip()
+        if not label:
+            return
+        key = class_identity(label)
+        if key in seen:
+            return
+        seen.add(key)
+        bucket.append(label)
+
+    if school_year is None:
+        try:
+            school_year = db.current_school_year()
+        except Exception:
+            school_year = None
+
+    try:
+        for site in db.get_sites(level="elementary"):
+            for g in site_groups(db, site, school_year):
+                add(elementary, g)
+    except Exception:
+        pass
+    try:
+        for stu in db.get_all_students(school_year=school_year):
+            held = stu["ensembles"] if "ensembles" in stu.keys() else ""
+            for part in (held or "").split(","):
+                add(rest, part)
+    except Exception:
+        pass
+    # The configured class list belongs to a SECONDARY program.  At elementary
+    # the schools' own sections are the class list, and the placeholder in the
+    # elementary registry ("Beginning Band") names no school and is the wrong
+    # word entirely at an orchestra school.  So it is offered only to a teacher
+    # who actually has a secondary posting.
+    secondary = True
+    if program_type == "elementary":
+        try:
+            secondary = bool([x for x in db.get_sites() if x["level"] != "elementary"])
+        except Exception:
+            secondary = False
+    if secondary:
+        try:
+            import class_registry
+            for c in class_registry.load_classes(base_dir, program_type):
+                add(rest, c["label"])
+        except Exception:
+            pass
+    return elementary + sorted(rest) or list(ensembles_for(program_type, base_dir))
+
+
 def fifth_grade_instruments(program_type: str):
     """What a 5th grader can be recorded as playing.
 

@@ -13,7 +13,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
 
-from ui.ensembles import ensembles_for
+from ui.ensembles import ensembles_for, all_class_options
 from ui.names import display_last_first
 from ui.theme import px
 
@@ -739,7 +739,9 @@ class _FieldTripDialog(ttk.Toplevel):
         ttk.Separator(m, orient=HORIZONTAL).pack(fill=X, pady=(10, 6))
         ttk.Label(m, text="Attending ensemble(s):", font=("Segoe UI", 9, "bold")).pack(anchor=W)
         ens_grid = ttk.Frame(m); ens_grid.pack(fill=X, pady=(2, 4))
-        for i, opt in enumerate(ensembles_for(self.program_type)):
+        trip_groups = all_class_options(self.db, self.base_dir, self.program_type,
+                                        self.school_year)
+        for i, opt in enumerate(trip_groups):
             v = tk.BooleanVar(value=False)
             self._trip_ens_vars[opt] = v
             ttk.Checkbutton(ens_grid, text=opt, variable=v, bootstyle=SUCCESS,
@@ -1206,17 +1208,15 @@ class _FeesDialog(ttk.Toplevel):
         self._reload_list()
 
     def _class_labels(self):
-        """The teacher's own class list (registry) if set, else the program's
-        standard ensembles."""
-        try:
-            import class_registry
-            classes = class_registry.load_classes(self.base_dir, self.program_type)
-            labels = [c["label"] for c in classes]
-            if labels:
-                return labels
-        except Exception:
-            pass
-        return list(ensembles_for(self.program_type))
+        """Every group this fee could be put on -- see all_class_options.
+
+        This used to be the configured class list for the profile's ONE program
+        type, which meant an elementary teacher was offered "Beginning Band"
+        (a placeholder naming no school) and a teacher who taught both lost
+        whichever half their program type was not.
+        """
+        return all_class_options(self.db, self.base_dir, self.program_type,
+                                 self.school_year)
 
     @staticmethod
     def db_sval(row, key):
@@ -1404,6 +1404,7 @@ class _StudentPickerDialog(ttk.Toplevel):
     def __init__(self, parent, db, program_type, school_year):
         super().__init__(parent)
         self.db = db
+        self.base_dir = getattr(parent, "base_dir", "")
         self.program_type = program_type
         self.school_year = school_year
         self.chosen_ids = []
@@ -1420,8 +1421,10 @@ class _StudentPickerDialog(ttk.Toplevel):
     def _build(self):
         bar = ttk.Frame(self); bar.pack(fill=X, padx=12, pady=(12, 4))
         ttk.Label(bar, text="Ensemble filter:").pack(side=LEFT, padx=(0, 4))
-        ttk.Combobox(bar, textvariable=self._filter, state="readonly", width=20,
-                     values=["All"] + ensembles_for(self.program_type)).pack(side=LEFT)
+        ttk.Combobox(bar, textvariable=self._filter, state="readonly", width=28,
+                     values=["All"] + all_class_options(
+                         self.db, self.base_dir, self.program_type,
+                         self.school_year)).pack(side=LEFT)
         self._filter.trace_add("write", lambda *_: self._reload())
         ttk.Button(bar, text="Select All", bootstyle=(SECONDARY, OUTLINE),
                    command=self._all).pack(side=RIGHT, padx=2)
