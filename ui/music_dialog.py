@@ -308,7 +308,7 @@ class MusicDialog(ttk.Toplevel):
                                     foreground=file_selected_fg())
 
     def _prefill(self, data: dict):
-        """Populate form fields from an AI-analysed prefill dict."""
+        """Populate form fields from an AI-analyzed prefill dict."""
         for key, var in self._vars.items():
             val = data.get(key, "")
             if val:

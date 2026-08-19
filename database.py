@@ -966,7 +966,7 @@ class Database:
 
     def _student_site_charges_fees(self, student_id) -> bool:
         """Does this child's school charge for an instrument loan?  Unknown
-        sites keep the old behaviour and charge, so nothing silently stops
+        sites keep the old behavior and charge, so nothing silently stops
         billing on a profile that has not set its schools up yet."""
         if not student_id:
             return True
@@ -2571,7 +2571,7 @@ class Database:
 
         ``per_instrument`` bills this instrument on its own line, which is what
         a student renting three of them actually owes.  Left off, the fee is
-        deduped to one per student per year — the older behaviour, kept so a
+        deduped to one per student per year — the older behavior, kept so a
         single check-out screen can't double-bill someone by accident."""
         year = self.academic_year_of(date_assigned)
         if rental_type == "summer":

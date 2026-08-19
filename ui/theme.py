@@ -324,11 +324,11 @@ def fit_window(win, min_w: int = 200, min_h: int = 200, margin: int = 80):
 
 # ── Navigation button palette ─────────────────────────────────────────────────
 # The hub's big navigation buttons are the app's map: a teacher should be able
-# to find "Uniforms" by its colour before they've read the word.  All-blue-and-
+# to find "Uniforms" by its color before they've read the word.  All-blue-and-
 # gray buttons make every destination look the same, so each tool gets its own
 # hue, laid out roughly in rainbow order down the page.
 #
-# Hues only — READABILITY still decides the text colour: ``best_fg`` picks black
+# Hues only — READABILITY still decides the text color: ``best_fg`` picks black
 # or white per swatch, whichever clears WCAG by more, and every pair below is
 # verified 4.5:1 or better in both light and dark themes.
 

@@ -243,7 +243,7 @@ def read_handoff(path):
 
 
 def _fingerprints(row):
-    """The ways one instrument can be recognised as one already here."""
+    """The ways one instrument can be recognized as one already here."""
     out = []
     for key in ("serial_no", "barcode", "district_no"):
         v = str(row.get(key) or "").strip().lower()
@@ -286,7 +286,7 @@ def import_handoff(db, site, path):
         id_for_row[id(row)] = new_id
         added += 1
         if not fps:
-            # Nothing to recognise it by, so a second import would add it
+            # Nothing to recognize it by, so a second import would add it
             # again.  Worth telling the teacher rather than silently risking it.
             no_id += 1
         for f in fps:

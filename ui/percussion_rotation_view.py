@@ -27,11 +27,11 @@ CLASS_TYPE_LABELS = {
 }
 LABEL_TO_CLASS_TYPE = {v: k for k, v in CLASS_TYPE_LABELS.items()}
 
-# Two brand-new mallet colours signify the STICK a student grabs:
+# Two brand-new mallet colors signify the STICK a student grabs:
 YARN_COLOR = "#ffd8a8"      # orange — yarn mallets (marimba, vibraphone)
 RUBBER_COLOR = "#ffffff"    # white  — rubber/plastic mallets (xylophone, bells)
 
-# Fixed station colours (the teacher's original board scheme).
+# Fixed station colors (the teacher's original board scheme).
 STATION_COLORS = {
     pr.MALLETS:   "#f6d9d9",   # reddish — full-rotation free-choice mallet day
     pr.SD:        "#fbeecb",   # light yellow — snare
@@ -44,14 +44,14 @@ STATION_COLORS = {
 
 
 # Pastels handed out to stations the teacher invented (Congas, Cajón, Timpani
-# split off from Aux…).  Keyed by name so a station keeps its colour from day to
-# day and grid to grid — the board only works if the colours are stable.
+# split off from Aux…).  Keyed by name so a station keeps its color from day to
+# day and grid to grid — the board only works if the colors are stable.
 CUSTOM_COLORS = ["#d7e8f7", "#e4f1d9", "#fbe4d5", "#e8dff5", "#fdf2cc",
                  "#d8f0ea", "#f7dce8", "#e9e4d6"]
 
 
 def _color_for_station(station: str) -> str:
-    """Background colour for a station: fixed stations by name, mallet
+    """Background color for a station: fixed stations by name, mallet
     instruments by stick family (yarn = orange, rubber/plastic = white), and a
     stable pastel for anything the teacher defined themselves."""
     if station in STATION_COLORS:
@@ -64,7 +64,7 @@ def _color_for_station(station: str) -> str:
     if not station:
         return "#ffffff"
     # Deterministic per name (not per position), so adding a station never
-    # recolours the ones already on the board.
+    # recolors the ones already on the board.
     idx = sum(ord(c) for c in station) % len(CUSTOM_COLORS)
     return CUSTOM_COLORS[idx]
 
@@ -269,7 +269,7 @@ class PercussionRotationView(ttk.Frame):
         _configure_station_tags(self._board)
         self._board.pack(fill=BOTH, expand=True)
 
-        # Legend: what the colours + icons mean.
+        # Legend: what the colors + icons mean.
         legend = ttk.Frame(self._content)
         legend.pack(fill=X, pady=(0, 4))
 
@@ -1413,7 +1413,7 @@ class _GroupDialog(ttk.Toplevel):
     the class list comes from the teacher's registry (Manage Classes) and the
     periods come from the roster.  The section's name and its rotation type are
     then derived from that choice, so a section can't end up named something the
-    agenda tab won't recognise.
+    agenda tab won't recognize.
     """
 
     def __init__(self, parent, db, school_year, group=None,

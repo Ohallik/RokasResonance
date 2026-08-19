@@ -108,7 +108,7 @@ class MainMenu(ttk.Frame):
                 if win.winfo_exists():
                     win.lift()
                     win.focus_force()
-                    # Restore from minimised if needed
+                    # Restore from minimized if needed
                     if win.state() == "iconic":
                         win.deiconify()
                     return win
@@ -178,7 +178,7 @@ class MainMenu(ttk.Frame):
         stats_outer = ttk.Frame(self, bootstyle=SECONDARY)
         stats_outer.pack(fill=X)
 
-        # The ? sits here rather than in the banner: this strip had empty grey
+        # The ? sits here rather than in the banner: this strip had empty gray
         # either side of the tallies, and it is where the eye already goes.
         from ui.help_system import add_help_button
         add_help_button(stats_outer, "hub", dark=False, padx=(0, 18), pady=10)
@@ -284,7 +284,7 @@ class MainMenu(ttk.Frame):
 
         The style has to be applied AFTER construction: ttkbootstrap's Button
         re-derives ``style`` from its own bootstyle vocabulary at build time and
-        silently drops any name it doesn't recognise (which is how every button
+        silently drops any name it doesn't recognize (which is how every button
         ends up default blue).  Configuring afterwards sticks.
         """
         btn = ttk.Button(parent, text=text, command=command)
@@ -341,9 +341,9 @@ class MainMenu(ttk.Frame):
         cur_row += 1
 
         # ── Students, and Elementary beside it ──
-        # 5th grade is not a "Students" thing -- it is a different programme at
+        # 5th grade is not a "Students" thing -- it is a different program at
         # a different school -- so it gets its own heading rather than being
-        # tacked onto somebody else's row.  Two labelled groups share this row;
+        # tacked onto somebody else's row.  Two labeled groups share this row;
         # with no elementary posting the Students group simply takes it all.
         try:
             from ui.fifth_grade_view import has_fifth_grade
@@ -353,9 +353,14 @@ class MainMenu(ttk.Frame):
 
         row2 = ttk.Frame(btn_area)
         row2.grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=(8, 2))
-        row2.columnconfigure(0, weight=3, uniform="r2")
+        # Weights WITHOUT uniform.  A uniform group forces the columns to stay
+        # in proportion, so the row demands (widest column x the weight ratio)
+        # whether or not anything needs it -- and nested inside another uniform
+        # group it multiplies.  That one option was asking for 984px on a row
+        # whose contents need about 600, and the whole hub was sized to it.
+        row2.columnconfigure(0, weight=3)
         if show_fifth:
-            row2.columnconfigure(1, weight=1, uniform="r2")
+            row2.columnconfigure(1, weight=2)
 
         stu_group = ttk.Frame(row2)
         stu_group.grid(row=0, column=0, sticky="ew", padx=(0, 6 if show_fifth else 0))
@@ -364,8 +369,8 @@ class MainMenu(ttk.Frame):
                   foreground=muted_fg()).pack(anchor=W, pady=(0, 2))
         stu_row = ttk.Frame(stu_group)
         stu_row.pack(fill=X)
-        stu_row.columnconfigure(0, weight=3, uniform="stu")
-        stu_row.columnconfigure(1, weight=2, uniform="stu")
+        stu_row.columnconfigure(0, weight=2)
+        stu_row.columnconfigure(1, weight=2)
         self._nav_button(
             stu_row, "  🎓  Manage Students", self._open_students, "green"
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)

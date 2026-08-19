@@ -323,7 +323,7 @@ _ENRICH_FIELDS = (
     "  Omit bullets that duplicate structured fields.\n"
     "- confidence: high | medium | low — your overall confidence that the "
     "  above facts are correct for THIS specific published work. "
-    "  high = you know this piece well from a recognised publisher; "
+    "  high = you know this piece well from a recognized publisher; "
     "  medium = you are fairly sure but the title is common or details are thin; "
     "  low = you are inferring or the piece is obscure.\n\n"
     "Respond ONLY with a JSON object with those exact keys."
@@ -978,7 +978,7 @@ class BatchImportDialog(ttk.Toplevel):
     Two-phase dialog:
       Phase 1 — analysis progress log while the background thread runs.
       Phase 2 — batch review table where the user checks/edits pieces before import.
-    self.results is None if cancelled, or a list of prefill dicts for confirmed pieces.
+    self.results is None if canceled, or a list of prefill dicts for confirmed pieces.
     """
 
     _COLS = ("sel", "title", "composer", "arranger", "ensemble_type", "difficulty", "publisher", "conf", "source")
@@ -1006,7 +1006,7 @@ class BatchImportDialog(ttk.Toplevel):
         self.base_dir       = base_dir
         self._mode          = mode
         self.existing_titles = existing_titles or set()
-        self.results        = None          # None=cancelled; list=confirmed pieces
+        self.results        = None          # None=canceled; list=confirmed pieces
         self._cancel_flag   = [False]
         self._in_review     = False
         self._partial_pieces: list[dict] = []  # grows as analysis runs

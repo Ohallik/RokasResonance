@@ -170,7 +170,7 @@ def type_rank(wanted: str, candidate: str) -> int:
 def smallest_larger_than(size: str, candidates):
     """The smallest of `candidates` that is bigger than `size`, or None.
 
-    Deliberately not "the next size in the catalogue": hardly any school owns a
+    Deliberately not "the next size in the catalog": hardly any school owns a
     7/8 violin, so a student outgrowing a 3/4 should be offered the 4/4 that is
     actually on the shelf rather than told nothing is available."""
     key = size_sort_key(normalize_size(size))

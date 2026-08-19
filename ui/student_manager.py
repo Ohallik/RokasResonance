@@ -1838,13 +1838,22 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
                     options=GENDER_OPTIONS, side=LEFT, width=16)
         self._field(row1, "Student ID", "student_id", side=LEFT, width=16)
 
-        self._section(parent, "Ensembles & Class Periods")
-        ttk.Label(parent, text="Ensemble(s):", font=("Segoe UI", 8),
-                  foreground=muted_fg()).pack(anchor=W, padx=16)
-        self._checkbox_group(parent, "ensembles", self._class_options(), columns=3)
-        ttk.Label(parent, text="Class Period(s):", font=("Segoe UI", 8),
-                  foreground=muted_fg()).pack(anchor=W, padx=16, pady=(6, 0))
-        self._checkbox_group(parent, "class_periods", PERIOD_OPTIONS, columns=7)
+        if self._elementary:
+            # No class periods in an elementary school -- the group is a pullout
+            # from the regular class, twice a week on the specialist rotation --
+            # and none of the middle school classes belong here either. They were
+            # showing because this dialog offered the configured secondary class
+            # list to everybody.
+            self._section(parent, "Section")
+            self._build_section_row(parent)
+        else:
+            self._section(parent, "Ensembles & Class Periods")
+            ttk.Label(parent, text="Ensemble(s):", font=("Segoe UI", 8),
+                      foreground=muted_fg()).pack(anchor=W, padx=16)
+            self._checkbox_group(parent, "ensembles", self._class_options(), columns=3)
+            ttk.Label(parent, text="Class Period(s):", font=("Segoe UI", 8),
+                      foreground=muted_fg()).pack(anchor=W, padx=16, pady=(6, 0))
+            self._checkbox_group(parent, "class_periods", PERIOD_OPTIONS, columns=7)
 
         instr_row = ttk.Frame(parent)
         instr_row.pack(fill=X, padx=16, pady=(6, 0))
@@ -1939,8 +1948,9 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
         if not student:
             return
         if self._elementary:
-            self._choir_load(student["ensembles"]
-                             if "ensembles" in student.keys() else "")
+            held = student["ensembles"] if "ensembles" in student.keys() else ""
+            self._section_load(held)
+            self._choir_load(held)
         for key, var in self._vars.items():
             val = student[key] if key in student.keys() else None
             var.set("" if val is None else str(val))
@@ -1997,6 +2007,58 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
         self.db.reactivate_student(self.student_id)
         self.destroy()
 
+    SECTION_NUMBERS = (1, 2)
+
+    def _section_labels(self):
+        name = (self.site or {}).get("name") or ""
+        return [f"{name}: Section {n}" for n in self.SECTION_NUMBERS]
+
+    def _build_section_row(self, parent):
+        """Which of this school's two sections the child is in.
+
+        A radio, not tickboxes: the sections run back to back in the same room
+        with the same teacher, so being in both is not a thing that can happen,
+        and a pair of checkboxes quietly says it can.
+        """
+        ttk.Label(parent, text="Sections run back to back, so a child is in one "
+                               "or the other.",
+                  font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W, padx=16)
+        row = ttk.Frame(parent)
+        row.pack(anchor=W, padx=16, pady=(2, 0))
+        self._section_var = tk.StringVar(value="")
+        for i, label in enumerate(self._section_labels(), start=1):
+            ttk.Radiobutton(row, text=f"Section {i}", value=label,
+                            variable=self._section_var,
+                            bootstyle=PRIMARY).pack(side=LEFT, padx=(0, 16))
+        ttk.Button(row, text="Clear", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: self._section_var.set("")
+                   ).pack(side=LEFT, padx=(6, 0))
+
+    def _section_apply(self, ensembles_csv: str) -> str:
+        """Put the chosen section in, and take any other section of this school
+        out.  Their choir and any non-elementary class are left alone."""
+        chosen = getattr(self, "_section_var", None)
+        if chosen is None:
+            return ensembles_csv
+        mine = {lab.lower() for lab in self._section_labels()}
+        parts = [p.strip() for p in (ensembles_csv or "").split(",") if p.strip()]
+        parts = [p for p in parts if p.lower() not in mine]
+        if chosen.get():
+            parts.append(chosen.get())
+        return ", ".join(parts)
+
+    def _section_load(self, ensembles_csv: str):
+        chosen = getattr(self, "_section_var", None)
+        if chosen is None:
+            return
+        held = [p.strip() for p in (ensembles_csv or "").split(",") if p.strip()]
+        held_l = {h.lower() for h in held}
+        for label in self._section_labels():
+            if label.lower() in held_l:
+                chosen.set(label)
+                return
+        chosen.set("")
+
     def _build_choir_row(self, parent):
         """Choir sits alongside the instrument, never instead of it.
 
@@ -2045,8 +2107,10 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
             return
         # Choir rides along in ensembles rather than in a column of its own, so
         # it is folded in after the checkbox groups have had their say.
-        if self._elementary and hasattr(self, "_choir_var"):
-            data["ensembles"] = self._choir_apply(data.get("ensembles", ""))
+        if self._elementary:
+            data["ensembles"] = self._section_apply(data.get("ensembles", ""))
+            if hasattr(self, "_choir_var"):
+                data["ensembles"] = self._choir_apply(data["ensembles"])
         if self.student_id:
             self.db.update_student(self.student_id, data)
         else:

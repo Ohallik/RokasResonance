@@ -29,7 +29,7 @@ from ttkbootstrap.dialogs import Messagebox
 
 
 def _mask(url: str) -> str:
-    """Show enough of the URL to recognise it without exposing the whole host."""
+    """Show enough of the URL to recognize it without exposing the whole host."""
     u = (url or "").split("//", 1)[-1]
     return (u[:22] + "…") if len(u) > 24 else u
 

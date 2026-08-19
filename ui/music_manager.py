@@ -1559,7 +1559,7 @@ class MusicManager(ttk.Frame):
                 shutil.copy2(self.db.db_path, backup_path)
             except Exception as e:
                 Messagebox.show_warning(
-                    f"Could not create backup: {e}\nDelete cancelled.",
+                    f"Could not create backup: {e}\nDelete canceled.",
                     title="Backup Failed",
                     parent=self.winfo_toplevel()
                 )

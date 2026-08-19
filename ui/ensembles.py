@@ -85,17 +85,24 @@ CHOIR_SUFFIX = "Choir"
 
 
 def fifth_grade_instruments(program_type: str):
-    """Beginner instruments first, everything else after.
+    """What a 5th grader can be recorded as playing.
 
-    Ordered rather than filtered: the common six or seven cover almost every
-    child, and burying the rest behind "Other" would mean the one oboist a
-    teacher meets in five years cannot be recorded at all."""
-    common = (FIFTH_GRADE_STRINGS_COMMON if program_type == "orchestra"
-              else FIFTH_GRADE_BAND_COMMON)
-    full = (ORCHESTRA_INSTRUMENTS if program_type == "orchestra"
-            else BAND_INSTRUMENTS)
-    rest = [i for i in full if i not in common]
-    return common + rest + ["Other"]
+    Strings are the four instruments and nothing else. The numbered entries in
+    ORCHESTRA_INSTRUMENTS -- Violin 1, Violin 2, Viola 1 -- are PART
+    assignments, which start at middle school; a 10-year-old plays the violin,
+    not second violin, and offering the split here only invites a choice that
+    means nothing yet.
+
+    Band is ordered rather than filtered: the usual starters come first, and
+    the rest of the concert band follows, because the rare gifted child really
+    does turn up on oboe or french horn and has to be recordable. Those
+    families almost always buy or rent privately, so the instrument seldom
+    reaches the school cupboard -- but the child still plays it.
+    """
+    if program_type == "orchestra":
+        return list(FIFTH_GRADE_STRINGS_COMMON) + ["Other"]
+    rest = [i for i in BAND_INSTRUMENTS if i not in FIFTH_GRADE_BAND_COMMON]
+    return list(FIFTH_GRADE_BAND_COMMON) + rest + ["Other"]
 
 
 def choir_ensemble(site_name: str) -> str:
@@ -200,7 +207,7 @@ def selectable_ensembles(main_db, school_year=None, program_type="band",
     found = roster_ensembles(main_db, school_year, site_id=site_id)
     if site_id:
         # One school's own sections and choir, nothing configured for the
-        # secondary programme.  A Clyde Hill picker offering "Advanced Band"
+        # secondary program.  A Clyde Hill picker offering "Advanced Band"
         # is offering a class that cannot contain any of its children.
         return found
     configured = ensembles_for(program_type, base_dir)
@@ -288,7 +295,7 @@ _SCORE_RANK = {name.lower(): i for i, name in enumerate(SCORE_ORDER)}
 def instrument_sort_key(name: str):
     """``(rank, name)`` for one instrument, in score order.
 
-    Known instruments rank by position in the score; unrecognised ones (a
+    Known instruments rank by position in the score; unrecognized ones (a
     teacher typed "Contra Clarinet") fall in after them but before blanks, so
     the sort stays total and nothing silently disappears."""
     clean = (name or "").strip()

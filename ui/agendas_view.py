@@ -14,7 +14,7 @@ Two views of one day:
             / month; a context line shows the concert cycle / warm-up level.
   * PRESENT - a full-screen classroom projection: a live clock AND a countdown
             timer (both visible), a chosen pastel background, per-line text
-            colours / highlights, a Reminders + Announcements banner, and the
+            colors / highlights, a Reminders + Announcements banner, and the
             agenda sections with big check-off boxes.  The percussion rotation
             is a SEPARATE floating panel (top-right) that can be collapsed once
             the players are set so it doesn't cover the agenda.  Empty sections
@@ -22,9 +22,9 @@ Two views of one day:
 
 The curriculum spine (agenda_spine.py) generates each day's sensible default.
 
-NOTE ON COLOURS: ttkbootstrap resets the colours of plain tk widgets set at
+NOTE ON COLOURS: ttkbootstrap resets the colors of plain tk widgets set at
 construction time, but a post-construction ``.configure()`` sticks.  So every
-coloured tk widget here is built through ``_tk(...)``, which applies the colour
+colored tk widget here is built through ``_tk(...)``, which applies the color
 options AFTER the widget exists.  Do NOT pass bg/fg straight to tk.Label/etc.
 """
 
@@ -80,13 +80,13 @@ TIMER_PRESETS = [("30 sec", 30), ("1 min", 60), ("2 min", 120),
                  ("3 min", 180), ("5 min", 300), ("10 min", 600)]
 
 # Present-mode background choices (name -> hex).  Soft pastels like OneNote's
-# page colours, so projected text stays readable (dark on light).
+# page colors, so projected text stays readable (dark on light).
 PRESENT_BGS = [("White", "#ffffff"), ("Blue", "#dbe9fb"), ("Green", "#e2f0d9"),
                ("Yellow", "#fdf5cf"), ("Peach", "#fbe5d6"), ("Pink", "#fbe0ea"),
                ("Lavender", "#e9e3f6"), ("Gray", "#eceff1")]
 PRESENT_BG_MAP = dict(PRESENT_BGS)
 
-# A few per-line text colours to make a line pop (name, value).  Vivid, so
+# A few per-line text colors to make a line pop (name, value).  Vivid, so
 # "Red" reads as red on a projector — not a muted brick.
 ITEM_COLORS = [("Default", ""), ("Black", "black"), ("Blue", "blue"),
                ("Red", "red"), ("White", "white"), ("Yellow highlight", "hl")]
@@ -94,7 +94,7 @@ _TEXT_HEX = {"black": "#111111", "blue": "#1565d8", "red": "#e11414",
              "white": "#ffffff"}
 _HL = ("#111111", "#fff59d")   # (fg, bg) yellow highlight
 
-# tk colour options that ttkbootstrap clobbers at construction time — we strip
+# tk color options that ttkbootstrap clobbers at construction time — we strip
 # these out, build the widget, then .configure() them so they take effect.
 _COLOR_KEYS = {"bg", "fg", "background", "foreground", "insertbackground",
                "selectbackground", "selectforeground", "activebackground",
@@ -103,7 +103,7 @@ _COLOR_KEYS = {"bg", "fg", "background", "foreground", "insertbackground",
 
 
 def _tk(cls, parent, **kw):
-    """Create a plain tk widget whose colour options actually stick under
+    """Create a plain tk widget whose color options actually stick under
     ttkbootstrap (see module docstring)."""
     colors = {k: kw.pop(k) for k in list(kw) if k in _COLOR_KEYS}
     w = cls(parent, **kw)
@@ -485,7 +485,7 @@ class AgendasView(ttk.Frame):
         except (TypeError, ValueError):
             return spine.INTRO_SCHOOL_DAYS
 
-    # ── teacher-defined assessments (per group, per year; None if uncustomised)
+    # ── teacher-defined assessments (per group, per year; None if uncustomized)
 
     def _assess_key(self):
         return f"agenda_assessments_{self._group}"

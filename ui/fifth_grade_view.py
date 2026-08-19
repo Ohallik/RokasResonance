@@ -97,10 +97,10 @@ class FifthGradeView(ttk.Frame):
 
         bar = ttk.Frame(outer)
         bar.pack(fill=X, padx=10, pady=(8, 4))
-        programme = (site.get("program") or "").capitalize() or "Not set"
+        program = (site.get("program") or "").capitalize() or "Not set"
         ttk.Label(bar, text=site["name"], font=("Segoe UI", 11, "bold")).pack(side=LEFT)
-        ttk.Label(bar, text=f"   {programme}  ·  no rental fee"
-                           if not site.get("charges_fees") else f"   {programme}",
+        ttk.Label(bar, text=f"   {program}  ·  no rental fee"
+                           if not site.get("charges_fees") else f"   {program}",
                   font=("Segoe UI", 9), foreground=muted_fg()).pack(side=LEFT)
 
         # Exports for THIS school.  Assignments move around every year, so the
@@ -273,7 +273,7 @@ class FifthGradeView(ttk.Frame):
     def _ask_section(self, site):
         """Which of this school's sections the class list belongs to.
 
-        Named after the school rather than the programme: inside a Clyde Hill
+        Named after the school rather than the program: inside a Clyde Hill
         tab, "Clyde Hill: Section 1" says everything, and repeating "Band"
         would only repeat what the school record already knows.
         """

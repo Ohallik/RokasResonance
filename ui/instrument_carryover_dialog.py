@@ -317,7 +317,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         #
         # Only three keys count, and each must land on exactly ONE student:
         #   1) district student ID     — respellings don't change it
-        #   2) full name               — middle initials normalised away
+        #   2) full name               — middle initials normalized away
         #   3) given name + surname    — 'Sandra Menchu Ixcotoyac' → Sandra …
         # Looser keys were tried and are deliberately gone.  Matching on a
         # surname alone handed a graduated Alan Chen's trombone to his brother
@@ -513,7 +513,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                   font=("Segoe UI", 9))
         lbl.pack(side=LEFT, padx=2)
 
-        # How this student was recognised on the new roster.  Shown because the
+        # How this student was recognized on the new roster.  Shown because the
         # teacher is the only one who can spot a wrong pairing, and the fee
         # follows whoever is on the row.
         conf_text = {"id": "matched on student ID",
@@ -633,14 +633,14 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         """The smallest free instrument of the same kind that is genuinely
         larger than the one this student had, or None.
 
-        Deliberately not "the next size in the catalogue": hardly any school
+        Deliberately not "the next size in the catalog": hardly any school
         owns a 7/8 violin, so a student outgrowing a 3/4 should be offered the
         4/4 that is actually on the shelf.
 
         Sizing up is a string thing, so it is offered on string rows for any
         teacher.  An orchestra director gets it on every sized instrument they
         own, since their whole inventory is sized and a fractional cello may
-        sit under a category a band-shaped guess doesn't recognise."""
+        sit under a category a band-shaped guess doesn't recognize."""
         desc = row.get("description") or ""
         if self._program_type() != "orchestra" and \
                 (row.get("category") or "").strip().lower() != "strings" and \

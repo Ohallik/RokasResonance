@@ -188,7 +188,7 @@ def render_arcs(rows, row_caps, palette_on=True, palette=None,
                 front_label="CONDUCTOR", flip=False, font_pt=14, percussion=None,
                 show_instrument=True, color_mode="row"):
     """Concentric arcs.  By default the front row is innermost (nearest the
-    conductor at the bottom-centre) and rows arc upward toward the back; ``flip``
+    conductor at the bottom-center) and rows arc upward toward the back; ``flip``
     puts the conductor at the top with rows arcing downward.  Percussion, when
     separated, is drawn as a straight row across the far (back) side."""
     from PIL import Image, ImageDraw

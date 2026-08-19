@@ -95,7 +95,7 @@ def build_system_prompt(db, base_dir, mode="band", band_db=None) -> str:
     """Everything Reginald knows: who he works for, their current records, and
     the user guide.
 
-    The guide goes in verbatim rather than summarised, so the day it is edited
+    The guide goes in verbatim rather than summarized, so the day it is edited
     he is right about the program again.  A hand-written summary here would be
     a second copy of the documentation, and it would rot."""
     voice = _PROGRAM_VOICE.get(mode, _PROGRAM_VOICE["band"])
@@ -172,7 +172,7 @@ def _build_inventory_summary(db) -> str:
     # program with a decade of history was 710 people going back to 2013 with
     # 664 of them long gone.  Asked who plays trumpet, he was as likely to name
     # somebody who graduated in 2016 as a child in the room, and the roster
-    # alone was most of the prompt.  Previous years are summarised as counts;
+    # alone was most of the prompt.  Previous years are summarized as counts;
     # if a question genuinely needs an old student, the teacher has Manage
     # Students and its archive.
     try:
@@ -428,7 +428,7 @@ def _build_help_summary() -> str:
     """The user guide, as plain text.
 
     Read from help/roka_help.html at run time rather than restated here, so
-    editing the guide is the only place the program's behaviour is written
+    editing the guide is the only place the program's behavior is written
     down.  A hand-maintained copy in this file is how an assistant ends up
     confidently describing a screen that was removed two versions ago."""
     try:

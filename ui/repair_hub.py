@@ -3,7 +3,7 @@ ui/repair_hub.py - Consolidated repair center.
 
 One window for everything repair-related: upload an invoice, mark an instrument
 as needing repair, see what needs repair / what is out at the shop, review full
-repair history, and analyse which instruments have cost the most (for
+repair history, and analyze which instruments have cost the most (for
 replacement decisions you can forward to district staff / PTSA).
 """
 
@@ -135,7 +135,7 @@ class RepairHub(ttk.Toplevel):
             self.tree.column(c, width=widths[c], anchor=anchor,
                              minwidth=40, stretch=c in stretch)
 
-    # Ranks for the text-labelled priority column so sorting is meaningful
+    # Ranks for the text-labeled priority column so sorting is meaningful
     # (Urgent > High > Normal > Low) rather than alphabetical.
     _PRIORITY_RANK = {"Urgent": 3, "High": 2, "Normal": 1, "Low": 0, "": -1}
 
@@ -263,7 +263,7 @@ class RepairHub(ttk.Toplevel):
 
     def _pick_open_repair(self, instrument_id, verb):
         """Resolve an instrument to one of its open repairs.  Returns a repair_id,
-        or None if cancelled / none open.  Shows a chooser when there are several."""
+        or None if canceled / none open.  Shows a chooser when there are several."""
         rows = [dict(r) for r in self.db.get_open_repairs_for_instrument(instrument_id)]
         if not rows:
             Messagebox.show_info("This instrument has no open repairs.",

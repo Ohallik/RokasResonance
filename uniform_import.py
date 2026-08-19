@@ -26,7 +26,7 @@ _ALIASES = {
     "size":          ["size"],
     "style":         ["style"],
     "gender":        ["gender"],
-    "color":         ["color", "colour"],
+    "color":         ["color", "color"],
     "manufacturer":  ["manufacturer", "maker", "brand"],
     "barcode":       ["barcode", "bar code"],
     "location":      ["location"],

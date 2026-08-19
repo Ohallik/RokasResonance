@@ -2,7 +2,7 @@
 jazz_icons.py - Small rhythm-section instrument icons for the jazz rotation board.
 
 Each seat name maps to an instrument kind (drums, guitar, bass, vibraphone,
-piano) and gets a little icon instead of a colour swatch.  Two sources, in order:
+piano) and gets a little icon instead of a color swatch.  Two sources, in order:
 
   1. A PNG the teacher dropped in ``assets/jazz/<kind>.png`` (her own artwork —
      e.g. the free icons she pasted in).  Expected files:

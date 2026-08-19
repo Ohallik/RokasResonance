@@ -22,7 +22,7 @@ from ui.onboarding import BSD_SCHOOLS
 LEVELS = [("secondary", "Middle or high school"),
           ("elementary", "Elementary (5th grade)")]
 
-# Band or orchestra, never both.  One teacher cannot run both programmes at one
+# Band or orchestra, never both.  One teacher cannot run both programs at one
 # school: the sections meet in the same slot and nobody is in two rooms at once.
 PROGRAMS = [("band", "Band"), ("orchestra", "Orchestra")]
 
@@ -60,7 +60,7 @@ class SitesPanel(ttk.Frame):
                                  selectmode="browse", height=8,
                                  bootstyle=PRIMARY)
         for col, head, w in (("name", "School", 230), ("level", "Level", 130),
-                             ("program", "Programme", 90), ("fees", "Rental fee", 90),
+                             ("program", "Program", 90), ("fees", "Rental fee", 90),
                              ("choir", "Choir", 80)):
             self.tree.heading(col, text=head, anchor=W)
             self.tree.column(col, width=w, anchor=W, stretch=(col == "name"))
@@ -190,7 +190,7 @@ class SiteDialog(ttk.Toplevel):
                             bootstyle=PRIMARY,
                             command=self._level_changed).pack(anchor=W, pady=1)
 
-        ttk.Label(body, text="Programme you teach here",
+        ttk.Label(body, text="Program you teach here",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(12, 0))
         ttk.Label(body, text="One or the other — the two meet in the same slot, "
                              "so nobody teaches both at one school.",
@@ -270,7 +270,7 @@ class SiteDialog(ttk.Toplevel):
                 "instruments and class sections you are offered here, and it "
                 "cannot be guessed — plenty of teachers run band at one school "
                 "and orchestra at another.",
-                title="Programme needed", parent=self)
+                title="Program needed", parent=self)
             return
 
         elementary = self._level.get() == "elementary"

@@ -154,7 +154,7 @@ def add_help_button(header, topic="", dark: bool = True, pady: int = 8,
 
     Pack it BEFORE any other right-hand widget in that header, or it lands to
     the left of them instead of in the corner.  ``dark`` styles it for the
-    coloured title bars most windows use; pass False on a plain background.
+    colored title bars most windows use; pass False on a plain background.
     """
     btn = ttk.Button(header, text="?", width=3,
                      bootstyle=(LIGHT if dark else (SECONDARY, OUTLINE)),
@@ -175,7 +175,7 @@ def _enlarge(btn):
 
     ttk keeps the font in the style, not on the widget, so this derives a style
     from whichever bootstyle the button already has: "Help.light.TButton" falls
-    back to "light.TButton" for every colour, and only the font is overridden.
+    back to "light.TButton" for every color, and only the font is overridden.
 
     The padding is tightened to pay for the bigger glyph.  The result is the
     same width as an ordinary button and a few pixels taller, so a header or a

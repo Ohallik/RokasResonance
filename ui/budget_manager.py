@@ -20,7 +20,7 @@ from ui.theme import px
 
 def _pick_from_list(parent, title, prompt, options):
     """Tiny modal: choose one option from a dropdown.  Returns the string or
-    None if cancelled."""
+    None if canceled."""
     dlg = ttk.Toplevel(parent)
     dlg.title(title)
     dlg.resizable(False, False)

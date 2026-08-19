@@ -5,7 +5,7 @@ OneNote looking like the teacher's projected board:
 
     * a circular rotation icon with the day number beside it
     * player names down the left column
-    * each player's station down the right column, colour-coded by station type
+    * each player's station down the right column, color-coded by station type
     * Calibri, ~14 pt
 
 If the teacher drops their own icon at ``assets/rotation_icon.png`` it is used;
@@ -111,7 +111,7 @@ def render_board(day_number, rows, color_for, section_name="",
                  icon_path=None, font_pt=14):
     """Return a PIL.Image of the rotation board.
 
-    rows: list of (name, station).  color_for: station -> hex bg colour.
+    rows: list of (name, station).  color_for: station -> hex bg color.
     """
     from PIL import Image, ImageDraw
 

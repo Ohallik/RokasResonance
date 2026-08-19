@@ -763,7 +763,7 @@ def separate_conflicts(rows, conflicts, max_passes=8, min_gap=3):
 
 
 def center_instrument(rows, instrument):
-    """Nudge players of ``instrument`` toward the centre of their row's
+    """Nudge players of ``instrument`` toward the center of their row's
     occupants (used for tuba in the back row).  Works even when the row has
     empty seats — the occupants are re-dealt into the same occupied positions,
     so gaps and reserved seats stay exactly where they were."""

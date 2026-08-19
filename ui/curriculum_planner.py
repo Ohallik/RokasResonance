@@ -835,7 +835,7 @@ class CurriculumPlanner(ttk.Frame):
         """Show dialog for entering a date string.
 
         Returns:
-            Date string (YYYY-MM-DD) or None if cancelled
+            Date string (YYYY-MM-DD) or None if canceled
         """
         parent_win = self.winfo_toplevel()
         dialog = tk.Toplevel(parent_win)
@@ -888,7 +888,7 @@ class CurriculumPlanner(ttk.Frame):
         """Show dialog for entering a number.
 
         Returns:
-            Integer value or None if cancelled
+            Integer value or None if canceled
         """
         parent_win = self.winfo_toplevel()
         dialog = tk.Toplevel(parent_win)

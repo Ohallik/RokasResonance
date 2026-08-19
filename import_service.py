@@ -191,7 +191,7 @@ def _drop_site_classes(csv_val, site_name, sections_only=False):
 
     5th grade classes are named after their school ("Clyde Hill Elementary
     School: Section 1"), so the school's own name is what identifies them.
-    Anything not recognisably that school's is left alone -- a secondary class
+    Anything not recognizably that school's is left alone -- a secondary class
     has no business being touched by an elementary import.
 
     ``sections_only`` keeps that school's choir. Choir is something a child is

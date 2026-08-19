@@ -416,7 +416,7 @@ def cycle_length(students, mallet_subrotation=True, inventory=None,
     return max(lengths) if lengths else 1
 
 
-# ── Mallet "family" by the stick students grab (drives colour + icon) ─────────
+# ── Mallet "family" by the stick students grab (drives color + icon) ─────────
 YARN_MALLETS = "yarn"        # marimba, vibraphone — soft yarn/cord heads
 RUBBER_MALLETS = "rubber"    # xylophone, bells/glockenspiel — hard rubber/plastic
 
