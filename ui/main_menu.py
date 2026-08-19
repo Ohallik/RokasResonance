@@ -1011,6 +1011,7 @@ class MainMenu(ttk.Frame):
         # school and goes when the last one is archived.  Rebuilding here is why
         # that no longer waits for a restart.
         self._build_nav_buttons()
+        self._grow_to_fit()
         # The 5th Grade window builds its tabs once, when it opens, so one left
         # open would still be showing the old set of schools.  Close it rather
         # than leave a tab for a school that is no longer there; nothing in it
@@ -1022,6 +1023,32 @@ class MainMenu(ttk.Frame):
         except Exception:
             pass
         self._fifth_window = None
+
+    def _grow_to_fit(self):
+        """Widen the window if the buttons no longer fit.
+
+        main.py sizes the window to its contents once, at launch. Adding a
+        school adds a button to a row that was already full, so the labels get
+        clipped -- "Manage Studer", "5th Gr" -- and the hub looks broken at the
+        exact moment the teacher has just made it work.
+
+        Only ever grows. Somebody who has made their window a particular size
+        should not have it yanked smaller because a button went away.
+        """
+        try:
+            top = self.winfo_toplevel()
+            top.update_idletasks()
+            need_w = top.winfo_reqwidth() + 4
+            need_h = top.winfo_reqheight() + 4
+            cur_w, cur_h = top.winfo_width(), top.winfo_height()
+            max_w = top.winfo_screenwidth() - 80
+            max_h = top.winfo_screenheight() - 80
+            new_w = min(max(cur_w, need_w), max_w)
+            new_h = min(max(cur_h, need_h), max_h)
+            if new_w > cur_w or new_h > cur_h:
+                top.geometry(f"{new_w}x{new_h}")
+        except Exception:
+            pass
 
     def _switch_profile(self):
         """Ask main.py to show the profile selector via the callback."""
