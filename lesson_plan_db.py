@@ -375,6 +375,23 @@ class LessonPlanDatabase:
                     FOREIGN KEY (trip_id) REFERENCES field_trips(id)
                 );
 
+                -- Which student has handed which form back.  The thing a
+                -- teacher actually chases: Exhibit C says plainly that
+                -- without it "a student cannot attend the trip", and the
+                -- health forms are due from EVERY student six school weeks
+                -- out.  A row exists only once something is recorded, so an
+                -- untouched trip costs nothing.
+                CREATE TABLE IF NOT EXISTS field_trip_student_forms (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trip_id INTEGER NOT NULL,
+                    student_id INTEGER NOT NULL,
+                    form_key TEXT NOT NULL,
+                    returned INTEGER DEFAULT 0,
+                    returned_date TEXT,
+                    UNIQUE(trip_id, student_id, form_key),
+                    FOREIGN KEY (trip_id) REFERENCES field_trips(id)
+                );
+
                 CREATE TABLE IF NOT EXISTS field_trip_chaperones (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     trip_id INTEGER NOT NULL,
@@ -429,7 +446,31 @@ class LessonPlanDatabase:
                         "email_teachers TEXT",
                         "registration_done INTEGER DEFAULT 0",
                         "finalforms_done INTEGER DEFAULT 0",
-                        "nurse_check INTEGER DEFAULT 0"):
+                        "nurse_check INTEGER DEFAULT 0",
+                        # 2320P runs two procedures with different forms and
+                        # lead times; everything below is what the district's
+                        # application asks for and Roka could not answer.
+                        "trip_type TEXT",
+                        "board_date TEXT",          # overnight: the deadlines
+                                                    # count back from the board
+                                                    # meeting, not the trip
+                        "date_of_request TEXT",
+                        "educational_objective TEXT",
+                        "budget_code TEXT",         # "Org Key" on the form
+                        "activities TEXT",
+                        "assignments TEXT",
+                        "missed_work TEXT",
+                        "affordability TEXT",
+                        "health_review TEXT",
+                        "advisor_phone TEXT",       # overnight
+                        "dest_address TEXT",        # overnight, and Exhibit C
+                        "arrive_dest_time TEXT",    # overnight asks four
+                        "depart_dest_time TEXT",    # times, not two
+                        "itinerary TEXT",
+                        "sub_rate TEXT",            # which of the three
+                        "board_approved INTEGER DEFAULT 0",
+                        "carrier_profile INTEGER DEFAULT 0",
+                        "asb_minutes INTEGER DEFAULT 0"):
                 try:
                     conn.execute(f"ALTER TABLE field_trips ADD COLUMN {col}")
                     conn.commit()
@@ -1582,7 +1623,16 @@ class LessonPlanDatabase:
                   "sub_cost", "other_cost", "funding", "covered", "approved",
                   "sub_assigned", "bus_requested", "registration_done",
                   "finalforms_done", "nurse_check", "notes",
-                  "email_families", "email_chaperones", "email_teachers"]
+                  "email_families", "email_chaperones", "email_teachers",
+                  # 2320P: the procedure, its extra approvals, and every
+                  # question the district application asks.
+                  "trip_type", "board_date", "date_of_request",
+                  "educational_objective", "budget_code", "activities",
+                  "assignments", "missed_work", "affordability",
+                  "health_review", "advisor_phone", "dest_address",
+                  "arrive_dest_time", "depart_dest_time", "itinerary",
+                  "sub_rate", "board_approved", "carrier_profile",
+                  "asb_minutes"]
 
     def get_field_trips(self, school_year=None):
         with self._connect() as conn:
@@ -1619,11 +1669,36 @@ class LessonPlanDatabase:
     def delete_field_trip(self, trip_id):
         with self._connect() as conn:
             conn.execute("DELETE FROM field_trip_exclusions WHERE trip_id=?", (trip_id,))
+            conn.execute("DELETE FROM field_trip_student_forms WHERE trip_id=?",
+                         (trip_id,))
             conn.execute("DELETE FROM field_trip_chaperones WHERE trip_id=?", (trip_id,))
             conn.execute("DELETE FROM field_trip_reminders WHERE trip_id=?", (trip_id,))
             conn.execute("DELETE FROM field_trips WHERE id=?", (trip_id,))
 
     # ── Who's NOT going ──
+
+    def get_trip_forms(self, trip_id):
+        """{(student_id, form_key): returned} for one trip."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT student_id, form_key, returned FROM "
+                "field_trip_student_forms WHERE trip_id=?", (trip_id,)).fetchall()
+        return {(r["student_id"], r["form_key"]): int(r["returned"] or 0)
+                for r in rows}
+
+    def set_trip_form(self, trip_id, student_id, form_key, returned):
+        """Record (or clear) one student's form."""
+        from datetime import datetime as _dt
+        when = _dt.today().strftime("%Y-%m-%d") if returned else None
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO field_trip_student_forms "
+                "(trip_id, student_id, form_key, returned, returned_date) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(trip_id, student_id, form_key) DO UPDATE SET "
+                "returned=excluded.returned, returned_date=excluded.returned_date",
+                (trip_id, student_id, form_key, 1 if returned else 0, when))
+            conn.commit()
 
     def get_trip_exclusions(self, trip_id):
         with self._connect() as conn:

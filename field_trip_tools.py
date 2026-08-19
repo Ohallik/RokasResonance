@@ -17,7 +17,191 @@ TRAVEL_METHODS = ["School Bus", "Charter Bus", "Private Vehicles", "Walking",
 FUNDING_CURRICULAR = "curricular"          # building / department
 FUNDING_EXTRACURRICULAR = "extracurricular"  # ASB / boosters
 
+# 2320P does not set a ratio -- both applications only ask "how many adults
+# will provide supervision".  One per ten is Roka's own suggestion, not a
+# district rule, and is presented that way.
 STUDENTS_PER_CHAPERONE = 10
+
+# ── Trip type ────────────────────────────────────────────────────────────────
+# BSD runs two entirely separate procedures, with different forms, a different
+# approval path, and lead times that differ by a factor of four.  International
+# is a third; it is rare enough that it is deliberately not modeled, and a
+# teacher planning one is told to work from the district packet.
+
+TRIP_DAY = "day"
+TRIP_OVERNIGHT = "overnight"
+
+TRIP_TYPES = [
+    (TRIP_DAY, "Day trip",
+     "During the school day or after it, returning the same day."),
+    (TRIP_OVERNIGHT, "Overnight or out of state",
+     "Needs school BOARD approval, and the clock starts months earlier."),
+]
+
+TRIP_TYPE_LABEL = {k: lbl for k, lbl, _ in TRIP_TYPES}
+
+
+def trip_type(trip):
+    """The procedure this trip follows.  An overnight trip is one that returns
+    on a later day than it left, so a trip that grew an extra night is not
+    quietly left on the day-trip timeline."""
+    t = (trip.get("trip_type") or "").strip().lower()
+    if t in (TRIP_DAY, TRIP_OVERNIGHT):
+        return t
+    dep = (trip.get("depart_date") or "").strip()
+    ret = (trip.get("return_date") or "").strip()
+    if dep and ret and ret > dep:
+        return TRIP_OVERNIGHT
+    return TRIP_DAY
+
+
+# ── The forms, per procedure ─────────────────────────────────────────────────
+# Per-STUDENT forms are the ones a teacher chases sixty families for; the trip
+# cannot leave without them.  Trip-level paperwork stays on the checklist.
+#
+# FinalForms covers a middle or high school DAY trip -- the office builds the
+# participant group and the paper permission slip stopped being collected years
+# ago.  It does not cover elementary, which both procedures say plainly ("For
+# High School and Middle School trips, use FinalForms"), and it does not cover
+# an overnight trip, where Exhibit C must come back signed per student.
+
+FORM_EXHIBIT_A = "exhibit_a"
+FORM_EXHIBIT_C = "exhibit_c"
+FORM_EXHIBIT_E = "exhibit_e"
+FORM_MEDICATION = "medication"
+
+FORM_LABELS = {
+    FORM_EXHIBIT_A: "Exhibit A — parent authorization",
+    FORM_EXHIBIT_C: "Exhibit C — parent authorization",
+    FORM_EXHIBIT_E: "Exhibit E — emergency health",
+    FORM_MEDICATION: "3416P — medication authorization",
+}
+
+FORM_SHORT = {
+    FORM_EXHIBIT_A: "Exhibit A",
+    FORM_EXHIBIT_C: "Exhibit C",
+    FORM_EXHIBIT_E: "Exhibit E",
+    FORM_MEDICATION: "Medication",
+}
+
+# The form that decides whether a child may get on the bus at all.
+FORM_GATES_ATTENDANCE = {FORM_EXHIBIT_A, FORM_EXHIBIT_C}
+
+
+def required_forms(trip, elementary=False):
+    """The per-student forms this trip has to collect on paper.
+
+    Empty for a middle or high school day trip: FinalForms replaced those, and
+    listing them anyway would have teachers ticking boxes for paperwork nobody
+    collects.
+    """
+    if trip_type(trip) == TRIP_OVERNIGHT:
+        # Exhibit E and the medication form are due together, from everybody,
+        # six school weeks out -- not only from students who take medication.
+        return [FORM_EXHIBIT_C, FORM_EXHIBIT_E, FORM_MEDICATION]
+    if elementary:
+        return [FORM_EXHIBIT_A, FORM_MEDICATION]
+    return []
+
+
+def uses_finalforms(trip, elementary=False):
+    """Whether the FinalForms participant group is this trip's permission
+    record.  MS/HS day trips only."""
+    return trip_type(trip) == TRIP_DAY and not elementary
+
+
+# ── Deadlines ────────────────────────────────────────────────────────────────
+# Everything 2320P asks for is counted in SCHOOL weeks, and for an overnight
+# trip most of it counts back from the school BOARD MEETING rather than from
+# the trip.  A June overnight trip has its packet moving in February.
+#
+# Note a conflict in the district's own overnight document: the numbered steps
+# say the packet reaches the principal "at minimum 4 school weeks prior to the
+# date needed for board approval", while the TIMELINES table on page 5 says 5.
+# The stricter one is used.
+
+DEADLINES_DAY = [
+    ("nurse_notify", 4, "trip", "Tell the school nurse",
+     "Notify the nurse and office manager. If a nurse or para has to come, "
+     "that is a conversation with a building administrator and an extra cost."),
+    ("application", 2, "trip", "Application to the principal",
+     "The application is not complete until you have seen the Office Manager "
+     "about a sub."),
+    ("nurse_roster", 2, "trip", "Roster and medical info to the nurse",
+     "Who is going, and anything they need. Health plans and medications "
+     "travel with the student."),
+]
+
+DEADLINES_OVERNIGHT = [
+    ("nurse_notify", 8, "trip", "Tell the school nurse",
+     "Eight school weeks, and before board approval. The Special Education "
+     "Supervisor for Health Services is notified too."),
+    ("application", 5, "board", "Packet to the principal",
+     "Five school weeks before the board meeting. The district's own steps "
+     "say four; the timeline table says five, so this uses five."),
+    ("athletics", 3, "board", "Packet to Athletics & Activities",
+     "The principal's office sends it to Jessica Dowling. Ask for a read "
+     "receipt: that is your proof it arrived."),
+    ("nurse_roster", 6, "trip", "Roster, medical and bus info to the nurse",
+     "Six school weeks before the trip."),
+    ("health_forms", 6, "trip", "Exhibit E and medication forms from students",
+     "From every student, not only the ones who take medication."),
+]
+
+
+def deadlines(trip, cal=None, today=None):
+    """Every district deadline for this trip, soonest first.
+
+    Each is {key, label, detail, weeks, due (date|None), anchor, overdue,
+    school_weeks_left}.  ``due`` is None when the date it counts back from has
+    not been set -- an overnight trip with no board meeting date cannot have
+    its approval deadlines worked out, and saying so is more use than guessing.
+    """
+    import school_calendar as sc
+
+    kind = trip_type(trip)
+    rules = DEADLINES_OVERNIGHT if kind == TRIP_OVERNIGHT else DEADLINES_DAY
+    trip_d = parse_date(trip.get("depart_date"))
+    board_d = parse_date(trip.get("board_date"))
+    today = today or datetime.today().date()
+
+    out = []
+    for key, weeks, anchor, label, detail in rules:
+        anchor_date = board_d if anchor == "board" else trip_d
+        due = None
+        if anchor_date and cal:
+            due = sc.school_weeks_before(cal, anchor_date, weeks)
+        elif anchor_date:
+            due = anchor_date - timedelta(days=weeks * 7)
+        left = None
+        if due and cal:
+            left = sc.school_weeks_between(cal, today, due)
+        out.append({
+            "key": key, "label": label, "detail": detail, "weeks": weeks,
+            "anchor": anchor, "due": due,
+            "overdue": bool(due and due < today),
+            "school_weeks_left": left,
+        })
+    out.sort(key=lambda x: (x["due"] is None, x["due"] or today))
+    return out
+
+
+def blackout_warning(depart_date, school_year=None):
+    """Why this date is one 2320P asks teachers to avoid, plus what could not
+    be checked.  Returns (reasons, unchecked) -- both lists, both possibly
+    empty.  Checked when the date is typed, because the point is to catch it
+    before the packet is written, not after."""
+    import school_calendar as sc
+
+    d = parse_date(depart_date)
+    if not d:
+        return [], []
+    year = school_year or f"{d.year if d.month >= 7 else d.year - 1}-" \
+                          f"{d.year + 1 if d.month >= 7 else d.year}"
+    cal = sc.get_calendar(year)
+    if not cal:
+        return [], []
+    return sc.blackout_reasons(cal, d), sc.unchecked_windows(cal)
 
 TRIP_STAGES = [("2 weeks", 14), ("1 week", 7)]
 AUDIENCES = ["families", "chaperones", "teachers"]
@@ -35,15 +219,38 @@ CHECKLIST_ITEMS = [
     ("registration_done", "Registration / payment"),
     ("finalforms_done", "FinalForms group created"),
     ("nurse_check", "Nurse check completed"),
+    # Overnight only -- see checklist_for().
+    ("board_approved", "School board approval"),
+    ("carrier_profile", "Charter carrier profile attached"),
+    ("asb_minutes", "ASB minutes attached"),
 ]
 
+# Which items apply to which procedure.  An item that does not apply is not
+# shown at all rather than shown and marked N/A: six schools' worth of "N/A"
+# is noise, and a checklist people scroll past is not a checklist.
+_DAY_ONLY = {"finalforms_done"}
+_OVERNIGHT_ONLY = {"board_approved", "carrier_profile", "asb_minutes"}
 
-def checklist_summary(trip, staff_emailed=None):
+
+def checklist_for(trip, elementary=False):
+    """The checklist items this trip actually has."""
+    overnight = trip_type(trip) == TRIP_OVERNIGHT
+    out = []
+    for key, label in CHECKLIST_ITEMS:
+        if key in _OVERNIGHT_ONLY and not overnight:
+            continue
+        if key in _DAY_ONLY and (overnight or elementary):
+            continue
+        out.append((key, label))
+    return out
+
+
+def checklist_summary(trip, staff_emailed=None, elementary=False):
     """(done, applicable, missing_labels) across the checklist — N/A items
     don't count either way.  Pass staff_emailed (bool) to include the
     derived 'Staff emailed' item."""
     done, applicable, missing = 0, 0, []
-    for key, label in CHECKLIST_ITEMS:
+    for key, label in checklist_for(trip, elementary):
         state = int(trip.get(key) or 0)
         if state == CHECK_NA:
             continue

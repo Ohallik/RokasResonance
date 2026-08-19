@@ -16,7 +16,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
 
-from ui.theme import fs, muted_fg, subtle_fg, fit_window, scroll_body
+from ui.theme import fs, muted_fg, subtle_fg, fit_window, scroll_body, px
 import concert_tools as ct
 import field_trip_tools as ft
 
@@ -289,7 +289,7 @@ class FieldTripsView(ttk.Frame):
             self.db.update_field_trip(trip_id, {key: new})
             self.refresh()
 
-        for i, (key, label) in enumerate(ft.CHECKLIST_ITEMS):
+        for i, (key, label) in enumerate(ft.checklist_for(t, self._is_elementary())):
             state = int(t.get(key) or 0)
             text, color = _item_label(state, label)
             lbl = ttk.Label(grid, text=text, font=("Segoe UI", fs(9)),
@@ -318,6 +318,62 @@ class FieldTripsView(ttk.Frame):
                   foreground="#B45309" if due_auds else muted_fg()
                   ).pack(anchor=W, pady=(2, 2))
 
+        # ── District deadlines ──
+        # The reminders above are about telling people; these are the dates
+        # the district works to, and for an overnight trip they land months
+        # earlier and count back from the board meeting rather than the trip.
+        import school_calendar as sc
+        cal = sc.get_calendar(self._year())
+        dl = ft.deadlines(t, cal)
+        if dl:
+            overdue = [x for x in dl if x["overdue"]]
+            nxt = next((x for x in dl if not x["overdue"] and x["due"]), None)
+            missing_anchor = [x for x in dl if not x["due"]]
+            if overdue:
+                text = ("District deadlines:  ⚠ past due — "
+                        + ", ".join(x["label"] for x in overdue[:3]))
+                color = "#B45309"
+            elif nxt:
+                left = nxt["school_weeks_left"]
+                when = ct.fmt_date(nxt["due"].isoformat())
+                text = f"Next district deadline:  {nxt['label']} by {when}"
+                if left is not None and left >= 0:
+                    text += f"  ({left:.0f} school week(s) away)"
+                color = muted_fg()
+            elif missing_anchor:
+                text = ("District deadlines: set the board meeting date to "
+                        "work them out.")
+                color = "#B45309"
+            else:
+                text = ""
+                color = muted_fg()
+            if text:
+                lbl = ttk.Label(card, text=text, font=("Segoe UI", fs(9)),
+                                foreground=color, cursor="hand2")
+                lbl.pack(anchor=W, pady=(0, 2))
+                lbl.bind("<Button-1>", lambda e, tr=t: self._deadlines(tr))
+
+        # ── Paper forms outstanding ──
+        forms = ft.required_forms(t, self._is_elementary())
+        if forms and n:
+            have = self.db.get_trip_forms(t["id"])
+            missing = sum(1 for stu in attending for f in forms
+                          if not have.get((stu["id"], f)))
+            gate = [f for f in forms if f in ft.FORM_GATES_ATTENDANCE]
+            cannot = sum(1 for stu in attending for f in gate
+                         if not have.get((stu["id"], f)))
+            if missing:
+                msg = f"Paper forms:  {missing} still to come back"
+                if cannot:
+                    msg += (f"  ·  {cannot} student(s) cannot travel without "
+                            f"{ft.FORM_SHORT[gate[0]]}")
+                ttk.Label(card, text=msg, font=("Segoe UI", fs(9)),
+                          foreground="#B45309").pack(anchor=W, pady=(0, 2))
+            else:
+                ttk.Label(card, text="Paper forms:  all in ✓",
+                          font=("Segoe UI", fs(9)),
+                          foreground="#1a7a1a").pack(anchor=W, pady=(0, 2))
+
         # ── Actions ──
         btns = ttk.Frame(card)
         btns.pack(fill=X, pady=(2, 0))
@@ -329,15 +385,82 @@ class FieldTripsView(ttk.Frame):
                    command=lambda tr=t: self._chaperones(tr)).pack(side=LEFT, padx=4)
         ttk.Button(btns, text="✉ Reminders", bootstyle=(WARNING, OUTLINE),
                    command=lambda tr=t: self._reminders(tr)).pack(side=LEFT, padx=4)
+        if ft.required_forms(t, self._is_elementary()):
+            ttk.Button(btns, text="📋 Forms", bootstyle=(INFO, OUTLINE),
+                       command=lambda tr=t: self._forms(tr)).pack(side=LEFT, padx=4)
+        ttk.Button(btns, text="🖨 Application", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda tr=t: self._print_application(tr)
+                   ).pack(side=LEFT, padx=4)
         ttk.Button(btns, text="🗑", bootstyle=(DANGER, OUTLINE), width=3,
                    command=lambda tr=t: self._delete_trip(tr)).pack(side=RIGHT)
+
+    def _is_elementary(self):
+        """Whether this teacher's programme is 5th grade.  It decides whether
+        FinalForms covers permission or paper does -- both district procedures
+        say FinalForms is for middle and high school."""
+        try:
+            from ui.settings_dialog import load_settings
+            return ((load_settings(self.base_dir).get("teacher") or {})
+                    .get("program_type") == "elementary")
+        except Exception:
+            return False
+
+    def _deadlines(self, trip):
+        _DeadlinesDialog(self, self.db, dict(trip), self._year())
+
+    def _forms(self, trip):
+        students = ft.roster(self._students(), dict(trip),
+                             self.db.get_trip_exclusions(trip["id"]))
+        _FormsDialog(self, self.db, dict(trip), students,
+                     self._is_elementary())
+        self.refresh()
+
+    def _print_application(self, trip):
+        """The district application, with the planner's answers on it."""
+        import field_trip_pdf as fp
+        from tkinter import filedialog
+
+        t = dict(self.db.get_field_trip(trip["id"]))
+        attending = ft.roster(self._students(), t,
+                              self.db.get_trip_exclusions(t["id"]))
+        try:
+            from ui.settings_dialog import load_settings, school_name
+            teacher = (load_settings(self.base_dir).get("teacher") or {})
+            who = (teacher.get("display_name") or "").strip()
+            where = school_name(self.base_dir) or ""
+        except Exception:
+            who = where = ""
+
+        path = filedialog.asksaveasfilename(
+            parent=self.winfo_toplevel(), defaultextension=".pdf",
+            initialfile=fp.suggested_filename(t),
+            title="Save the field trip application",
+            filetypes=[("PDF", "*.pdf")])
+        if not path:
+            return
+        try:
+            fp.build_application(
+                t, path, students=len(attending),
+                chaperones=len(self.db.get_trip_chaperones(t["id"])),
+                teacher_name=who, school_name=where)
+        except Exception as e:
+            Messagebox.show_error(f"Could not write the application.\n\n{e}",
+                                  title="Not saved",
+                                  parent=self.winfo_toplevel())
+            return
+        try:
+            os.startfile(path)
+        except Exception:
+            Messagebox.show_info(f"Saved to:\n{path}", title="Saved",
+                                 parent=self.winfo_toplevel())
 
     # ── CRUD ─────────────────────────────────────────────────────────────────
 
     def _new_trip(self, template=None):
         seed = dict(template) if template else None
         dlg = _TripDialog(self, seed=seed, program_type=self._program_type(),
-                          main_db=self.main_db, student_year=self._student_year())
+                          main_db=self.main_db, student_year=self._student_year(),
+                          elementary=self._is_elementary())
         self.wait_window(dlg)
         if dlg.result:
             # A template contributes what the dialog doesn't show (extra
@@ -401,7 +524,8 @@ class FieldTripsView(ttk.Frame):
     def _edit_trip(self, t):
         dlg = _TripDialog(self, seed=dict(t),
                           program_type=self._program_type(), editing=True,
-                          main_db=self.main_db, student_year=self._student_year())
+                          main_db=self.main_db, student_year=self._student_year(),
+                          elementary=self._is_elementary())
         self.wait_window(dlg)
         if dlg.result:
             self.db.update_field_trip(t["id"], dlg.result)
@@ -558,9 +682,10 @@ class _PastTripDialog(ttk.Toplevel):
 
 class _TripDialog(ttk.Toplevel):
     def __init__(self, parent, seed=None, program_type="band", editing=False,
-                 main_db=None, student_year=None):
+                 main_db=None, student_year=None, elementary=False):
         super().__init__(parent.winfo_toplevel())
         self.result = None
+        self._elementary = elementary
         seed = seed or {}
         self.title("Edit Field Trip" if editing else "New Field Trip")
         self.resizable(True, True)
@@ -591,6 +716,24 @@ class _TripDialog(ttk.Toplevel):
             return v
 
         entry(body, "Field trip name", "name", width=44)
+
+        # ── Which procedure ──
+        # BSD runs two, and they are not variations of one thing: different
+        # forms, a different approval path, and lead times that differ by a
+        # factor of four.  Asked first because everything below depends on it.
+        ttk.Label(body, text="What kind of trip", font=("Segoe UI", 9, "bold")
+                  ).pack(anchor=W, pady=(10, 0))
+        self._trip_type = tk.StringVar(
+            value=ft.trip_type(seed) if seed else ft.TRIP_DAY)
+        for value, label, hint in ft.TRIP_TYPES:
+            ttk.Radiobutton(body, text=label, value=value,
+                            variable=self._trip_type, bootstyle=PRIMARY,
+                            command=self._type_changed).pack(anchor=W)
+            ttk.Label(body, text="      " + hint, font=("Segoe UI", 8),
+                      foreground=muted_fg()).pack(anchor=W)
+        ttk.Label(body, text="      International trips are not covered here; "
+                             "work from the district packet for those.",
+                  font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W)
 
         # Groups
         ttk.Label(body, text="Class or group(s) attending",
@@ -640,6 +783,24 @@ class _TripDialog(ttk.Toplevel):
               hint="blank = same day")
         entry(c4, "Return time", "return_time", width=10, hint=" ")
 
+        # A blackout date is cheap to fix now and expensive to fix after the
+        # packet is written, so it is checked as the date is typed.
+        self._blackout = ttk.Label(body, text="", font=("Segoe UI", 8),
+                                   foreground="#B45309", wraplength=560,
+                                   justify=LEFT)
+        self._blackout.pack(anchor=W, pady=(4, 0))
+        self._vars["depart_date"].trace_add("write",
+                                            lambda *a: self._check_blackout())
+
+        # Overnight approval counts back from the school BOARD MEETING, not
+        # from the trip, so without this date no deadline can be worked out.
+        self._board_box = ttk.Frame(body)
+        entry(self._board_box, "School board meeting date", "board_date",
+              width=14,
+              hint="YYYY-MM-DD — the meeting your trip needs to be on. Every "
+                   "approval deadline counts back from this, not from the "
+                   "trip.")
+
         row2 = ttk.Frame(body)
         row2.pack(fill=X, anchor=W)
         c5 = ttk.Frame(row2); c5.pack(side=LEFT, padx=(0, 16))
@@ -661,13 +822,13 @@ class _TripDialog(ttk.Toplevel):
         ttk.Label(body, text="Click an item to cycle:  ☐ to do → ☑ done → "
                              "N/A; right-click to mark it N/A right away "
                              "(private vehicles = no bus request, after "
-                             "school = no sub, free event = no payment). "
-                             "FinalForms replaces paper permission "
-                             "slips — the office builds the participant "
-                             "group so you have realtime medical and "
-                             "emergency-contact info during the trip.",
+                             "school = no sub, free event = no payment).",
                   font=("Segoe UI", 8), foreground=muted_fg(),
                   wraplength=560, justify=LEFT).pack(anchor=W)
+        self._forms_note = ttk.Label(body, text="", font=("Segoe UI", 8),
+                                     foreground=muted_fg(), wraplength=560,
+                                     justify=LEFT)
+        self._forms_note.pack(anchor=W)
         self._check_states = {}
         cgrid = ttk.Frame(body)
         cgrid.pack(anchor=W, pady=(4, 0), fill=X)
@@ -704,8 +865,74 @@ class _TripDialog(ttk.Toplevel):
             btn.grid(row=idx // 2, column=idx % 2, sticky="ew",
                      padx=(0, 8), pady=2)
 
-        for i, (key, label) in enumerate(ft.CHECKLIST_ITEMS):
-            _make_item(i, key, label)
+        self._cgrid = cgrid
+        self._make_item = _make_item
+        for key, _label in ft.CHECKLIST_ITEMS:      # every state, so a hidden
+            self._check_states.setdefault(key, int(seed.get(key) or 0))
+
+        # ── What the district application asks and Roka could not answer ──
+        # Filling these in is what lets Roka print the application; leaving
+        # them blank costs nothing, and a blank on the printout is a question
+        # still to answer rather than something invented.
+        appbox = tk.LabelFrame(body, text=" For the district application ",
+                               font=("Segoe UI", 9, "bold"), padx=10, pady=6)
+        appbox.pack(fill=X, pady=(12, 4))
+        ttk.Label(appbox, text="Roka can print your answers on the "
+                               "application form. Fill in what you know; the "
+                               "rest prints blank.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=540, justify=LEFT).pack(anchor=W)
+        arow = ttk.Frame(appbox); arow.pack(fill=X, anchor=W)
+        a1 = ttk.Frame(arow); a1.pack(side=LEFT, padx=(0, 16))
+        a2 = ttk.Frame(arow); a2.pack(side=LEFT)
+        entry(a1, "Charge to budget code", "budget_code", width=22,
+              hint="The Org Key.")
+        entry(a2, "Educational objective", "educational_objective", width=40,
+              hint="Called out twice in the district's own instructions as "
+                   "the one people leave off.")
+
+        self._overnight_box = ttk.Frame(appbox)
+        orow = ttk.Frame(self._overnight_box); orow.pack(fill=X, anchor=W)
+        o1 = ttk.Frame(orow); o1.pack(side=LEFT, padx=(0, 16))
+        o2 = ttk.Frame(orow); o2.pack(side=LEFT, padx=(0, 16))
+        o3 = ttk.Frame(orow); o3.pack(side=LEFT)
+        entry(o1, "Your cell phone", "advisor_phone", width=16)
+        entry(o2, "Arrive at destination", "arrive_dest_time", width=12,
+              hint="e.g. 11:00am")
+        entry(o3, "Depart destination", "depart_dest_time", width=12,
+              hint=" ")
+        entry(self._overnight_box, "Destination address / contact",
+              "dest_address", width=54,
+              hint="Parents get this on Exhibit C, with the itinerary.")
+
+        self._long_vars = {}
+
+        def long_field(parent, label, key, hint="", height=3):
+            ttk.Label(parent, text=label, font=("Segoe UI", 9, "bold")
+                      ).pack(anchor=W, pady=(8, 0))
+            if hint:
+                ttk.Label(parent, text=hint, font=("Segoe UI", 8),
+                          foreground=muted_fg(), wraplength=530,
+                          justify=LEFT).pack(anchor=W)
+            box = tk.Text(parent, height=height, width=60,
+                          font=("Segoe UI", 9), relief="solid", bd=1, wrap=WORD)
+            box.insert("1.0", str(seed.get(key) or ""))
+            box.pack(anchor=W, fill=X)
+            self._long_vars[key] = box
+
+        long_field(appbox, "Activities planned on the trip", "activities")
+        long_field(appbox, "Required and alternate assignments", "assignments",
+                   hint="And what students who miss the trip do instead.")
+        long_field(appbox, "Work missed in other classes", "missed_work",
+                   height=2)
+        long_field(appbox, "Students who cannot afford the trip",
+                   "affordability",
+                   hint="How they get help, and how they ask for it.")
+        long_field(appbox, "Health needs reviewed with the nurse",
+                   "health_review", height=2)
+        long_field(self._overnight_box, "Itinerary", "itinerary",
+                   hint="As detailed as you can. Parents get this too.",
+                   height=5)
 
         ttk.Label(body, text="Notes", font=("Segoe UI", 9, "bold")
                   ).pack(anchor=W, pady=(8, 0))
@@ -714,7 +941,54 @@ class _TripDialog(ttk.Toplevel):
         self._notes.insert("1.0", str(seed.get("notes") or ""))
         self._notes.pack(anchor=W, fill=X)
 
-        fit_window(self, 620, 640)
+        self._type_changed()
+        self._check_blackout()
+        fit_window(self, 660, 700)
+
+    def _type_changed(self):
+        """Show only what this procedure asks for.  An overnight trip needs a
+        board meeting date, four times and an itinerary; a day trip does not,
+        and showing them anyway is five more fields to skip past."""
+        overnight = self._trip_type.get() == ft.TRIP_OVERNIGHT
+        for box in (self._board_box, self._overnight_box):
+            if overnight:
+                box.pack(fill=X, anchor=W, pady=(4, 0))
+            else:
+                box.pack_forget()
+        # Rebuild the checklist for this procedure.
+        for w in self._cgrid.winfo_children():
+            w.destroy()
+        trip = {"trip_type": self._trip_type.get()}
+        for i, (key, label) in enumerate(ft.checklist_for(trip)):
+            self._make_item(i, key, label)
+        forms = ft.required_forms(trip, elementary=self._elementary)
+        if forms:
+            self._forms_note.config(
+                text="Paper forms for this trip: "
+                     + ", ".join(ft.FORM_LABELS[f] for f in forms)
+                     + ". Track who has handed them in with the Forms button "
+                       "on the trip card.")
+        elif ft.uses_finalforms(trip, self._elementary):
+            self._forms_note.config(
+                text="FinalForms is the permission record for a middle or high "
+                     "school day trip: the office builds the participant group "
+                     "and there are no paper slips to collect.")
+        else:
+            self._forms_note.config(text="")
+
+    def _check_blackout(self):
+        """Warn while the date is being typed, not after the packet is done."""
+        reasons, unchecked = ft.blackout_warning(
+            self._vars["depart_date"].get().strip())
+        if not reasons:
+            self._blackout.config(text="")
+            return
+        msg = "The district asks you to avoid this date: " + "; ".join(reasons) + "."
+        if unchecked:
+            msg += (" Roka does not have this year's "
+                    + " or ".join(unchecked) + " dates, so it could not check "
+                    "those.")
+        self._blackout.config(text=msg)
 
     def _save(self):
         name = self._vars["name"].get().strip()
@@ -733,10 +1007,290 @@ class _TripDialog(ttk.Toplevel):
         data = {k: v.get().strip() for k, v in self._vars.items()}
         data["groups_list"] = ", ".join(groups)
         data["notes"] = self._notes.get("1.0", "end").strip()
+        data["trip_type"] = self._trip_type.get()
+        for key, box in self._long_vars.items():
+            data[key] = box.get("1.0", "end").strip()
         for key, _label in ft.CHECKLIST_ITEMS:
-            data[key] = self._check_states[key]
+            data[key] = self._check_states.get(key, 0)
+
+        # Said once, on the way out, so it cannot be missed -- but not
+        # blocking. A teacher may have a real reason, and the district asks
+        # people to avoid these dates rather than forbidding them.
+        reasons, _unchecked = ft.blackout_warning(data.get("depart_date"))
+        if reasons:
+            if Messagebox.yesno(
+                    "The district asks you to avoid this date:\n\n  · "
+                    + "\n  · ".join(reasons)
+                    + "\n\nSave it anyway?",
+                    title="Blackout date", parent=self) != "Yes":
+                return
         self.result = data
         self.destroy()
+
+
+# ═══════════════════════════════════════ District deadlines ══════════════════
+
+class _DeadlinesDialog(ttk.Toplevel):
+    """What 2320P requires, when, counted in school weeks.
+
+    Every district deadline is expressed in SCHOOL weeks, and eight school
+    weeks across winter break is most of a term.  That arithmetic is exactly
+    what a teacher does in their head, gets wrong, and finds out about too
+    late to fix -- so the tool does it.
+    """
+
+    def __init__(self, parent, db, trip, year):
+        super().__init__(parent.winfo_toplevel())
+        import school_calendar as sc
+
+        self.title(f"District deadlines — {trip['name']}")
+        self.resizable(True, True)
+        self.grab_set()
+
+        kind = ft.trip_type(trip)
+        ttk.Label(self, text=f"🗓  {ft.TRIP_TYPE_LABEL[kind]} — what the "
+                             f"district needs, and when",
+                  font=("Segoe UI", 12, "bold"),
+                  bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(12, 2))
+        anchor_note = ("Counted back from the school board meeting where "
+                       "marked, otherwise from the trip."
+                       if kind == ft.TRIP_OVERNIGHT else
+                       "Counted back from the trip, in school weeks — breaks "
+                       "do not count.")
+        ttk.Label(self, text=anchor_note, font=("Segoe UI", 8),
+                  foreground=muted_fg(), wraplength=560,
+                  justify=LEFT).pack(anchor=W, padx=16)
+
+        cal = sc.get_calendar(year)
+        if not cal:
+            ttk.Label(self, text=f"Roka has no school calendar for {year}, so "
+                                 f"these are counted in calendar weeks and "
+                                 f"will be optimistic.",
+                      font=("Segoe UI", 9), foreground="#B45309",
+                      wraplength=560, justify=LEFT).pack(anchor=W, padx=16,
+                                                         pady=(6, 0))
+
+        body = scroll_body(self, padx=16, pady=8)
+        for d in ft.deadlines(trip, cal):
+            box = tk.LabelFrame(body, text=f" {d['label']} ",
+                                font=("Segoe UI", 9, "bold"), padx=10, pady=6)
+            box.pack(fill=X, pady=4)
+            if d["due"]:
+                when = ct.fmt_date(d["due"].isoformat())
+                left = d["school_weeks_left"]
+                if d["overdue"]:
+                    line, color = f"⚠ was due {when}", "#B00000"
+                else:
+                    line = f"by {when}"
+                    if left is not None:
+                        line += f"  ·  {left:.0f} school week(s) from today"
+                    color = "#1a7a1a" if (left or 0) > 2 else "#B45309"
+            else:
+                line = ("Set the school board meeting date on the trip to "
+                        "work this one out.")
+                color = "#B45309"
+            ttk.Label(box, text=line, font=("Segoe UI", 10, "bold"),
+                      foreground=color).pack(anchor=W)
+            ttk.Label(box, text=f"{d['weeks']} school weeks before "
+                                + ("the board meeting" if d["anchor"] == "board"
+                                   else "the trip"),
+                      font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W)
+            ttk.Label(box, text=d["detail"], font=("Segoe UI", 9),
+                      wraplength=520, justify=LEFT).pack(anchor=W, pady=(2, 0))
+
+        ttk.Button(self, text="Close", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(pady=(4, 12))
+        fit_window(self, 600, 560)
+
+
+# ═══════════════════════════════════════════ Paper forms ═════════════════════
+
+class _FormsDialog(ttk.Toplevel):
+    """Who has handed back which form.
+
+    The job this replaces is a printed roster with pencil ticks. Exhibit C says
+    plainly that without it "a student cannot attend the trip", so the ones
+    still missing it are called out separately from the ones merely behind.
+    """
+
+    def __init__(self, parent, db, trip, students, elementary=False):
+        super().__init__(parent.winfo_toplevel())
+        self.db = db
+        self.base_dir = getattr(parent, "base_dir", "")
+        self.trip = trip
+        self.forms = ft.required_forms(trip, elementary)
+        self.title(f"Paper forms — {trip['name']}")
+        self.resizable(True, True)
+        self.grab_set()
+
+        ttk.Label(self, text=f"📋  Paper forms — {trip['name']}",
+                  font=("Segoe UI", 12, "bold"),
+                  bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(12, 2))
+        why = ("An overnight trip collects these on paper from every student."
+               if ft.trip_type(trip) == ft.TRIP_OVERNIGHT else
+               "Elementary trips are not on FinalForms, so these come back on "
+               "paper.")
+        ttk.Label(self, text=why + "  Click a box to tick it.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=560, justify=LEFT).pack(anchor=W, padx=16)
+
+        self._students = sorted(
+            students, key=lambda x: ((x.get("last_name") or "").lower(),
+                                     (x.get("first_name") or "").lower()))
+        self._have = db.get_trip_forms(trip["id"])
+
+        cols = ["name"] + self.forms
+        self.tree = ttk.Treeview(self, columns=cols, show="headings",
+                                 selectmode="browse", bootstyle=PRIMARY)
+        self.tree.heading("name", text="Student", anchor=W)
+        self.tree.column("name", width=px(220), anchor=W, stretch=True)
+        for f in self.forms:
+            self.tree.heading(f, text=ft.FORM_SHORT[f], anchor=CENTER)
+            self.tree.column(f, width=px(110), anchor=CENTER, stretch=False)
+        self.tree.pack(fill=BOTH, expand=True, padx=16, pady=(8, 4))
+        self.tree.bind("<Button-1>", self._click, add="+")
+
+        self._summary = ttk.Label(self, text="", font=("Segoe UI", 9, "bold"))
+        self._summary.pack(anchor=W, padx=16)
+
+        bar = ttk.Frame(self)
+        bar.pack(fill=X, padx=16, pady=10)
+        ttk.Button(bar, text="Close", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(bar, text="✉ Email who is missing one",
+                   bootstyle=(WARNING, OUTLINE),
+                   command=self._email_missing).pack(side=LEFT)
+        ttk.Button(bar, text="Everyone handed in the selected column",
+                   bootstyle=(SUCCESS, OUTLINE),
+                   command=self._all_of_column).pack(side=LEFT, padx=6)
+
+        self._reload()
+        fit_window(self, 620, 520)
+
+    def _reload(self):
+        from concert_tools import _display_name
+        self.tree.delete(*self.tree.get_children())
+        for stu in self._students:
+            vals = [_display_name(stu)]
+            for f in self.forms:
+                vals.append("☑" if self._have.get((stu["id"], f)) else "☐")
+            self.tree.insert("", "end", iid=str(stu["id"]), values=vals)
+        missing = sum(1 for stu in self._students for f in self.forms
+                      if not self._have.get((stu["id"], f)))
+        gate = [f for f in self.forms if f in ft.FORM_GATES_ATTENDANCE]
+        cannot = [stu for stu in self._students
+                  if any(not self._have.get((stu["id"], f)) for f in gate)]
+        text = f"{missing} form(s) still to come back"
+        if cannot:
+            text += (f"   ·   {len(cannot)} student(s) cannot travel yet "
+                     f"(no {ft.FORM_SHORT[gate[0]]})")
+        self._summary.config(text=text,
+                             foreground="#B45309" if missing else "#1a7a1a")
+
+    def _click(self, event):
+        if self.tree.identify("region", event.x, event.y) != "cell":
+            return
+        col = self.tree.identify_column(event.x)
+        try:
+            idx = int(col.replace("#", "")) - 1
+        except ValueError:
+            return
+        if idx < 1 or idx > len(self.forms):
+            return
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            return
+        sid, form = int(iid), self.forms[idx - 1]
+        now = not self._have.get((sid, form))
+        self.db.set_trip_form(self.trip["id"], sid, form, now)
+        self._have[(sid, form)] = 1 if now else 0
+        self._reload()
+        self.tree.selection_set(iid)
+
+    def _all_of_column(self):
+        """One tick for a form the whole group handed in together -- which is
+        what happens when they are collected in class."""
+        form = self.forms[0]
+        if len(self.forms) > 1:
+            sel = _pick_one(self, "Which form?",
+                            "Mark every student as having handed in:",
+                            [ft.FORM_LABELS[f] for f in self.forms])
+            if not sel:
+                return
+            form = self.forms[[ft.FORM_LABELS[f] for f in self.forms].index(sel)]
+        for stu in self._students:
+            self.db.set_trip_form(self.trip["id"], stu["id"], form, True)
+            self._have[(stu["id"], form)] = 1
+        self._reload()
+
+    def _email_missing(self):
+        """Open a message to the families who still owe something."""
+        rows = [stu for stu in self._students
+                if any(not self._have.get((stu["id"], f)) for f in self.forms)]
+        if not rows:
+            Messagebox.show_info("Everything is in.", title="Nothing missing",
+                                 parent=self)
+            return
+        import email_launcher
+        addrs = []
+        for stu in rows:
+            for key in ("parent1_email", "parent2_email"):
+                a = (stu.get(key) or "").strip()
+                if a and a not in addrs:
+                    addrs.append(a)
+        if not addrs:
+            Messagebox.show_info(
+                f"{len(rows)} student(s) still owe a form, but none of them "
+                f"have a guardian email on file.",
+                title="No addresses", parent=self)
+            return
+        outstanding = ", ".join(
+            ft.FORM_SHORT[f] for f in self.forms
+            if any(not self._have.get((stu["id"], f)) for stu in rows))
+        body = (f"We are still waiting on the {outstanding} form for "
+                f"{self.trip['name']}. Please send it in with your child as "
+                f"soon as you can, thank you!")
+        try:
+            # Families in BCC, teacher in To: a stray Reply All comes back to
+            # her rather than to every family.
+            email_launcher.compose(
+                to=email_launcher.teacher_address(self.base_dir),
+                bcc=addrs, subject=f"{self.trip['name']} — form still needed",
+                body=body, parent=self)
+        except Exception:
+            Messagebox.show_info("Addresses:\n\n" + "; ".join(addrs),
+                                 title="Copy these", parent=self)
+
+
+def _pick_one(parent, title, prompt, options):
+    """A small single-choice list.  Returns the chosen string or None."""
+    win = ttk.Toplevel(master=parent)
+    win.title(title)
+    win.grab_set()
+    ttk.Label(win, text=prompt, font=("Segoe UI", 10, "bold")).pack(
+        anchor=W, padx=16, pady=(14, 6))
+    box = tk.Listbox(win, height=min(8, len(options)), width=44)
+    for o in options:
+        box.insert(END, o)
+    box.selection_set(0)
+    box.pack(fill=BOTH, expand=True, padx=16)
+    chosen = {"v": None}
+
+    def ok():
+        sel = box.curselection()
+        if sel:
+            chosen["v"] = options[sel[0]]
+        win.destroy()
+
+    bar = ttk.Frame(win)
+    bar.pack(fill=X, padx=16, pady=12)
+    ttk.Button(bar, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+               command=win.destroy).pack(side=RIGHT, padx=4)
+    ttk.Button(bar, text="OK", bootstyle=SUCCESS, command=ok).pack(side=RIGHT,
+                                                                   padx=4)
+    fit_window(win, 380, 260)
+    parent.wait_window(win)
+    return chosen["v"]
 
 
 # ═══════════════════════════════════════════ Roster & costs ══════════════════
