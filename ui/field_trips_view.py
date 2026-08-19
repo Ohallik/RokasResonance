@@ -478,30 +478,35 @@ class FieldTripsView(ttk.Frame):
                 lbl.bind("<Button-1>", lambda e, tr=t: self._deadlines(tr))
 
         # ── Paper forms outstanding ──
-        forms = ft.required_forms(t, elementary)
-        if forms and not n:
+        # Every per-student column, the district's AND the teacher's own.  It
+        # counted only the district's, so a card could say everything was in
+        # while half the interest surveys were still outstanding -- which is
+        # the one thing this line exists to prevent.
+        columns = ft.form_columns(t, elementary)
+        if columns and not n:
             ttk.Label(card,
-                      text="Paper forms:  "
-                           + ", ".join(ft.FORM_SHORT[f] for f in forms)
+                      text="Student forms:  "
+                           + ", ".join(label for _k, label in columns)
                            + ", once there is a roster to chase.",
                       font=("Segoe UI", fs(9)),
                       foreground=muted_fg()).pack(anchor=W, pady=(0, 2))
-        if forms and n:
+        if columns and n:
             have = self.db.get_trip_forms(t["id"])
-            missing = sum(1 for stu in attending for f in forms
+            keys = [k for k, _l in columns]
+            missing = sum(1 for stu in attending for f in keys
                           if not have.get((stu["id"], f)))
-            gate = [f for f in forms if f in ft.FORM_GATES_ATTENDANCE]
+            gate = [f for f in keys if f in ft.FORM_GATES_ATTENDANCE]
             cannot = sum(1 for stu in attending for f in gate
                          if not have.get((stu["id"], f)))
             if missing:
-                msg = f"Paper forms:  {missing} still to come back"
+                msg = f"Student forms:  {missing} still missing"
                 if cannot:
                     msg += (f"  ·  {cannot} student(s) cannot travel without "
-                            f"{ft.FORM_SHORT[gate[0]]}")
+                            f"the {ft.FORM_SHORT[gate[0]]} form")
                 ttk.Label(card, text=msg, font=("Segoe UI", fs(9)),
-                          foreground="#B45309").pack(anchor=W, pady=(0, 2))
+                          foreground=_SOON).pack(anchor=W, pady=(0, 2))
             else:
-                ttk.Label(card, text="Paper forms:  all in ✓",
+                ttk.Label(card, text="Student forms:  all turned in ✓",
                           font=("Segoe UI", fs(9)),
                           foreground="#1a7a1a").pack(anchor=W, pady=(0, 2))
 
@@ -2193,13 +2198,13 @@ class _RosterFormsDialog(ttk.Toplevel):
             cannot = [s for s in going
                       if any(not self._have.get((s["id"], f)) for f in gate)]
             if missing:
-                line = f"{missing} still to come back"
+                line = f"{missing} student form(s) still missing"
                 if cannot:
                     line += (f"  \u00b7  {len(cannot)} cannot travel without "
                              f"the {ft.FORM_SHORT[gate[0]]} form")
-                colour = "#B45309"
+                colour = _SOON
             else:
-                line, colour = "Everything is in \u2713", "#1a7a1a"
+                line, colour = "All student forms turned in \u2713", "#1a7a1a"
         self._outstanding.config(text=line, foreground=colour)
         costs = ft.trip_costs(self.trip, n)
         per = ("$0.00 (covered)" if self.trip.get("covered")
