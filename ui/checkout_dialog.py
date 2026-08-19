@@ -8,6 +8,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime, date as dt_date
 from ui.names import display_full
+from ui.theme import muted_fg
 
 
 def _record_needed_repair(parent, db, instrument_id, date, notes, student_name=None):
@@ -60,6 +61,18 @@ class CheckoutDialog(ttk.Toplevel):
         if not instrument:
             self.destroy()
             return
+
+        # The instrument's own school decides two things here: whose children
+        # can be offered (a checkout to another school's student is refused
+        # anyway, so offering them is offering an error), and whether there is
+        # a rental fee to name at all.
+        self._site_id = (instrument["site_id"]
+                         if "site_id" in instrument.keys() else None)
+        self._charges_fees = True
+        if self._site_id:
+            site = self.db.get_site(self._site_id)
+            if site:
+                self._charges_fees = bool(dict(site).get("charges_fees"))
 
         # ── Header ────────────────────────────────────────────────────────────
         hdr_style = WARNING if self.mode == "checkout" else INFO
@@ -140,6 +153,9 @@ class CheckoutDialog(ttk.Toplevel):
         # without a district student_id for the same person collapse into one entry.
         # Prefer whichever record has a student_id (richer contact data).
         all_students = self.db.get_current_roster()
+        if self._site_id:
+            all_students = [x for x in all_students
+                            if (dict(x).get("site_id") == self._site_id)]
         _seen = {}  # name_key -> (record_dict, has_sid)
         for s in all_students:
             d = dict(s)
@@ -151,31 +167,28 @@ class CheckoutDialog(ttk.Toplevel):
                 _seen[name_key] = (d, has_sid)
             elif has_sid and not _seen[name_key][1]:
                 _seen[name_key] = (d, True)  # upgrade to the richer record
-        self._student_list = [
-            (display_full(s), s) for s, _ in _seen.values()
-        ]
+        self._student_list = sorted(
+            ((display_full(s), s) for s, _ in _seen.values()),
+            key=lambda pair: (pair[1].get("last_name") or "").lower())
+        self._all_names = [n for n, _ in self._student_list]
 
         # ── Student Name ───────────────────────────────────────────────────────
         ttk.Label(form, text="Student Name:", font=("Segoe UI", 9, "bold")).pack(anchor=W)
 
+        # A list, not a guess.  This was a bare box whose names only appeared
+        # once you had typed enough of one, so a teacher facing an empty field
+        # had no way to know the roster was in there at all.
         self._student_var = tk.StringVar()
-        self._student_entry = ttk.Entry(form, textvariable=self._student_var, width=42)
+        self._student_entry = ttk.Combobox(form, textvariable=self._student_var,
+                                           width=40, values=self._all_names)
         self._student_entry.pack(fill=X, pady=(2, 0))
         self._student_entry.focus_set()
-
-        # Autocomplete container — always packed here so it stays between entry and date
-        # pack_propagate(False) lets us control height without children forcing it
-        self._ac_container = ttk.Frame(form, relief="solid", borderwidth=1)
-        self._ac_container.pack(fill=X)
-        self._ac_container.pack_propagate(False)
-        self._ac_container.config(height=1)  # Collapsed initially
-
-        self._ac_listbox = tk.Listbox(
-            self._ac_container, font=("Segoe UI", 9),
-            selectmode=SINGLE, activestyle="underline",
-            relief="flat", bd=0
-        )
-        self._ac_listbox.pack(fill=BOTH, expand=True)
+        if not self._all_names:
+            ttk.Label(form,
+                      text="No students on this school's roster yet.  Import a "
+                           "class list first.",
+                      font=("Segoe UI", 8), foreground=muted_fg(),
+                      wraplength=380, justify=LEFT).pack(anchor=W, pady=(2, 0))
 
         # ── Return Date ────────────────────────────────────────────────────────
         ttk.Label(form, text="Return Date:", font=("Segoe UI", 9, "bold")).pack(
@@ -190,66 +203,55 @@ class CheckoutDialog(ttk.Toplevel):
         # ── Rental Fee Type ────────────────────────────────────────────────────
         # A rental fee is auto-added to Budget ▸ Student Fees. Default to the
         # $75 school-year fee; June checkouts default to the $20 summer fee.
-        ttk.Label(form, text="Rental Fee:", font=("Segoe UI", 9, "bold")).pack(
-            anchor=W, pady=(14, 0))
         self._rental_type_var = tk.StringVar(
             value="summer" if datetime.today().month == 6 else "school_year")
-        rt = ttk.Frame(form)
-        rt.pack(anchor=W, pady=(2, 0))
-        ttk.Radiobutton(rt, text=f"School Year ({self._rental_label('school_year')})",
-                        variable=self._rental_type_var, value="school_year").pack(anchor=W)
-        ttk.Radiobutton(rt, text=f"Summer ({self._rental_label('summer')})",
-                        variable=self._rental_type_var, value="summer").pack(anchor=W)
+        if self._charges_fees:
+            ttk.Label(form, text="Rental Fee:",
+                      font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(14, 0))
+            rt = ttk.Frame(form)
+            rt.pack(anchor=W, pady=(2, 0))
+            ttk.Radiobutton(rt, text=f"School Year ({self._rental_label('school_year')})",
+                            variable=self._rental_type_var, value="school_year").pack(anchor=W)
+            ttk.Radiobutton(rt, text=f"Summer ({self._rental_label('summer')})",
+                            variable=self._rental_type_var, value="summer").pack(anchor=W)
+        else:
+            ttk.Label(form, text="This school's loans carry no rental fee.",
+                      font=("Segoe UI", 8), foreground=muted_fg()).pack(
+                anchor=W, pady=(14, 0))
 
         # ── Bind Events ────────────────────────────────────────────────────────
         self._student_var.trace_add("write", self._on_name_changed)
-        self._ac_listbox.bind("<<ListboxSelect>>", self._on_ac_select)
-        self._ac_listbox.bind("<Return>", self._on_ac_select)
-        self._ac_listbox.bind("<Escape>", lambda e: (self._collapse_ac(), self._student_entry.focus_set()))
-        self._student_entry.bind("<Down>", self._focus_ac_list)
-        self._student_entry.bind("<Escape>", lambda e: self._collapse_ac())
+        self._student_entry.bind("<<ComboboxSelected>>", self._on_ac_select)
 
     def _on_name_changed(self, *args):
+        """Narrow the list as she types, and bind the child once the name is
+        an exact one -- typing a name in full has to count as choosing it."""
         if self._ac_selecting:
             return
-        self._selected_student_id = None
-        text = self._student_var.get().strip().lower()
-        if not text:
-            self._collapse_ac()
-            return
-        matches = [name for name, _ in self._student_list if text in name.lower()]
-        self._ac_listbox.delete(0, END)
-        if matches:
-            for m in matches[:8]:
-                self._ac_listbox.insert(END, m)
-            row_px = 18
-            self._ac_container.config(height=min(len(matches), 8) * row_px + 4)
-        else:
-            self._collapse_ac()
+        text = self._student_var.get().strip()
+        low = text.lower()
+        self._selected_student_id = self._id_for(text)
+        matches = [n for n in self._all_names if low in n.lower()] if low \
+            else list(self._all_names)
+        try:
+            self._student_entry.config(values=matches or self._all_names)
+        except Exception:
+            pass
 
-    def _collapse_ac(self):
-        self._ac_listbox.delete(0, END)
-        self._ac_container.config(height=1)
-
-    def _focus_ac_list(self, event=None):
-        if self._ac_listbox.size() > 0:
-            self._ac_listbox.focus_set()
-            self._ac_listbox.selection_set(0)
+    def _id_for(self, name):
+        """The student behind an exactly-typed name, or None."""
+        want = (name or "").strip().lower()
+        if not want:
+            return None
+        for n, st in self._student_list:
+            if n.lower() == want:
+                return st["id"]
+        return None
 
     def _on_ac_select(self, event=None):
-        sel = self._ac_listbox.curselection()
-        if not sel:
-            return
-        name = self._ac_listbox.get(sel[0])
-        for n, s in self._student_list:
-            if n == name:
-                self._selected_student_id = s["id"]
-                break
         self._ac_selecting = True
-        self._student_var.set(name)
+        self._selected_student_id = self._id_for(self._student_var.get())
         self._ac_selecting = False
-        self._collapse_ac()
-        self._student_entry.focus_set()
 
     def _default_return_date(self) -> dt_date:
         today = dt_date.today()
@@ -331,6 +333,7 @@ class CheckoutDialog(ttk.Toplevel):
         self.db.checkout_instrument(
             self.instrument_id, student_id, student_name, date_assigned,
             due_date=due_date, rental_type=rental_type,
+            charge_fee=getattr(self, "_charges_fees", True),
         )
         self.destroy()
 

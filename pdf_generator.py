@@ -414,7 +414,8 @@ def _sig_line(label, s):
 
 def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: str,
                        school_name: str = None, district_name: str = None,
-                       program_type: str = "band") -> str:
+                       program_type: str = "band",
+                       charges_fees: bool = True) -> str:
     """
     Generate a Bellevue School District Equipment Loan Form PDF matching
     the Charms single-page layout.
@@ -427,6 +428,11 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     school_name / district_name: pulled from the teacher's Settings by the
     caller.  Fall back to the module defaults when blank so older callers and
     empty settings still produce a sensible form.
+
+    charges_fees: whether this school charges the maintenance fee.  An
+    elementary loan carries no rental, so its form must not quote $75 and $20
+    or tell a family to make a check payable to the school.  Sending home a
+    bill that does not exist is worse than sending home nothing.
     """
     school_name = (school_name or "").strip() or SCHOOL_NAME
     district_name = (district_name or "").strip() or DISTRICT_NAME
@@ -541,12 +547,19 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     # ── To Students and Parents/Guardians ──────────────────────────────────
     story.append(_p("<u><b>To Students and Parents/Guardians:</b></u>", s["b10"]))
     story.append(Spacer(1, 2))
-    story.append(_p(
-        f"Besides the maintenance fee, of <u><b>{MAINT_YEAR} for the school year and "
-        f"{MAINT_SUMMER} for Summer</b></u> use, no charge will be made for the loan of "
-        f"school district instruments provided the following conditions are met:",
-        s["n9"]
-    ))
+    if charges_fees:
+        story.append(_p(
+            f"Besides the maintenance fee, of <u><b>{MAINT_YEAR} for the school year and "
+            f"{MAINT_SUMMER} for Summer</b></u> use, no charge will be made for the loan of "
+            f"school district instruments provided the following conditions are met:",
+            s["n9"]
+        ))
+    else:
+        story.append(_p(
+            "<u><b>No charge</b></u> will be made for the loan of school district "
+            "instruments provided the following conditions are met:",
+            s["n9"]
+        ))
     story.append(Spacer(1, 1))
 
     terms = [
@@ -585,20 +598,25 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     story.append(Spacer(1, 10))
 
     # ── Footer ────────────────────────────────────────────────────────────
-    footer_tbl = Table(
-        [[_p(
-            f"<b>Make Checks Payable to Your School</b><br/>"
-            f"{MAINT_YEAR} School Year - {MAINT_SUMMER} Summer",
-            s["footer"]
-        )]],
-        colWidths=[CW]
-    )
-    footer_tbl.setStyle(TableStyle([
-        ("BOX",           (0, 0), (-1, -1), 1.5, colors.black),
-        ("TOPPADDING",    (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-    ]))
-    story.append(footer_tbl)
+    # Only where there is something to pay.  A school that charges nothing has
+    # no checks to collect, and the box invites a family to write one anyway.
+    footer_tbl = None
+    if charges_fees:
+        footer_tbl = Table(
+            [[_p(
+                f"<b>Make Checks Payable to Your School</b><br/>"
+                f"{MAINT_YEAR} School Year - {MAINT_SUMMER} Summer",
+                s["footer"]
+            )]],
+            colWidths=[CW]
+        )
+        footer_tbl.setStyle(TableStyle([
+            ("BOX",           (0, 0), (-1, -1), 1.5, colors.black),
+            ("TOPPADDING",    (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+    if footer_tbl is not None:
+        story.append(footer_tbl)
 
     doc.build(story)
     return output_path
@@ -685,6 +703,7 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
     # anyway.
     school_name = district_name = None
     program_type = "band"
+    charges_fees = True          # a program with no school on the instrument
     try:
         from ui.settings_dialog import load_settings, school_name as _school
         teacher = (load_settings(base_dir).get("teacher") or {})
@@ -696,6 +715,9 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
             site = db.get_site(site_id)
             if site:
                 school_name = (dict(site).get("name") or "").strip()
+                # The school that owns the instrument decides whether there is
+                # a fee, the same way it decides the name on the form.
+                charges_fees = bool(dict(site).get("charges_fees"))
         if not school_name:
             school_name = _school(base_dir)
     except Exception:
@@ -712,7 +734,8 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
 
     return generate_loan_form(dict(checkout), dict(instrument), out_path,
                               school_name=school_name, district_name=district_name,
-                              program_type=program_type)
+                              program_type=program_type,
+                              charges_fees=charges_fees)
 
 
 def generate_uniform_chart(db, base_dir: str, output_path: str = None) -> str:
