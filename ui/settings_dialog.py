@@ -212,6 +212,11 @@ class SettingsDialog(ttk.Toplevel):
 
         self._program_type_var = tk.StringVar(value="band")
 
+        # The first three are secondary programs, and say so.  A 5th grade
+        # specialist reading "Band" would pick it, and inherit a middle
+        # school's class list, seating charts and periods.
+        ttk.Label(outer, text="Middle and high school",
+                  font=("Segoe UI", 8, "bold"), foreground="#888").pack(anchor=W)
         for value, label, desc in [
             ("band",      "Band",      "Concert band, jazz band, and marching band repertoire."),
             ("choir",     "Choir",     "Choral and vocal ensemble repertoire."),
@@ -221,25 +226,52 @@ class SettingsDialog(ttk.Toplevel):
             row.pack(fill=X, pady=3)
             ttk.Radiobutton(
                 row, text=label, value=value,
-                variable=self._program_type_var,
-                bootstyle=PRIMARY,
+                variable=self._program_type_var, bootstyle=PRIMARY,
+                command=self._program_type_changed,
             ).pack(side=LEFT, padx=(0, 10))
             ttk.Label(row, text=desc, font=("Segoe UI", 8),
                       foreground="#888").pack(side=LEFT)
 
+        ttk.Label(outer, text="Elementary", font=("Segoe UI", 8, "bold"),
+                  foreground="#888").pack(anchor=W, pady=(8, 0))
+        elem_row = ttk.Frame(outer)
+        elem_row.pack(fill=X, pady=3)
+        ttk.Radiobutton(
+            elem_row, text="Elementary Only", value="elementary",
+            variable=self._program_type_var, bootstyle=PRIMARY,
+            command=self._program_type_changed,
+        ).pack(side=LEFT, padx=(0, 10))
+        ttk.Label(elem_row, text="5th grade band or orchestra, at one school "
+                                 "or several.",
+                  font=("Segoe UI", 8), foreground="#888").pack(side=LEFT)
+
         ttk.Separator(outer, orient=HORIZONTAL).pack(fill=X, pady=(14, 12))
 
         # ── School info ────────────────────────────────────────────────────
+        # Hidden entirely for an Elementary Only teacher.  They do not have a
+        # home school -- six schools and none of them the main one -- and the
+        # loan form takes its school from the instrument being lent, so there
+        # is nothing left for a default to do.
+        self._school_box = ttk.Frame(outer)
+        self._school_box.pack(fill=X)
         for label, attr in [
             ("School District", "_school_district_var"),
-            ("School Name",     "_school_name_var"),
+            ("Default (Home) School Name", "_school_name_var"),
         ]:
-            ttk.Label(outer, text=label,
+            ttk.Label(self._school_box, text=label,
                       font=("Segoe UI", 9, "bold")).pack(anchor=W)
             var = tk.StringVar()
             setattr(self, attr, var)
-            ttk.Entry(outer, textvariable=var, width=40).pack(
+            ttk.Entry(self._school_box, textvariable=var, width=40).pack(
                 anchor=W, pady=(2, 10))
+
+        self._elem_hint = ttk.Label(
+            outer,
+            text="Elementary Only: your schools are listed on the Schools tab, "
+                 "and each one keeps its own instruments and children. There is "
+                 "no home school to set here.",
+            font=("Segoe UI", 9), foreground="#888",
+            wraplength=460, justify=LEFT)
 
         ttk.Label(outer, text="Your Name (programs & emails)",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W)
@@ -316,6 +348,16 @@ class SettingsDialog(ttk.Toplevel):
             self._helper_pin_entry.config(show="" if self._helper_pin_shown else "•")
         ttk.Button(pin_row, text="Show/Hide", bootstyle=(SECONDARY, OUTLINE),
                    command=_toggle_pin).pack(side=LEFT, padx=(6, 0))
+
+    def _program_type_changed(self):
+        """Show or hide the home-school fields to match the program type."""
+        elementary = self._program_type_var.get() == "elementary"
+        if elementary:
+            self._school_box.pack_forget()
+            self._elem_hint.pack(anchor=W, pady=(0, 10))
+        else:
+            self._elem_hint.pack_forget()
+            self._school_box.pack(fill=X)
 
     def _build_display_tab(self, parent):
         from ui.theme import DISPLAY_THEMES, THEME_DESCRIPTIONS
@@ -722,6 +764,7 @@ class SettingsDialog(ttk.Toplevel):
         # Teacher settings
         teacher = self._settings.get("teacher") or {}
         self._program_type_var.set(teacher.get("program_type", "band"))
+        self._program_type_changed()
         self._school_district_var.set(teacher.get("school_district", ""))
         self._school_name_var.set(teacher.get("school_name", ""))
         self._display_name_var.set(teacher.get("display_name", ""))
@@ -778,7 +821,13 @@ class SettingsDialog(ttk.Toplevel):
             self._settings["teacher"] = {}
         self._settings["teacher"]["program_type"] = self._program_type_var.get()
         self._settings["teacher"]["school_district"] = self._school_district_var.get().strip()
-        self._settings["teacher"]["school_name"] = self._school_name_var.get().strip()
+        if self._program_type_var.get() == "elementary":
+            # No home school for an itinerant.  Leaving the old value would let
+            # it come back as the loan-form fallback for any instrument that
+            # has no school of its own.
+            self._settings["teacher"]["school_name"] = ""
+        else:
+            self._settings["teacher"]["school_name"] = self._school_name_var.get().strip()
         self._settings["teacher"]["display_name"] = self._display_name_var.get().strip()
         self._settings["teacher"]["email"] = self._email_var.get().strip()
         self._settings["teacher"]["external_db_path"] = self._ext_db_var.get().strip()
