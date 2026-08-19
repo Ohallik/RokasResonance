@@ -1285,6 +1285,38 @@ class _DeadlinesDialog(ttk.Toplevel):
         fit_window(self, 600, 560)
 
 
+def _ask_text(parent, title, prompt, hint=""):
+    """One line of text.  Returns the text, or None if cancelled."""
+    win = ttk.Toplevel(master=parent)
+    win.title(title)
+    win.grab_set()
+    ttk.Label(win, text=prompt, font=("Segoe UI", 10, "bold")).pack(
+        anchor=W, padx=16, pady=(14, 2))
+    if hint:
+        ttk.Label(win, text=hint, font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=380, justify=LEFT).pack(anchor=W, padx=16)
+    var = tk.StringVar()
+    entry = ttk.Entry(win, textvariable=var, width=44)
+    entry.pack(anchor=W, padx=16, pady=(8, 4))
+    entry.focus_set()
+    out = {"v": None}
+
+    def ok(_e=None):
+        out["v"] = var.get().strip() or None
+        win.destroy()
+
+    entry.bind("<Return>", ok)
+    bar = ttk.Frame(win)
+    bar.pack(fill=X, padx=16, pady=12)
+    ttk.Button(bar, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+               command=win.destroy).pack(side=RIGHT, padx=4)
+    ttk.Button(bar, text="Add", bootstyle=SUCCESS, command=ok).pack(side=RIGHT,
+                                                                    padx=4)
+    fit_window(win, 440, 220)
+    parent.wait_window(win)
+    return out["v"]
+
+
 def _pick_one(parent, title, prompt, options):
     """A small single-choice list.  Returns the chosen string or None."""
     win = ttk.Toplevel(master=parent)
@@ -1697,7 +1729,8 @@ class _RosterFormsDialog(ttk.Toplevel):
         self.db = db
         self.base_dir = getattr(parent, "base_dir", "")
         self.trip = trip
-        self.forms = ft.required_forms(trip, elementary)
+        self._elementary = elementary
+        self._recount_columns()
         self.title(f"Roster & Forms — {trip['name']}")
         self.resizable(True, True)
         self.grab_set()
@@ -1705,18 +1738,10 @@ class _RosterFormsDialog(ttk.Toplevel):
         ttk.Label(self, text=f"\U0001F465  Roster & Forms — {trip['name']}",
                   font=("Segoe UI", 12, "bold"),
                   bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(12, 2))
-        why = ("Everyone in the groups on this trip. Untick anyone who is not "
-               "going.")
-        if self.forms:
-            why += ("  Tick a form column as each one comes back."
-                    if len(self.forms) > 1 else
-                    f"  Tick {ft.FORM_SHORT[self.forms[0]]} as each one comes "
-                    f"back.")
-        else:
-            why += ("  No paper forms for this trip — FinalForms is the "
-                    "permission record.")
-        ttk.Label(self, text=why, font=("Segoe UI", 8), foreground=muted_fg(),
-                  wraplength=620, justify=LEFT).pack(anchor=W, padx=16)
+        self._why = ttk.Label(self, text="", font=("Segoe UI", 8),
+                              foreground=muted_fg(), wraplength=620,
+                              justify=LEFT)
+        self._why.pack(anchor=W, padx=16)
 
         btns = ttk.Frame(self)
         btns.pack(fill=X, side=BOTTOM, padx=16, pady=10)
@@ -1724,20 +1749,29 @@ class _RosterFormsDialog(ttk.Toplevel):
                    command=self.destroy).pack(side=RIGHT, padx=4)
         ttk.Button(btns, text="Save", bootstyle=SUCCESS,
                    command=self._save).pack(side=RIGHT, padx=4)
-        if self.forms:
-            ttk.Button(btns, text="\u2709 Email who is missing one",
-                       bootstyle=(WARNING, OUTLINE),
-                       command=self._email_missing).pack(side=LEFT)
-            ttk.Button(btns, text="Everyone handed one in",
-                       bootstyle=(SUCCESS, OUTLINE),
-                       command=self._all_in).pack(side=LEFT, padx=6)
+        self._email_btn = ttk.Button(btns, text="\u2709 Email who is missing one",
+                                     bootstyle=(WARNING, OUTLINE),
+                                     command=self._email_missing)
+        self._all_in_btn = ttk.Button(btns, text="Everyone handed one in",
+                                      bootstyle=(SUCCESS, OUTLINE),
+                                      command=self._all_in)
 
+        # No "everyone / nobody is going": the roster already arrives as
+        # everyone in the chosen groups, which is the answer nine times in ten,
+        # and the tenth is one or two children -- untick them.
         bar = ttk.Frame(self)
         bar.pack(fill=X, padx=16, pady=(6, 2))
-        ttk.Button(bar, text="Everyone is going", bootstyle=(SECONDARY, OUTLINE),
-                   command=lambda: self._set_all(True)).pack(side=LEFT)
-        ttk.Button(bar, text="Nobody is going", bootstyle=(SECONDARY, OUTLINE),
-                   command=lambda: self._set_all(False)).pack(side=LEFT, padx=6)
+        ttk.Button(bar, text="\u2795 Add checklist item",
+                   bootstyle=(PRIMARY, OUTLINE),
+                   command=self._add_column).pack(side=LEFT)
+        self._del_btn = ttk.Button(bar, text="Remove checklist item",
+                                   bootstyle=(SECONDARY, OUTLINE),
+                                   command=self._remove_column)
+        ttk.Label(bar, text="  Track anything you chase per student: an "
+                            "interest survey, a deposit, a signed code of "
+                            "conduct.",
+                  font=("Segoe UI", 8), foreground=muted_fg()).pack(side=LEFT,
+                                                                    padx=(8, 0))
 
         self._students = sorted(
             ft.eligible(students, trip),
@@ -1747,20 +1781,10 @@ class _RosterFormsDialog(ttk.Toplevel):
         self._going = {s["id"]: s["id"] not in excluded for s in self._students}
         self._have = db.get_trip_forms(trip["id"])
 
-        cols = ["going", "name", "grade"] + self.forms
-        self.tree = ttk.Treeview(self, columns=cols, show="headings",
-                                 selectmode="browse", bootstyle=PRIMARY)
-        self.tree.heading("going", text="Going", anchor=CENTER)
-        self.tree.column("going", width=px(56), anchor=CENTER, stretch=False)
-        self.tree.heading("name", text="Student", anchor=W)
-        self.tree.column("name", width=px(220), anchor=W, stretch=True)
-        self.tree.heading("grade", text="Gr", anchor=CENTER)
-        self.tree.column("grade", width=px(40), anchor=CENTER, stretch=False)
-        for f in self.forms:
-            self.tree.heading(f, text=ft.FORM_SHORT[f], anchor=CENTER)
-            self.tree.column(f, width=px(110), anchor=CENTER, stretch=False)
-        self.tree.pack(fill=BOTH, expand=True, padx=16, pady=(6, 4))
-        self.tree.bind("<Button-1>", self._click, add="+")
+        self._tree_holder = ttk.Frame(self)
+        self._tree_holder.pack(fill=BOTH, expand=True, padx=16, pady=(6, 4))
+        self.tree = None
+        self._build_tree()
 
         self._summary = ttk.Label(self, text="", font=("Segoe UI", 10, "bold"))
         self._summary.pack(anchor=W, padx=16)
@@ -1770,6 +1794,101 @@ class _RosterFormsDialog(ttk.Toplevel):
 
         self._reload()
         fit_window(self, 640, 560)
+
+    # ── columns ─────────────────────────────────────────────────────────
+
+    def _recount_columns(self):
+        """District columns plus whatever the teacher has added."""
+        self.columns = ft.form_columns(self.trip, self._elementary)
+        self.forms = [k for k, _l in self.columns]
+
+    def _build_tree(self):
+        """(Re)build the grid.  Treeview columns cannot be added after the
+        fact, so adding a checklist item rebuilds it -- cheap, and it keeps
+        one code path for however many columns there are."""
+        for w in self._tree_holder.winfo_children():
+            w.destroy()
+        cols = ["going", "name", "grade"] + self.forms
+        self.tree = ttk.Treeview(self._tree_holder, columns=cols,
+                                 show="headings", selectmode="browse",
+                                 bootstyle=PRIMARY)
+        self.tree.heading("going", text="Going", anchor=CENTER)
+        self.tree.column("going", width=px(56), anchor=CENTER, stretch=False)
+        self.tree.heading("name", text="Student", anchor=W)
+        self.tree.column("name", width=px(210), anchor=W, stretch=True)
+        self.tree.heading("grade", text="Gr", anchor=CENTER)
+        self.tree.column("grade", width=px(40), anchor=CENTER, stretch=False)
+        for key, label in self.columns:
+            self.tree.heading(key, text=label, anchor=CENTER)
+            self.tree.column(key, width=px(max(90, 9 * len(label))),
+                             anchor=CENTER, stretch=False)
+        self.tree.pack(fill=BOTH, expand=True)
+        self.tree.bind("<Button-1>", self._click, add="+")
+
+        has = bool(self.columns)
+        for btn, show in ((self._email_btn, has), (self._all_in_btn, has),
+                          (self._del_btn, bool(ft.custom_forms(self.trip)))):
+            if show:
+                btn.pack(side=LEFT, padx=(0, 6))
+            else:
+                btn.pack_forget()
+
+        why = ("Everyone in the groups on this trip. Untick anyone who is not "
+               "going.")
+        if self.columns:
+            why += "  Tick each column as it comes back."
+        elif ft.uses_finalforms(self.trip, self._elementary):
+            why += ("  No paper forms for this trip — FinalForms is the "
+                    "permission record. Add a checklist item for anything else "
+                    "you chase.")
+        self._why.config(text=why)
+
+    def _add_column(self):
+        label = _ask_text(self, "Add checklist item",
+                          "What are you tracking for each student?",
+                          "For example: Interest form, Deposit paid, Code of "
+                          "conduct signed, Rooming preference.")
+        if not label:
+            return
+        raw, key = ft.add_custom_form(self.trip, label)
+        if not key:
+            Messagebox.show_info(f"There is already a column called "
+                                 f"“{label.strip()}”.",
+                                 title="Already there", parent=self)
+            return
+        self.trip["custom_forms"] = raw
+        self.db.update_field_trip(self.trip["id"], {"custom_forms": raw})
+        self._recount_columns()
+        self._build_tree()
+        self._reload()
+
+    def _remove_column(self):
+        customs = ft.custom_forms(self.trip)
+        if not customs:
+            return
+        labels = [l for _k, l in customs]
+        chosen = _pick_one(self, "Remove checklist item",
+                           "Which column should go?", labels)
+        if not chosen:
+            return
+        key = customs[labels.index(chosen)][0]
+        if Messagebox.yesno(
+                f"Remove “{chosen}” and everything ticked in it?\n\nThe "
+                f"students and their other columns are not affected.",
+                title="Remove column", parent=self) != "Yes":
+            return
+        raw = ft.remove_custom_form(self.trip, key)
+        self.trip["custom_forms"] = raw
+        self.db.update_field_trip(self.trip["id"], {"custom_forms": raw})
+        for stu in self._students:
+            self._have.pop((stu["id"], key), None)
+        try:
+            self.db.clear_trip_form(self.trip["id"], key)
+        except Exception:
+            pass
+        self._recount_columns()
+        self._build_tree()
+        self._reload()
 
     # ── data ────────────────────────────────────────────────────────────
 
@@ -1839,22 +1958,18 @@ class _RosterFormsDialog(ttk.Toplevel):
         self.tree.selection_set(iid)
         self.tree.see(iid)
 
-    def _set_all(self, going):
-        for sid in self._going:
-            self._going[sid] = going
-        self._reload()
-
     def _all_in(self):
         """One tick for a form the whole class handed in together, which is
         what happens when they are collected in the room."""
         form = self.forms[0]
         if len(self.forms) > 1:
-            sel = _pick_one(self, "Which form?",
-                            "Mark every student as having handed in:",
-                            [ft.FORM_LABELS[f] for f in self.forms])
+            sel = _pick_one(self, "Which column?",
+                            "Mark every student as done for:",
+                            [ft.form_label(self.trip, f) for f in self.forms])
             if not sel:
                 return
-            form = self.forms[[ft.FORM_LABELS[f] for f in self.forms].index(sel)]
+            form = self.forms[[ft.form_label(self.trip, f)
+                               for f in self.forms].index(sel)]
         for stu in self._students:
             self.db.set_trip_form(self.trip["id"], stu["id"], form, True)
             self._have[(stu["id"], form)] = 1
@@ -1881,7 +1996,7 @@ class _RosterFormsDialog(ttk.Toplevel):
                 title="No addresses", parent=self)
             return
         outstanding = ", ".join(
-            ft.FORM_SHORT[f] for f in self.forms
+            label for f, label in self.columns
             if any(not self._have.get((s["id"], f)) for s in rows))
         body = (f"We are still waiting on the {outstanding} form for "
                 f"{self.trip['name']}. Please send it in with your child as "

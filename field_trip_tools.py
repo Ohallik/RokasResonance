@@ -171,6 +171,82 @@ def required_forms(trip, elementary=False):
     return []
 
 
+# ── The teacher's own tick columns ───────────────────────────────────────────
+# The district's forms are not the only per-student thing a trip chases.  An
+# overnight trip usually starts with an interest survey, then a deposit, then a
+# code of conduct -- none of which 2320P has ever heard of, and all of which
+# are the same job: a list of names and who has done it.  Rather than guess at
+# that list, the teacher writes their own columns.
+
+CUSTOM_PREFIX = "custom:"
+
+
+def custom_forms(trip):
+    """[(key, label)] of the teacher's own columns for this trip."""
+    import json
+    raw = (trip.get("custom_forms") or "").strip()
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+    except Exception:
+        return []
+    out = []
+    for it in items if isinstance(items, list) else []:
+        if not isinstance(it, dict):
+            continue
+        key = str(it.get("key") or "").strip()
+        label = str(it.get("label") or "").strip()
+        if key and label:
+            out.append((key, label))
+    return out
+
+
+def _custom_json(items):
+    import json
+    return json.dumps([{"key": k, "label": l} for k, l in items])
+
+
+def add_custom_form(trip, label):
+    """Add a column.  Returns (json, key), or (json, None) if the label is
+    already there -- two columns with the same name would be two lists of the
+    same thing, which is how a tally stops being trusted."""
+    label = (label or "").strip()
+    items = custom_forms(trip)
+    if not label:
+        return _custom_json(items), None
+    if any(l.lower() == label.lower() for _k, l in items):
+        return _custom_json(items), None
+    n = 1
+    used = {k for k, _l in items}
+    while f"{CUSTOM_PREFIX}{n}" in used:
+        n += 1
+    key = f"{CUSTOM_PREFIX}{n}"
+    items.append((key, label))
+    return _custom_json(items), key
+
+
+def remove_custom_form(trip, key):
+    return _custom_json([(k, l) for k, l in custom_forms(trip) if k != key])
+
+
+def form_columns(trip, elementary=False):
+    """Every per-student column this trip tracks: the district's, then the
+    teacher's own, in the order they were added."""
+    out = [(f, FORM_SHORT[f]) for f in required_forms(trip, elementary)]
+    return out + custom_forms(trip)
+
+
+def form_label(trip, key):
+    """The full name of one column, district or custom."""
+    if key in FORM_LABELS:
+        return FORM_LABELS[key]
+    for k, label in custom_forms(trip):
+        if k == key:
+            return label
+    return key
+
+
 def uses_finalforms(trip, elementary=False):
     """Whether the FinalForms participant group is this trip's permission
     record.  MS/HS day trips only."""
@@ -431,7 +507,7 @@ TEMPLATE_FIELDS = ["name", "groups_list", "destination", "travel_method",
                    # the district application
                    "trip_type", "budget_code", "educational_objective",
                    "supervision", "activities", "assignments", "missed_work",
-                   "affordability", "health_review",
+                   "affordability", "health_review", "custom_forms",
                    # overnight only
                    "advisor_phone", "dest_address", "arrive_dest_time",
                    "depart_dest_time", "itinerary"]

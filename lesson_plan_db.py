@@ -470,6 +470,11 @@ class LessonPlanDatabase:
                         "sub_rate TEXT",            # which of the three
                         "supervision TEXT",         # who is supervising, in
                                                     # the teacher's own words
+                        # The teacher's own per-student tick columns, as JSON:
+                        # [{"key": ..., "label": ...}].  A Microsoft Forms
+                        # interest survey, a deposit, a signed code of conduct
+                        # -- whatever this trip actually chases.
+                        "custom_forms TEXT",
                         "board_approved INTEGER DEFAULT 0",
                         "carrier_profile INTEGER DEFAULT 0",
                         "asb_minutes INTEGER DEFAULT 0"):
@@ -1633,8 +1638,8 @@ class LessonPlanDatabase:
                   "assignments", "missed_work", "affordability",
                   "health_review", "advisor_phone", "dest_address",
                   "arrive_dest_time", "depart_dest_time", "itinerary",
-                  "sub_rate", "supervision", "board_approved",
-                  "carrier_profile", "asb_minutes"]
+                  "sub_rate", "supervision", "custom_forms",
+                  "board_approved", "carrier_profile", "asb_minutes"]
 
     def get_field_trips(self, school_year=None):
         with self._connect() as conn:
@@ -1700,6 +1705,14 @@ class LessonPlanDatabase:
                 "ON CONFLICT(trip_id, student_id, form_key) DO UPDATE SET "
                 "returned=excluded.returned, returned_date=excluded.returned_date",
                 (trip_id, student_id, form_key, 1 if returned else 0, when))
+            conn.commit()
+
+    def clear_trip_form(self, trip_id, form_key):
+        """Drop every tick for one column -- used when the teacher removes a
+        checklist item they added."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM field_trip_student_forms "
+                         "WHERE trip_id=? AND form_key=?", (trip_id, form_key))
             conn.commit()
 
     def get_trip_exclusions(self, trip_id):
