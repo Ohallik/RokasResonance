@@ -887,7 +887,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         school_year = self._year_var.get() or _current_school_year()
         dlg = _StudentImportDialog(
             self.winfo_toplevel(), self.db, list(paths), school_year,
-            program_type=self.program_type,
+            program_type=self.program_type, site_id=self.site_id,
         )
         self.wait_window(dlg)
         self.refresh()
@@ -1440,142 +1440,41 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
 
 # ── CSV roster parser ─────────────────────────────────────────────────────────
 
-# Column indices (positional — avoids issues with duplicate header names in
-# the district CSV export, which has two "Phone" and two "ParentEmail" cols).
-_COL_SID      = 0   # Student ID
-_COL_NAME     = 1   # Student Name  (Last, First)
-_COL_GRADE    = 2   # Grd
-_COL_GENDER   = 3   # Gen
-_COL_BDATE    = 4   # Birth Date
-_COL_PNAME    = 5   # Parent Name
-_COL_PEMAIL   = 8   # ParentEmail   (first occurrence)
-_COL_PHONE    = 9   # Phone         (first occurrence — main contact phone)
-_COL_RELATION = 11  # Relation
-_COL_ORDERBY  = 17  # Orderby (1 = primary contact, 2 = secondary, …)
-_COL_SEMAIL   = 21  # Student Email
-_COL_ADDRESS  = 22  # Street Address
-_COL_CSZ      = 23  # CityStateZip  e.g. "BELLEVUE, WA 98004"
-
-_CSZ_RE = re.compile(r'^(.*?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$')
-
-
-def _parse_csz(csz: str):
-    """'BELLEVUE, WA 98004' → ('Bellevue', 'WA', '98004')"""
-    m = _CSZ_RE.match((csz or "").strip())
-    if m:
-        return m.group(1).strip().title(), m.group(2), m.group(3)
-    return (csz or "").strip(), "", ""
-
-
-def _split_name(name: str):
-    """'Last, First Middle' → (first, last)"""
-    name = (name or "").strip()
-    if "," in name:
-        last, first = name.split(",", 1)
-        return first.strip(), last.strip()
-    parts = name.split()
-    return (parts[0] if parts else ""), (" ".join(parts[1:]) if len(parts) > 1 else "")
-
-
-def _normalize_date(d: str) -> str:
-    if not d:
-        return ""
-    try:
-        return datetime.strptime(d.strip(), "%m/%d/%Y").strftime("%Y-%m-%d")
-    except ValueError:
-        return d.strip()
-
-
 def _parse_student_csvs(paths: list) -> dict:
+    """Parse one or more district roster CSVs into {key: student_data}.
+
+    Reads BY HEADER NAME, via the same synergy_import the class-list import
+    and the setup wizard use.  This used to read fixed column numbers -- ID
+    in column 0, CityStateZip in column 23 -- and skipped any row with fewer
+    than 24 columns.  Synergy lets you choose which fields to export, so a
+    roster without all of them parsed as zero students and the window
+    cheerfully reported "Import complete!  0 new students".
+
+    Students are deduplicated by district Student ID across all the files.
     """
-    Parse one or more school district roster CSV files.
+    import synergy_import
 
-    Each file may have multiple rows per student (one per parent/guardian).
-    Students are deduplicated by Student ID across all files.
-
-    Returns a dict  {student_id_or_name: student_data_dict}  ready for
-    db.add_student().
-    """
-    students = {}   # keyed by student_id (or raw name as fallback)
-
+    students = {}
     for path in paths:
-        with open(path, encoding="utf-8-sig", errors="replace", newline="") as f:
-            reader = csv.reader(f)
-            next(reader, None)   # skip header row
-            for row in reader:
-                if len(row) <= _COL_CSZ:
-                    continue
-
-                sid     = row[_COL_SID].strip()
-                name    = row[_COL_NAME].strip()
-                grade   = row[_COL_GRADE].strip().lstrip("0") or "0"
-                gender  = {"M": "Male", "F": "Female"}.get(
-                              row[_COL_GENDER].strip(), "")
-                bdate   = _normalize_date(row[_COL_BDATE])
-                p_name  = row[_COL_PNAME].strip()
-                p_email = row[_COL_PEMAIL].strip()
-                p_phone = row[_COL_PHONE].strip()
-                p_rel   = row[_COL_RELATION].strip()
-                orderby = row[_COL_ORDERBY].strip() or "1"
-                s_email = row[_COL_SEMAIL].strip()
-                address = row[_COL_ADDRESS].strip()
-                csz     = row[_COL_CSZ].strip()
-
-                key = sid if sid else name
-                if not key:
-                    continue
-
-                # First time we see this student — create the base record
-                if key not in students:
-                    first, last = _split_name(name)
-                    city, state, zip_code = _parse_csz(csz)
-                    students[key] = {
-                        "student_id":    sid,
-                        "first_name":    first,
-                        "last_name":     last,
-                        "grade":         grade,
-                        "gender":        gender,
-                        "birth_date":    bdate,
-                        "student_email": s_email,
-                        "address":       address,
-                        "city":          city,
-                        "state":         state,
-                        "zip_code":      zip_code,
-                        "_parents":      {},
-                    }
-
-                # Accumulate parent contacts keyed by Orderby value.
-                # Only keep the first occurrence of each Orderby number.
-                if p_name and orderby not in students[key]["_parents"]:
-                    students[key]["_parents"][orderby] = {
-                        "name":     p_name,
-                        "phone":    p_phone,
-                        "email":    p_email,
-                        "relation": p_rel,
-                    }
-
-    # Flatten parent dicts into parent1 / parent2 fields
-    result = {}
-    for key, s in students.items():
-        parents = s.pop("_parents")
-        sorted_keys = sorted(parents.keys())
-        p1 = parents.get(sorted_keys[0], {}) if sorted_keys else {}
-        p2 = parents.get(sorted_keys[1], {}) if len(sorted_keys) > 1 else {}
-
-        s["parent1_name"]     = p1.get("name", "")
-        s["parent1_phone"]    = p1.get("phone", "")
-        s["parent1_email"]    = p1.get("email", "")
-        s["parent1_relation"] = p1.get("relation", "")
-        s["parent2_name"]     = p2.get("name", "")
-        s["parent2_phone"]    = p2.get("phone", "")
-        s["parent2_email"]    = p2.get("email", "")
-        s["parent2_relation"] = p2.get("relation", "")
-        # Use primary parent phone as the student's main contact phone
-        s["phone"] = p1.get("phone", "") or p2.get("phone", "")
-
-        result[key] = s
-
-    return result
+        for rec in synergy_import.parse_synergy_students(path):
+            key = rec.get("student_id") or (
+                f"{rec.get('first_name', '')} {rec.get('last_name', '')}".strip())
+            if not key:
+                continue
+            data = {k: v for k, v in rec.items()
+                    if k not in ("sections", "section", "teacher")}
+            # The main contact number for the student is their first
+            # guardian's, which is the only one a roster carries.
+            data["phone"] = (data.get("parent1_phone")
+                             or data.get("parent2_phone") or "")
+            if key in students:
+                # Same child in a second file: fill gaps, keep what we have.
+                for k, v in data.items():
+                    if v and not students[key].get(k):
+                        students[key][k] = v
+            else:
+                students[key] = data
+    return students
 
 
 # ── Import progress dialog ────────────────────────────────────────────────────
@@ -1585,12 +1484,25 @@ class _StudentImportDialog(_ClassOptionsMixin, ttk.Toplevel):
 
     _class_options_include_empty = True     # assigns a class, so offer empties
 
-    def __init__(self, parent, db, paths: list, school_year: str, program_type="band"):
+    def __init__(self, parent, db, paths: list, school_year: str,
+                 program_type="band", site_id=None):
         super().__init__(parent)
         self.db          = db
         self.paths       = paths
         self.school_year = school_year
         self.program_type = program_type
+        # The school these children belong to, when importing from inside one
+        # school's roster.  Without it they arrive belonging to nowhere, and
+        # nothing at that school can be checked out to them.
+        self.site_id = site_id
+        self._elementary = False
+        if site_id:
+            try:
+                site = db.get_site(site_id)
+                self._elementary = bool(site) and (
+                    dict(site).get("level") == "elementary")
+            except Exception:
+                pass
         self._ensemble_var = tk.StringVar(value="— none —")
         self._period_var = tk.StringVar(value="— none —")
         self._instrument_var = tk.StringVar(value="— none —")
@@ -1630,9 +1542,14 @@ class _StudentImportDialog(_ClassOptionsMixin, ttk.Toplevel):
         ttk.Combobox(row, textvariable=self._ensemble_var, state="readonly", width=20,
                      values=["— none —"] + self._class_options()).pack(
             side=LEFT, padx=(4, 12))
-        ttk.Label(row, text="Class Period:", font=("Segoe UI", 8)).pack(side=LEFT)
-        ttk.Combobox(row, textvariable=self._period_var, state="readonly", width=8,
-                     values=["— none —"] + PERIOD_OPTIONS).pack(side=LEFT, padx=(4, 0))
+        # A 5th grader has a section, not a period, and does not do 5th grade
+        # twice -- so neither the period nor the carry-over belongs here.
+        if not self._elementary:
+            ttk.Label(row, text="Class Period:",
+                      font=("Segoe UI", 8)).pack(side=LEFT)
+            ttk.Combobox(row, textvariable=self._period_var, state="readonly",
+                         width=8, values=["— none —"] + PERIOD_OPTIONS).pack(
+                side=LEFT, padx=(4, 0))
 
         row2 = ttk.Frame(cfg)
         row2.pack(fill=X, pady=(6, 0))
@@ -1641,16 +1558,19 @@ class _StudentImportDialog(_ClassOptionsMixin, ttk.Toplevel):
                      values=["— none —"] + instruments_for(self.program_type)).pack(
             side=LEFT, padx=(4, 0))
 
-        ttk.Checkbutton(
-            cfg, bootstyle=PRIMARY, variable=self._carry_over_var,
-            text="Carry over instruments from previous years for returning students",
-        ).pack(anchor=W, pady=(8, 0))
-        ttk.Label(
-            cfg,
-            text="Matches this roster against prior years (by ID or name) and fills in "
-                 "each returning student's instrument automatically — only where it's blank.",
-            font=("Segoe UI", 8), foreground=muted_fg(), wraplength=480, justify=LEFT,
-        ).pack(anchor=W, pady=(0, 2))
+        if self._elementary:
+            self._carry_over_var.set(False)
+        else:
+            ttk.Checkbutton(
+                cfg, bootstyle=PRIMARY, variable=self._carry_over_var,
+                text="Carry over instruments from previous years for returning students",
+            ).pack(anchor=W, pady=(8, 0))
+            ttk.Label(
+                cfg,
+                text="Matches this roster against prior years (by ID or name) and fills in "
+                     "each returning student's instrument automatically — only where it's blank.",
+                font=("Segoe UI", 8), foreground=muted_fg(), wraplength=480, justify=LEFT,
+            ).pack(anchor=W, pady=(0, 2))
 
         self._start_btn = ttk.Button(self, text="Start Import", bootstyle=SUCCESS,
                                      command=self._start)
@@ -1721,6 +1641,8 @@ class _StudentImportDialog(_ClassOptionsMixin, ttk.Toplevel):
 
             for data in students.values():
                 data["school_year"] = self.school_year
+                if self.site_id:
+                    data["site_id"] = self.site_id
 
                 # Primary dedup key: student_id + school_year
                 existing = None
