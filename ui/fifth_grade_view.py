@@ -364,6 +364,22 @@ class FifthGradeView(ttk.Frame):
         except Exception:
             pass
 
+    def show_site(self, site_id):
+        """Bring one school's tab to the front.
+
+        An elementary-only teacher reaches a school straight from the hub, so
+        the window should already be on the school they asked for rather than
+        on whichever happens to be first alphabetically.
+        """
+        if not site_id or not hasattr(self, "nb"):
+            return
+        try:
+            order = [dict(s)["id"] for s in elementary_sites(self.db)]
+            idx = order.index(site_id)
+            self.nb.select(self.nb.tabs()[idx])
+        except Exception:
+            pass
+
     def refresh(self):
         for panes in self._tabs.values():
             for pane in panes.values():
@@ -391,11 +407,12 @@ def _short(name: str) -> str:
     return out or (name or "")
 
 
-def open_fifth_grade_window(parent, db, base_dir):
-    """Open (or raise) the 5th grade window."""
+def open_fifth_grade_window(parent, db, base_dir, site_id=None):
+    """Open (or raise) the 5th grade window, optionally on one school's tab."""
     win = ttk.Toplevel(parent)
     win.title("5th Grade — Roka's Resonance")
     view = FifthGradeView(win, db, base_dir)
     view.pack(fill=BOTH, expand=True)
+    view.show_site(site_id)
     fit_window(win, 1180, 760)
     return win

@@ -17,7 +17,6 @@ from ui.theme import (fs, muted_fg, subtle_fg, link_fg, register_nav_styles,
 # now; these names are only still known so their contents can be folded back in.
 _LEGACY_MUSIC_DBS = ("choir_music.db", "orchestra_music.db")
 
-
 def _absorb_legacy_music_db(main_db, path):
     """Copy sheet music out of a retired per-program file into the profile DB."""
     import sqlite3
@@ -57,7 +56,6 @@ def _absorb_legacy_music_db(main_db, path):
     except OSError:
         pass
 
-
 def music_db_for_profile(main_db, base_dir):
     """The profile database is the one music library, whatever the program type."""
     for name in _LEGACY_MUSIC_DBS:
@@ -68,7 +66,6 @@ def music_db_for_profile(main_db, base_dir):
             except Exception:
                 pass
     return main_db
-
 
 class MainMenu(ttk.Frame):
     def __init__(self, parent, db, base_dir: str, app_dir: str = None, teacher_name: str = "", version: str = ""):
@@ -316,6 +313,14 @@ class MainMenu(ttk.Frame):
             ).grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=(10, 2), ipady=btn_pad)
             return
 
+        # A teacher with no secondary school gets a different hub.  Ramps
+        # Rampersad carries six elementary bands and nothing else; a page built
+        # around Equipment, Uniforms and a secondary roster shows him an empty
+        # inventory, an empty roster and a marching band he does not have.
+        if self._elementary_only():
+            self._build_elementary_nav(btn_area, btn_pad)
+            return
+
         # ── Inventory (things: equipment + sheet music) ──
         ttk.Label(
             btn_area, text="Inventory",
@@ -413,15 +418,107 @@ class MainMenu(ttk.Frame):
             prep_row, "  📦  New School Year…", self._open_year_wizard, "purple"
         ).grid(row=0, column=2, sticky="ew", padx=(3, 0), ipady=btn_pad)
 
+    def _elementary_only(self) -> bool:
+        """Every school this teacher has is an elementary one."""
+        try:
+            active = [dict(x) for x in self.db.get_sites()]
+        except Exception:
+            return False
+        return bool(active) and all(x["level"] == "elementary" for x in active)
 
-    def _open_fifth_grade(self):
+    # The schools get the palette in turn, so a teacher with six of them finds
+    # Medina by its color before they have read the word -- the same reason the
+    # secondary hub is not a stack of identical blue bars.
+    _SCHOOL_HUES = ("red", "orange", "amber", "green", "teal", "blue",
+                    "purple", "rose")
+
+    def _build_elementary_nav(self, btn_area, btn_pad):
+        """The hub for somebody who only teaches 5th grade."""
+        from ui.fifth_grade_view import elementary_sites, _short
+        sites = elementary_sites(self.db)
+
+        ttk.Label(
+            btn_area, text="My Schools",
+            font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
+        ).grid(row=0, column=0, columnspan=2, sticky=W, pady=(4, 2))
+
+        grid = ttk.Frame(btn_area)
+        grid.grid(row=1, column=0, columnspan=2, sticky="ew", pady=2)
+        # Three across at most.  Six schools in one row would be six slivers,
+        # and the name is the whole content of the button.
+        cols = min(3, max(1, len(sites)))
+        for c in range(cols):
+            grid.columnconfigure(c, weight=1)
+        for i, site in enumerate(sites):
+            self._nav_button(
+                grid, f"  🎺  {_short(site['name'])}",
+                lambda s=site: self._open_fifth_grade(s["id"]),
+                self._SCHOOL_HUES[i % len(self._SCHOOL_HUES)],
+            ).grid(row=i // cols, column=i % cols, sticky="ew",
+                   padx=(0 if i % cols == 0 else 3,
+                         0 if i % cols == cols - 1 else 3),
+                   pady=2, ipady=btn_pad)
+
+        row = (len(sites) + cols - 1) // cols + 1
+        ttk.Label(
+            btn_area, text="Teacher Prep",
+            font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
+        ).grid(row=row, column=0, columnspan=2, sticky=W, pady=(10, 2))
+
+        # Sheet Music and Uniforms are not here at all: an itinerant has no
+        # uniform cupboard, and the music library is a secondary idea.  Budget
+        # and Teacher Tools stay, because they will make sense here eventually
+        # -- they just do not yet, and they say so rather than opening a screen
+        # built for a high school.
+        prep = ttk.Frame(btn_area)
+        prep.grid(row=row + 1, column=0, columnspan=2, sticky="ew", pady=2)
+        for c in (0, 1, 2):
+            prep.columnconfigure(c, weight=1)
+        self._nav_button(
+            prep, "  💵  Budget", lambda: self._not_yet("Budget"), "teal"
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
+        self._nav_button(
+            prep, "  🧰  Teacher Tools", lambda: self._not_yet("Teacher Tools"), "blue"
+        ).grid(row=0, column=1, sticky="ew", padx=3, ipady=btn_pad)
+        self._nav_button(
+            prep, "  📦  New School Year…", self._open_year_wizard, "purple"
+        ).grid(row=0, column=2, sticky="ew", padx=(3, 0), ipady=btn_pad)
+
+    # What each one will eventually be, said plainly.  "Not yet" on its own
+    # reads as "never"; naming the pieces says it is on a list.
+    _NOT_YET = {
+        "Budget": "Fees, purchases and reporting are built around a secondary "
+                  "program's accounts. 5th grade loans are free, so what an "
+                  "elementary budget needs is a different and smaller thing.",
+        "Teacher Tools": "Seating charts, concerts and field trips all happen "
+                         "at 5th grade too, just on a smaller scale, so this "
+                         "is coming. What is in here today assumes a middle "
+                         "or high school timetable, and the percussion "
+                         "rotations and agendas do not apply.",
+    }
+
+    def _not_yet(self, what):
+        from ttkbootstrap.dialogs import Messagebox
+        detail = self._NOT_YET.get(what, "")
+        Messagebox.show_info(
+            f"{what} is still being built for 5th grade."
+            + (f"\n\n{detail}" if detail else "")
+            + "\n\nIt works for middle and high school programs today.",
+            title=f"{what} — not yet", parent=self.winfo_toplevel())
+
+    def _open_fifth_grade(self, site_id=None):
         from ui.fifth_grade_view import open_fifth_grade_window
         if getattr(self, "_fifth_window", None) and self._fifth_window.winfo_exists():
             self._fifth_window.lift()
             self._fifth_window.focus_force()
+            # Already open, but perhaps on a different school than the one just
+            # clicked.
+            for child in self._fifth_window.winfo_children():
+                if hasattr(child, "show_site"):
+                    child.show_site(site_id)
             return
         self._fifth_window = open_fifth_grade_window(
-            self.winfo_toplevel(), self.db, self.base_dir)
+            self.winfo_toplevel(), self.db, self.base_dir, site_id=site_id)
 
     def _make_stat(self, parent, value: str, label: str, col: int):
         f = ttk.Frame(parent)
