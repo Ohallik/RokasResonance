@@ -104,15 +104,42 @@ def _is_number(v):
         return False
 
 
+# What a teacher types in a cost box that is not a figure falls into exactly
+# two groups, and only one of them is worth a vocabulary.
+#
+#   "there is nothing to pay here"  -> counts as zero
+#   anything else                   -> the figure is not known yet
+#
+# Only the first list is written out, and it is short and stable.  Everything
+# else defaults to "not known yet", which is the safe direction: a word we
+# failed to anticipate makes the total say it is waiting on that line, rather
+# than making the total wrong.  TBD, "ask Will", "?" and "depends on numbers"
+# all land where they should without being listed.
+_MEANS_NOTHING = {"n/a", "na", "n.a.", "none", "no", "nil", "free", "-", "--",
+                  "0", "$0", "nothing", "n/c", "no charge"}
+
+# The name of each line, for a total that says what it is still waiting on.
+_COST_FIELDS = [
+    ("entry_fee", "entry fee"),
+    ("transport_cost", "transportation"),
+    ("sub_cost", "substitute"),
+    ("food_cost", "food"),
+    ("other_cost", "other"),
+]
+
+
+def _means_nothing(raw):
+    return (raw or "").strip().lower().strip(".") in _MEANS_NOTHING
+
+
 def _unknowns(trip):
-    """The cost boxes holding words rather than figures, so a total can say
-    what it does not include instead of pretending to be complete."""
+    """The names of the cost lines whose figure is not known yet, so the total
+    can say what it is waiting on instead of pretending to be complete."""
     out = []
-    for key in ("entry_fee", "transport_cost", "sub_cost", "food_cost",
-                "other_cost"):
+    for key, label in _COST_FIELDS:
         raw = ("" if trip.get(key) is None else str(trip.get(key))).strip()
-        if raw and not _is_number(raw):
-            out.append(raw)
+        if raw and not _is_number(raw) and not _means_nothing(raw):
+            out.append(label)
     return out
 
 
@@ -286,23 +313,38 @@ def _costs_overnight(trip, s):
 
 
 def _total(trip):
-    return sum(_num(trip.get(k)) for k in
-               ("entry_fee", "transport_cost", "sub_cost", "food_cost",
-                "other_cost"))
+    """Everything that is a figure.  A box holding a word adds nothing --
+    "N/A" is zero, and a box we are still waiting on is named separately."""
+    out = 0.0
+    for key, _label in _COST_FIELDS:
+        raw = ("" if trip.get(key) is None else str(trip.get(key))).strip()
+        if raw and _is_number(raw):
+            out += _num(raw.replace("$", "").replace(",", ""))
+    return out
 
 
 def _total_cell(trip):
-    """The Total box.  Adds up what is a number and names what is not."""
-    unknown = _unknowns(trip)
+    """The Total box.
+
+    It prints a figure only where a figure is true.  "$ 266.00 + N/A" was
+    neither: it pasted the word from one box onto the sum of the others, and
+    no trip has ever cost that.  A total that is still waiting on a line names
+    the LINE, not whatever was typed in it, so the principal reading it knows
+    which number is coming.
+    """
+    waiting = _unknowns(trip)
     filled = any(("" if trip.get(k) is None else str(trip.get(k))).strip()
-                 for k in ("entry_fee", "transport_cost", "sub_cost",
-                           "food_cost", "other_cost"))
+                 for k, _l in _COST_FIELDS)
     if not filled:
         return "$"
-    text = f"$ {_total(trip):,.2f}"
-    if unknown:
-        text += "  + " + " + ".join(sorted(set(unknown)))
-    return text
+    total = _total(trip)
+    if not waiting:
+        return f"$ {total:,.2f}"
+    listed = " and ".join([", ".join(waiting[:-1]), waiting[-1]]) \
+        if len(waiting) > 1 else waiting[0]
+    if total:
+        return f"$ {total:,.2f} plus {listed}"
+    return f"Waiting on {listed}"
 
 
 def _question(question, answer, s, lines=2):
