@@ -75,6 +75,16 @@ class SitesPanel(ttk.Frame):
                    command=self._edit).pack(side=LEFT, padx=6)
         ttk.Button(row, text="Archive", bootstyle=(SECONDARY, OUTLINE),
                    command=self._archive).pack(side=LEFT)
+        self._restore_btn = ttk.Button(row, text="↩ Restore",
+                                       bootstyle=(SUCCESS, OUTLINE),
+                                       command=self._restore)
+        # An archived school was invisible here, so the only way back was to
+        # add it again and hope the name matched.  Archiving something you
+        # cannot see afterwards is a frightening button to press.
+        self._show_archived = tk.BooleanVar(value=False)
+        ttk.Checkbutton(row, text="Show archived", variable=self._show_archived,
+                        bootstyle=SECONDARY,
+                        command=self.reload).pack(side=RIGHT)
 
         self._note = ttk.Label(outer, text="", font=("Segoe UI", 8),
                                foreground=muted_fg(), wraplength=470,
@@ -85,19 +95,35 @@ class SitesPanel(ttk.Frame):
 
     def reload(self):
         self.tree.delete(*self.tree.get_children())
+        show_archived = bool(getattr(self, "_show_archived", None)
+                             and self._show_archived.get())
         try:
-            sites = [dict(s) for s in self.db.get_sites()]
+            sites = [dict(s) for s in self.db.get_sites(
+                include_inactive=show_archived)]
         except Exception:
             sites = []
         for s in sites:
-            self.tree.insert("", "end", iid=str(s["id"]), values=(
-                s["name"],
+            archived = not s["is_active"]
+            self.tree.insert("", "end", iid=str(s["id"]),
+                             tags=("archived",) if archived else (),
+                             values=(
+                s["name"] + ("   (archived)" if archived else ""),
                 _LEVEL_LABEL.get(s["level"], s["level"] or ""),
                 _PROGRAM_LABEL.get(s["program"], s["program"] or "—"),
                 "charged" if s["charges_fees"] else "none",
                 "everyone" if s["choir_default"] else "—",
             ))
-        self._note.config(text=self._summary(sites))
+        self.tree.tag_configure("archived", foreground=muted_fg())
+        active = [s for s in sites if s["is_active"]]
+        self._note.config(text=self._summary(active))
+        # Restore is only offered when there is something to restore.
+        try:
+            if show_archived and any(not s["is_active"] for s in sites):
+                self._restore_btn.pack(side=LEFT, padx=6)
+            else:
+                self._restore_btn.pack_forget()
+        except Exception:
+            pass
 
     def _summary(self, sites):
         if not sites:
@@ -133,6 +159,26 @@ class SitesPanel(ttk.Frame):
         dlg = SiteDialog(self, self.db, site_id=sid)
         self.wait_window(dlg)
         self.reload()
+
+    def _restore(self):
+        """Bring an archived school back, with everything it had."""
+        sid = self._selected()
+        if sid is None:
+            Messagebox.show_info("Select an archived school to restore.",
+                                 title="No school", parent=self.winfo_toplevel())
+            return
+        site = dict(self.db.get_site(sid))
+        if site["is_active"]:
+            Messagebox.show_info(f"{site['name']} is not archived.",
+                                 title="Already active",
+                                 parent=self.winfo_toplevel())
+            return
+        self.db.update_site(sid, is_active=1)
+        self.reload()
+        Messagebox.show_info(
+            f"{site['name']} is back, with its instruments, children and "
+            f"history exactly as they were.",
+            title="School restored", parent=self.winfo_toplevel())
 
     def _archive(self):
         """Archiving keeps the history.  An assignment ending does not make last
