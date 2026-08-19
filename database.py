@@ -3186,9 +3186,26 @@ class Database:
         return sorted(years, reverse=True)
 
     def get_budget_default_year(self):
-        """Open on the most recent year that has activity — so repairs/expenses
-        show without the user hunting for the right year (fiscal 'current' is
-        often empty right after July 1)."""
+        """The year the Budget window opens on.
+
+        The year the teacher last started in the New School Year wizard wins,
+        when there is one.  That is an explicit statement of which year they
+        are working in, and it is why the wizard no longer has to tell them to
+        come here and change a dropdown: Teacher Tools moved, so this moves.
+
+        Failing that, the most recent year with any activity, because the
+        current fiscal year is often empty right after 1 July and opening on an
+        empty screen looks like lost data.
+        """
+        import os as _os
+        try:
+            from ui.settings_dialog import load_settings
+            started = ((load_settings(_os.path.dirname(self.db_path))
+                        .get("teacher") or {}).get("active_school_year") or "").strip()
+            if started:
+                return started
+        except Exception:
+            pass
         activity = self._budget_activity_years()
         return max(activity) if activity else self.current_school_year()
 

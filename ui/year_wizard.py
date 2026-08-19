@@ -386,19 +386,15 @@ class NewSchoolYearWizard(ttk.Toplevel):
                   "Your 5th graders have all moved on, so they are archived "
                   "when you finish. Nothing is deleted.")
 
-        after = []
+        # Both really do move now, so this says so instead of sending the
+        # teacher off to change a dropdown in another window.
+        after = ["Teacher Tools and Budget are now in the new school year."]
+        after.append("Continue to add schools or class sections as needed."
+                     if self._elem_sites else
+                     "Continue to add class lists as needed.")
         if self._has_secondary:
-            after.append("• Teacher Tools switches to the new year: add concert "
-                         "and field-trip dates in the Concerts tab.")
-        if self._elem_sites:
-            after.append("• Import each school's new class list from its own "
-                         "tab in the 5th Grade window.")
-        if self._has_secondary:
-            after.append("• The Budget window has its own year selector: switch "
-                         "it to the new year to start the new budget.")
-            after.append("• Seating charts and percussion rotations start fresh "
-                         "for the new year; last year's stay saved under its year.")
-        nstep("After you finish", "\n".join(after))
+            after.append("Seating charts and rotations are fresh for the new year.")
+        nstep("After you finish", "  ".join(after))
 
         fit_window(self, 640, 620)
 
@@ -541,6 +537,18 @@ class NewSchoolYearWizard(ttk.Toplevel):
         # Create the new year's Teacher Tools file
         from lesson_plan_db import get_lesson_plan_db
         get_lesson_plan_db(self.base_dir, year)
+
+        # Record which year the teacher is now working in, so the Budget window
+        # opens on it too.  It used to open on the most recent year with any
+        # activity, which right after a rollover is LAST year -- and the wizard
+        # papered over that by telling them to go and change a dropdown.
+        try:
+            from ui.settings_dialog import load_settings, save_settings
+            cfg = load_settings(self.base_dir) or {}
+            cfg.setdefault("teacher", {})["active_school_year"] = year
+            save_settings(self.base_dir, cfg)
+        except Exception:
+            pass
 
         self.new_year = year
         parts = [f"Welcome to {year}!"]
