@@ -316,6 +316,49 @@ def _build_music_summary(db, mode: str = "band") -> str:
     return "\n".join(lines)
 
 
+def _build_sites_summary(db) -> str:
+    """The schools this teacher is posted to, and what is at each.
+
+    Without this he sees one pooled inventory and one pooled roster. Asked how
+    many trumpets are at Medina he would answer with the total across six
+    schools, which is worse than not answering: it is a confident wrong number
+    somebody might act on.
+
+    Only written when there is more than one school. With one, every other
+    section below is already about it and saying so twice adds nothing.
+    """
+    try:
+        sites = [dict(x) for x in db.get_sites()]
+    except Exception:
+        return ""
+    if len(sites) < 2:
+        return ""
+    try:
+        year = db.current_school_year()
+    except Exception:
+        year = ""
+    lines = ["This teacher is posted to more than one school. Each keeps its "
+             "OWN instruments and its OWN children, and an instrument can only "
+             "be lent to a child at the same school. When a question is about "
+             "one school, answer for that school alone and say which one you "
+             "mean."]
+    for site in sites:
+        try:
+            inst = len(list(db.get_instruments_with_status(site_id=site["id"])))
+            kids = len(list(db.get_all_students(year, site_id=site["id"])))
+        except Exception:
+            inst = kids = 0
+        bits = [site.get("level") or "secondary"]
+        if site.get("program"):
+            bits.append(site["program"])
+        if not site.get("charges_fees"):
+            bits.append("no rental fee")
+        lines.append("  " + site["name"] + " (" + ", ".join(bits) + "): "
+                     + str(inst) + " instrument(s), " + str(kids)
+                     + " child(ren) this year")
+    return "\n".join(lines)
+
+
 def _build_uniform_summary(db) -> str:
     """Uniforms and attire — a whole module he previously knew nothing about."""
     lines = []
@@ -471,6 +514,11 @@ def _build_combined_summary(db, band_db=None, mode: str = "band",
             f"Date: {date.today():%A %d %B %Y}\n"
             f"Current school year: {year}\n"
             f"Program type: {mode}")
+
+    schools = _build_sites_summary(inv_db)
+    if schools:
+        sections.append("=== THE SCHOOLS THIS TEACHER IS POSTED TO ===\n"
+                        + schools)
 
     if mode != "choir" or band_db is not None:
         inv = _build_inventory_summary(inv_db)
