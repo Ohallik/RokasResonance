@@ -97,6 +97,7 @@ class OnboardingWizard(ttk.Toplevel):
         cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
 
         self._build_about(body, profile_name)
+        self._focus_changed()          # start in the state the focus implies
         self._build_classes(body)
         self._build_import(body)
         self._build_sharing(body)
@@ -113,13 +114,17 @@ class OnboardingWizard(ttk.Toplevel):
             row=0, column=0, sticky=W, pady=4, padx=(0, 10))
         self._name_var = tk.StringVar(value=profile_name or "")
         ttk.Entry(grid, textvariable=self._name_var).grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Label(grid, text="School", font=("Segoe UI", 9, "bold")).grid(
-            row=1, column=0, sticky=W, pady=4, padx=(0, 10))
+        self._school_lbl = ttk.Label(grid, text="School",
+                                     font=("Segoe UI", 9, "bold"))
+        self._school_lbl.grid(row=1, column=0, sticky=W, pady=4, padx=(0, 10))
         self._school = tk.StringVar()
-        ttk.Combobox(grid, textvariable=self._school, values=BSD_SCHOOLS).grid(
-            row=1, column=1, sticky="ew", pady=4)
-        ttk.Label(grid, text="(Bellevue School District)", font=("Segoe UI", 8),
-                  foreground=muted_fg()).grid(row=2, column=1, sticky=W)
+        self._school_combo = ttk.Combobox(grid, textvariable=self._school,
+                                          values=BSD_SCHOOLS)
+        self._school_combo.grid(row=1, column=1, sticky="ew", pady=4)
+        self._school_note = ttk.Label(grid, text="(Bellevue School District)",
+                                      font=("Segoe UI", 8),
+                                      foreground=muted_fg())
+        self._school_note.grid(row=2, column=1, sticky=W)
 
         ttk.Label(grid, text="Backup folder", font=("Segoe UI", 9, "bold")).grid(
             row=3, column=0, sticky=W, pady=(8, 4), padx=(0, 10))
@@ -141,11 +146,81 @@ class OnboardingWizard(ttk.Toplevel):
         frow.pack(anchor=W)
         for label, val in FOCUS:
             ttk.Radiobutton(frow, text=label, value=val,
-                            variable=self._focus).pack(side=LEFT, padx=(0, 12))
+                            variable=self._focus,
+                            command=self._focus_changed).pack(side=LEFT, padx=(0, 12))
+        self._build_elementary_schools(box)
         ttk.Label(box, text="Choir and orchestra skip the percussion rotation; "
                             "band gets it. You can rename or add classes below.",
                   font=("Segoe UI", 8), foreground=muted_fg(),
                   wraplength=620, justify=LEFT).pack(anchor=W, pady=(4, 0))
+
+    def _build_elementary_schools(self, parent):
+        """The schools an itinerant teaches at -- however many that is.
+
+        A 5th grade specialist does not have "a school"; Ramps Rampersad has
+        six and none of them is the main one. Asking for a single default is
+        asking a question with no true answer, so for this focus the one-school
+        box is replaced by a list.
+        """
+        self._elem_box = ttk.Frame(parent)
+        self._elem_rows = []          # (name, program)
+
+        ttk.Label(self._elem_box,
+                  text="Add each school you teach at, and whether you run band "
+                       "or orchestra there. You can change these later in "
+                       "Settings ▸ Schools.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=600, justify=LEFT).pack(anchor=W, pady=(6, 4))
+
+        add = ttk.Frame(self._elem_box)
+        add.pack(fill=X)
+        self._elem_name = tk.StringVar()
+        ttk.Combobox(add, textvariable=self._elem_name,
+                     values=[x for x in BSD_SCHOOLS if "Elementary" in x],
+                     width=32).pack(side=LEFT)
+        self._elem_program = tk.StringVar(value="band")
+        for lbl, val in (("Band", "band"), ("Orchestra", "orchestra")):
+            ttk.Radiobutton(add, text=lbl, value=val,
+                            variable=self._elem_program).pack(side=LEFT, padx=(8, 0))
+        ttk.Button(add, text="Add", bootstyle=SUCCESS,
+                   command=self._add_elem_school).pack(side=LEFT, padx=(10, 0))
+
+        self._elem_list = tk.Listbox(self._elem_box, height=5,
+                                     font=("Segoe UI", 9))
+        self._elem_list.pack(fill=X, pady=(6, 2))
+        ttk.Button(self._elem_box, text="Remove selected",
+                   bootstyle=(SECONDARY, OUTLINE),
+                   command=self._remove_elem_school).pack(anchor=W)
+
+    def _add_elem_school(self):
+        name = self._elem_name.get().strip()
+        if not name:
+            return
+        if any(n.lower() == name.lower() for n, _ in self._elem_rows):
+            return                     # already on the list
+        self._elem_rows.append((name, self._elem_program.get()))
+        self._elem_list.insert("end", f"{name}   —   "
+                                      f"{self._elem_program.get().capitalize()}")
+        self._elem_name.set("")
+
+    def _remove_elem_school(self):
+        sel = list(self._elem_list.curselection())
+        for i in reversed(sel):
+            self._elem_list.delete(i)
+            del self._elem_rows[i]
+
+    def _focus_changed(self):
+        """Elementary teachers get the school LIST; everybody else gets the box."""
+        elementary = self._focus.get() == "elementary"
+        for w in (self._school_lbl, self._school_combo, self._school_note):
+            if elementary:
+                w.grid_remove()
+            else:
+                w.grid()
+        if elementary:
+            self._elem_box.pack(fill=X, anchor=W, pady=(4, 0))
+        else:
+            self._elem_box.pack_forget()
 
     # ── 2. Classes ──
     def _build_classes(self, parent):
@@ -278,15 +353,35 @@ class OnboardingWizard(ttk.Toplevel):
         # loan forms, the concert programs, Reginald).  This wrote "school",
         # so a teacher who finished setup and never opened Settings had no
         # school name anywhere in the program.
-        s["teacher"]["school_name"] = self._school.get().strip()
+        elementary = self._focus.get() == "elementary"
+        # An itinerant has no default school, so none is written.  Everything
+        # that used to read this -- the loan form above all -- now takes the
+        # school from the instrument being lent, which is the only answer that
+        # is true at six schools.
+        s["teacher"]["school_name"] = ("" if elementary
+                                       else self._school.get().strip())
         s["teacher"]["program_type"] = self._focus.get()
         backup = self._backup.get().strip()
         if backup:
             s.setdefault("backup", {})["external_path"] = backup
         save_settings(self.base_dir, s)
+        if elementary:
+            self._save_elementary_schools()
         classes = self._collect_classes()
         if classes:
             self._cr.save_classes(self.base_dir, classes)
+
+    def _save_elementary_schools(self):
+        """Create a site per school the teacher listed."""
+        try:
+            db = self.main_db
+        except Exception:
+            return
+        for name, program in getattr(self, "_elem_rows", []):
+            try:
+                db.add_site(name, "elementary", program)
+            except Exception:
+                pass
 
     def _finish(self):
         self._save()

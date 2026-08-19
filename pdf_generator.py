@@ -674,17 +674,30 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
             "so a loan form cannot be generated for it."
         )
 
-    # Pull the school/district name from the profile's Settings so the form
-    # prints exactly what the teacher entered (fixes the old hard-coded
-    # "Chinook Middle School Band" that broke non-band accounts).
+    # The school on the form is the school that OWNS the instrument, not
+    # whichever one the profile happens to name.  An itinerant handing out a
+    # trumpet at Medina must not send home a form that says Sherwood Forest,
+    # and asking them to keep a profile-wide "default school" pointed at
+    # wherever they happen to be standing is not a workable answer.
+    #
+    # Settings is the fallback, for an instrument with no school on it -- which
+    # is every instrument in a single-school profile, where the two agree
+    # anyway.
     school_name = district_name = None
     program_type = "band"
     try:
         from ui.settings_dialog import load_settings, school_name as _school
         teacher = (load_settings(base_dir).get("teacher") or {})
-        school_name = _school(base_dir)
         district_name = teacher.get("school_district")
         program_type = teacher.get("program_type") or "band"
+        site_id = (instrument["site_id"]
+                   if "site_id" in instrument.keys() else None)
+        if site_id:
+            site = db.get_site(site_id)
+            if site:
+                school_name = (dict(site).get("name") or "").strip()
+        if not school_name:
+            school_name = _school(base_dir)
     except Exception:
         pass
 
