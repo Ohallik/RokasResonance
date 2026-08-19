@@ -288,11 +288,31 @@ class FieldTripsView(ttk.Frame):
         collapsed = self._collapsed(t["id"])
         top = ttk.Frame(card)
         top.pack(fill=X)
-        fold = ttk.Label(top, text="\u25b8  " if collapsed else "\u25be  ",
-                         font=("Segoe UI", fs(10), "bold"),
-                         foreground=subtle_fg(), cursor="hand2")
-        fold.pack(side=LEFT)
-        fold.bind("<Button-1>", lambda e, i=t["id"]: self._toggle_collapsed(i))
+
+        # The section chevron, the way Word and PowerPoint draw one: a solid
+        # triangle in the heading's own blue, pointing down when the section is
+        # open and right when it is folded.  The first version was a small grey
+        # arrow, which is the same control nobody can see -- the whole point is
+        # that a teacher recognizes it without being told.
+        _BLUE = "#4582EC"
+        _BLUE_HOVER = "#1B4FC4"
+        fold = ttk.Label(top, text="\u25ba " if collapsed else "\u25bc ",
+                         font=("Segoe UI", fs(13), "bold"),
+                         foreground=_BLUE, cursor="hand2")
+        fold.pack(side=LEFT, padx=(0, 4))
+
+        def _toggle(_e=None, i=t["id"]):
+            self._toggle_collapsed(i)
+
+        def _hover(_e=None, on=True):
+            try:
+                fold.config(foreground=_BLUE_HOVER if on else _BLUE)
+            except tk.TclError:
+                pass
+
+        fold.bind("<Button-1>", _toggle)
+        fold.bind("<Enter>", lambda e: _hover(on=True))
+        fold.bind("<Leave>", lambda e: _hover(on=False))
         attending = ft.roster(students, t,
                               self.db.get_trip_exclusions(t["id"]))
         n = len(attending)
@@ -309,9 +329,15 @@ class FieldTripsView(ttk.Frame):
         rt = (t.get("return_time") or "").strip()
         if dt or rt:
             bits.append(f"{dt or '?'} to {rt or '?'}")
-        ttk.Label(top, text="  ·  ".join(bits),
-                  font=("Segoe UI", fs(9)), foreground=muted_fg()
-                  ).pack(side=LEFT)
+        info = ttk.Label(top, text="  ·  ".join(bits),
+                         font=("Segoe UI", fs(9)), foreground=muted_fg(),
+                         cursor="hand2")
+        info.pack(side=LEFT)
+        # Clicking the summary folds it too, so the target is the whole line
+        # rather than one glyph.
+        info.bind("<Button-1>", _toggle)
+        info.bind("<Enter>", lambda e: _hover(on=True))
+        info.bind("<Leave>", lambda e: _hover(on=False))
         if days is None:
             badge, style = "set a date", SECONDARY
         elif days < 0:
