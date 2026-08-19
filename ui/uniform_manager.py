@@ -33,12 +33,16 @@ WIDTHS = {
 
 class UniformManager(ttk.Frame):
     def __init__(self, parent, db, base_dir: str, on_checkouts=None,
-                 helper_mode: bool = False):
+                 helper_mode: bool = False, on_helper_mode=None):
         super().__init__(parent)
         self.db = db
         self.base_dir = base_dir
         self.on_checkouts = on_checkouts
         self.helper_mode = helper_mode
+        # Handing the laptop to a parent volunteer is something you do to THIS
+        # screen, so the switch belongs on it rather than in a row of unrelated
+        # links on the hub.
+        self.on_helper_mode = on_helper_mode
 
         self._search = tk.StringVar()
         self._status_filter = tk.StringVar(value="All")
@@ -82,6 +86,9 @@ class UniformManager(ttk.Frame):
             tb("🏷️ Garment Types", (SECONDARY, OUTLINE),
                self._manage_types).pack(side=LEFT, padx=2)
             tb("📥 Import", (INFO, OUTLINE), self._import).pack(side=LEFT, padx=2)
+            if self.on_helper_mode:
+                tb("🙋 Hand to a Helper", (DARK, OUTLINE),
+                   self._hand_over).pack(side=RIGHT, padx=2)
 
         # ── Filter row ──
         filt = ttk.Frame(self)
@@ -294,6 +301,15 @@ class UniformManager(ttk.Frame):
         self.wait_window(dlg)
         if getattr(dlg, "_result", None):
             self.refresh()
+
+    def _hand_over(self):
+        """Switch to Helper Mode, from the screen it applies to.
+
+        The volunteer keeps check-out and check-in and loses everything else,
+        including the children's contact details.  Getting back out needs the
+        Helper PIN, which is why it is asked for before anything is hidden."""
+        if self.on_helper_mode:
+            self.on_helper_mode()
 
     def _bulk_scan(self):
         from ui.uniform_scan_dialog import UniformScanDialog

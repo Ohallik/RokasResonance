@@ -123,11 +123,6 @@ class MainMenu(ttk.Frame):
         header = ttk.Frame(self, bootstyle=PRIMARY)
         header.pack(fill=X)
 
-        # Packed before the logo so it lands in the actual corner rather than
-        # to the left of the mascot.
-        from ui.help_system import add_help_button
-        add_help_button(header, "hub", padx=(0, 10), pady=10)
-
         # Load mascot image (remove white background for clean banner look)
         logo_path = os.path.join(self.app_dir, "assets", "banner_logo.png")
         self._banner_img = None
@@ -183,6 +178,11 @@ class MainMenu(ttk.Frame):
         stats_outer = ttk.Frame(self, bootstyle=SECONDARY)
         stats_outer.pack(fill=X)
 
+        # The ? sits here rather than in the banner: this strip had empty grey
+        # either side of the tallies, and it is where the eye already goes.
+        from ui.help_system import add_help_button
+        add_help_button(stats_outer, "hub", dark=False, padx=(0, 18), pady=10)
+
         stats_inner = ttk.Frame(stats_outer)
         stats_inner.pack(pady=6)
 
@@ -220,87 +220,41 @@ class MainMenu(ttk.Frame):
         footer.pack(fill=X, side=BOTTOM)
         ttk.Separator(footer).pack(fill=X)
 
-        footer_inner = ttk.Frame(footer)
-        footer_inner.pack(pady=4)
+        # Two rows rather than one long line.  Eight items strung across the
+        # width read as a run-on sentence and the useful ones get lost in it;
+        # the actions go on top, who and what this is underneath.
+        #
+        # Helper Mode is no longer here.  It is a thing you do TO the uniform
+        # screen before handing the laptop to a parent, so it now lives on that
+        # screen -- next to the work it protects, rather than in a list of
+        # unrelated links.
+        links = [
+            ("Switch Profile", self._switch_profile),
+            ("Settings", self._open_settings),
+            ("Import Data", self._open_import_wizard),
+            # Named in full here as well as sitting as a ? in the stats bar: a
+            # teacher looking for help looks for the word "Help".
+            ("Help Guide", self._open_help_guide),
+            ("Report a Problem", self._report_problem),
+        ]
 
-        ttk.Label(
-            footer_inner,
-            text=f"Roka's Resonance  •  {self.teacher_name}" if self.teacher_name else "Roka's Resonance",
-            font=("Segoe UI", fs(8)),
-            foreground=subtle_fg(),
-        ).pack(side=LEFT)
+        links_row = ttk.Frame(footer)
+        links_row.pack(pady=(4, 0))
+        for i, (text, command) in enumerate(links):
+            if i:
+                ttk.Label(links_row, text="  •  ", font=("Segoe UI", fs(8)),
+                          foreground=subtle_fg()).pack(side=LEFT)
+            lbl = ttk.Label(links_row, text=text,
+                            font=("Segoe UI", fs(8), "underline"),
+                            foreground=link_fg(), cursor="hand2")
+            lbl.pack(side=LEFT)
+            lbl.bind("<Button-1>", lambda e, c=command: c())
 
-        ttk.Label(
-            footer_inner,
-            text="  •  ",
-            font=("Segoe UI", fs(8)),
-            foreground=subtle_fg(),
-        ).pack(side=LEFT)
-
-        switch_lbl = ttk.Label(
-            footer_inner,
-            text="Switch Profile",
-            font=("Segoe UI", fs(8), "underline"),
-            foreground=link_fg(),
-            cursor="hand2",
-        )
-        switch_lbl.pack(side=LEFT)
-        switch_lbl.bind("<Button-1>", lambda e: self._switch_profile())
-
-        ttk.Label(
-            footer_inner,
-            text="  •  ",
-            font=("Segoe UI", fs(8)),
-            foreground=subtle_fg(),
-        ).pack(side=LEFT)
-
-        settings_lbl = ttk.Label(
-            footer_inner,
-            text="Settings",
-            font=("Segoe UI", fs(8), "underline"),
-            foreground=link_fg(),
-            cursor="hand2",
-        )
-        settings_lbl.pack(side=LEFT)
-        settings_lbl.bind("<Button-1>", lambda e: self._open_settings())
-
-        ttk.Label(footer_inner, text="  •  ", font=("Segoe UI", fs(8)),
-                  foreground=subtle_fg()).pack(side=LEFT)
-        import_lbl = ttk.Label(
-            footer_inner, text="Import Data",
-            font=("Segoe UI", fs(8), "underline"),
-            foreground=link_fg(), cursor="hand2")
-        import_lbl.pack(side=LEFT)
-        import_lbl.bind("<Button-1>", lambda e: self._open_import_wizard())
-
-        ttk.Label(footer_inner, text="  •  ", font=("Segoe UI", fs(8)),
-                  foreground=subtle_fg()).pack(side=LEFT)
-        helper_lbl = ttk.Label(
-            footer_inner, text="Helper Mode",
-            font=("Segoe UI", fs(8), "underline"),
-            foreground=link_fg(), cursor="hand2")
-        helper_lbl.pack(side=LEFT)
-        helper_lbl.bind("<Button-1>", lambda e: self._enter_helper_mode())
-
-        # Named in full down here as well as sitting as a ? in the corner: a
-        # teacher looking for help looks for the word "Help".
-        ttk.Label(footer_inner, text="  •  ", font=("Segoe UI", fs(8)),
-                  foreground=subtle_fg()).pack(side=LEFT)
-        help_lbl = ttk.Label(
-            footer_inner, text="Help Guide",
-            font=("Segoe UI", fs(8), "underline"),
-            foreground=link_fg(), cursor="hand2")
-        help_lbl.pack(side=LEFT)
-        help_lbl.bind("<Button-1>", lambda e: self._open_help_guide())
-
-        ttk.Label(footer_inner, text="  •  ", font=("Segoe UI", fs(8)),
-                  foreground=subtle_fg()).pack(side=LEFT)
-        bug_lbl = ttk.Label(
-            footer_inner, text="Report a Problem",
-            font=("Segoe UI", fs(8), "underline"),
-            foreground=link_fg(), cursor="hand2")
-        bug_lbl.pack(side=LEFT)
-        bug_lbl.bind("<Button-1>", lambda e: self._report_problem())
+        who = "Roka's Resonance"
+        if self.teacher_name:
+            who += f"  •  {self.teacher_name}"
+        ttk.Label(footer, text=who, font=("Segoe UI", fs(8)),
+                  foreground=subtle_fg()).pack(pady=(2, 0))
 
         # Ownership / copyright notice — proprietary software, all rights reserved.
         _copy = "© 2026 Meagan Mangum. All rights reserved."
@@ -386,15 +340,30 @@ class MainMenu(ttk.Frame):
         ).grid(row=0, column=2, sticky="ew", padx=(3, 0), ipady=btn_pad)
         cur_row += 1
 
-        # ── Students ──
-        ttk.Label(
-            btn_area, text="Students",
-            font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
-        ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(8, 2))
-        cur_row += 1
+        # ── Students, and Elementary beside it ──
+        # 5th grade is not a "Students" thing -- it is a different programme at
+        # a different school -- so it gets its own heading rather than being
+        # tacked onto somebody else's row.  Two labelled groups share this row;
+        # with no elementary posting the Students group simply takes it all.
+        try:
+            from ui.fifth_grade_view import has_fifth_grade
+            show_fifth = has_fifth_grade(self.db)
+        except Exception:
+            show_fifth = False
 
-        stu_row = ttk.Frame(btn_area)
-        stu_row.grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2)
+        row2 = ttk.Frame(btn_area)
+        row2.grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=(8, 2))
+        row2.columnconfigure(0, weight=3, uniform="r2")
+        if show_fifth:
+            row2.columnconfigure(1, weight=1, uniform="r2")
+
+        stu_group = ttk.Frame(row2)
+        stu_group.grid(row=0, column=0, sticky="ew", padx=(0, 6 if show_fifth else 0))
+        ttk.Label(stu_group, text="Students",
+                  font=("Segoe UI", fs(9), "bold"),
+                  foreground=muted_fg()).pack(anchor=W, pady=(0, 2))
+        stu_row = ttk.Frame(stu_group)
+        stu_row.pack(fill=X)
         stu_row.columnconfigure(0, weight=3, uniform="stu")
         stu_row.columnconfigure(1, weight=2, uniform="stu")
         self._nav_button(
@@ -406,6 +375,16 @@ class MainMenu(ttk.Frame):
         self._nav_button(
             stu_row, "  📦  New School Year…", self._open_year_wizard, "purple"
         ).grid(row=0, column=1, sticky="ew", padx=(3, 0), ipady=btn_pad)
+
+        if show_fifth:
+            elem_group = ttk.Frame(row2)
+            elem_group.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+            ttk.Label(elem_group, text="Elementary",
+                      font=("Segoe UI", fs(9), "bold"),
+                      foreground=muted_fg()).pack(anchor=W, pady=(0, 2))
+            self._nav_button(
+                elem_group, "  🎺  5th Grade", self._open_fifth_grade, "rose"
+            ).pack(fill=X, ipady=btn_pad)
         cur_row += 1
 
         # ── Teacher Prep (budget + lesson planning) ──
@@ -423,20 +402,6 @@ class MainMenu(ttk.Frame):
             btn_area, "  🧰  Teacher Tools", self._open_lesson_plans, "blue"
         ).grid(row=cur_row, column=1, sticky="ew", padx=(3, 0), pady=2, ipady=btn_pad)
 
-        # 5th grade, and only for the teachers who actually teach it.  Most
-        # have no elementary posting and should never see this button; the ones
-        # who do carry up to six schools behind it.
-        try:
-            from ui.fifth_grade_view import has_fifth_grade
-            show_fifth = has_fifth_grade(self.db)
-        except Exception:
-            show_fifth = False
-        if show_fifth:
-            cur_row += 1
-            self._nav_button(
-                btn_area, "  🎺  5th Grade", self._open_fifth_grade, "purple"
-            ).grid(row=cur_row, column=0, columnspan=2, sticky="ew",
-                   pady=2, ipady=btn_pad)
 
     def _open_fifth_grade(self):
         from ui.fifth_grade_view import open_fifth_grade_window
@@ -703,7 +668,8 @@ class MainMenu(ttk.Frame):
         win.state("zoomed")
         manager = UniformManager(win, self.db, self.base_dir,
                                  on_checkouts=self._open_active_checkouts,
-                                 helper_mode=self._helper_mode)
+                                 helper_mode=self._helper_mode,
+                                 on_helper_mode=self._enter_helper_mode)
         manager.pack(fill=BOTH, expand=True)
         win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("uniforms"))
         self._windows["uniforms"] = win

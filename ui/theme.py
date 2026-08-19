@@ -340,6 +340,7 @@ _NAV_LIGHT = {
     "teal":   "#0f6b73",
     "blue":   "#1c5fb0",
     "purple": "#6b3fa0",
+    "rose":   "#a3255f",
     "gray":   "#5a6270",
 }
 # Dark mode wants the same hues carried by LIGHTER fills (a dark button on a
@@ -352,6 +353,7 @@ _NAV_DARK = {
     "teal":   "#57c1c9",
     "blue":   "#7fb0ec",
     "purple": "#b394e8",
+    "rose":   "#f08cb4",
     "gray":   "#a8b0bd",
 }
 
