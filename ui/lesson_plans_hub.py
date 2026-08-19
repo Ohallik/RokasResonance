@@ -45,9 +45,6 @@ class LessonPlansHub(ttk.Frame):
 
         # Buttons are packed BEFORE the title so a narrow window truncates the
         # description rather than pushing the buttons off the right edge.
-        # New School Year lives on the main hub now — it rolls the whole
-        # program forward (rosters included), so it belongs next to the students
-        # it moves rather than inside the lesson-planning tools.
         ttk.Button(
             header, text="🗂 Manage Classes…", bootstyle=LIGHT,
             command=self._open_manage_classes,
@@ -55,6 +52,14 @@ class LessonPlansHub(ttk.Frame):
         ttk.Button(
             header, text="🔢 Numbers Per Part…", bootstyle=LIGHT,
             command=self._open_numbers_per_part,
+        ).pack(side=RIGHT, padx=(0, 4), pady=8)
+        # A once-a-year job, and a destructive one: it archives last year's
+        # roster and rolls everything forward.  It sits here, beside the year
+        # selector it moves, rather than as a full-width button on the hub
+        # where it was easy to hit on any of the other 364 days.
+        ttk.Button(
+            header, text="📦 New School Year…", bootstyle=(LIGHT, OUTLINE),
+            command=self._open_year_wizard,
         ).pack(side=RIGHT, padx=(0, 4), pady=8)
 
         ttk.Label(
@@ -187,6 +192,37 @@ class LessonPlansHub(ttk.Frame):
         if self._current_year in years:
             return self._current_year
         return years[0] if years else self._current_year
+
+    def _open_year_wizard(self):
+        """Roll the whole program into the next school year.
+
+        It archives last year's roster and moves every tool forward, so it is
+        deliberately not a hub button any more: it belongs beside the year
+        selector it changes, and being one click further away is the point.
+        """
+        from ui.year_wizard import NewSchoolYearWizard
+        from lesson_plan_db import current_school_year
+        try:
+            years = self.main_db.get_school_years()
+        except Exception:
+            years = []
+        current = years[0] if years else current_school_year()
+        wiz = NewSchoolYearWizard(self.winfo_toplevel(), self.main_db,
+                                  self._base_dir, current_year=current)
+        self.winfo_toplevel().wait_window(wiz)
+        new_year = getattr(wiz, "new_year", None)
+        if not new_year:
+            return
+        # Everything on screen is now showing last year, including this hub --
+        # so it follows the wizard rather than leaving the teacher to notice.
+        try:
+            self.switch_to_year(new_year)
+        except Exception:
+            pass
+        try:
+            self.event_generate("<<YearRolledOver>>")
+        except Exception:
+            pass
 
     def _open_manage_classes(self):
         classes = self._classes()

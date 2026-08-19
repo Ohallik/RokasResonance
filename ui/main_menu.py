@@ -394,29 +394,21 @@ class MainMenu(ttk.Frame):
         ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(8, 2))
         cur_row += 1
 
-        # New School Year sits here rather than beside Manage Students.  It was
-        # put there on the reasoning that it belongs next to the students it
-        # moves -- but it is a once-a-year job you go looking for, like the
-        # budget or the planner, not something you reach for while working on a
-        # roster.  It also freed the Students row, which was three buttons wide
-        # once 5th Grade appeared and had begun clipping its own labels.
+        # New School Year is NOT here.  It archives a roster and rolls the whole
+        # program forward, it is used once a year, and as a full-width hub
+        # button it sat under the cursor all the other days -- the shape of a
+        # mistake waiting to happen.  It lives in Teacher Tools' header now,
+        # beside the year selector it moves, where you go looking for it.
         prep_row = ttk.Frame(btn_area)
         prep_row.grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2)
-        # No uniform group here.  These three labels are very different lengths,
-        # and uniform would size all of them to "New School Year..." -- 873px for
-        # a row whose contents need about 500.  Inventory can keep its uniform
-        # because its three labels are near enough the same width already.
-        for _c in (0, 1, 2):
+        for _c in (0, 1):
             prep_row.columnconfigure(_c, weight=1)
         self._nav_button(
             prep_row, "  💵  Budget", self._open_budget, "teal"
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
         self._nav_button(
             prep_row, "  🧰  Teacher Tools", self._open_lesson_plans, "blue"
-        ).grid(row=0, column=1, sticky="ew", padx=3, ipady=btn_pad)
-        self._nav_button(
-            prep_row, "  📦  New School Year…", self._open_year_wizard, "purple"
-        ).grid(row=0, column=2, sticky="ew", padx=(3, 0), ipady=btn_pad)
+        ).grid(row=0, column=1, sticky="ew", padx=(3, 0), ipady=btn_pad)
 
     def _elementary_only(self) -> bool:
         """Every school this teacher has is an elementary one."""
@@ -472,14 +464,14 @@ class MainMenu(ttk.Frame):
         # built for a high school.
         prep = ttk.Frame(btn_area)
         prep.grid(row=row + 1, column=0, columnspan=2, sticky="ew", pady=2)
-        for c in (0, 1, 2):
+        for c in (0, 1):
             prep.columnconfigure(c, weight=1)
         self._nav_button(
             prep, "  💵  Budget", self._open_budget, "teal"
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
         self._nav_button(
             prep, "  🧰  Teacher Tools", self._open_lesson_plans, "blue"
-        ).grid(row=0, column=1, sticky="ew", padx=3, ipady=btn_pad)
+        ).grid(row=0, column=1, sticky="ew", padx=(3, 0), ipady=btn_pad)
         self._nav_button(
             prep, "  📦  New School Year…", self._open_year_wizard, "purple"
         ).grid(row=0, column=2, sticky="ew", padx=(3, 0), ipady=btn_pad)
@@ -923,10 +915,22 @@ class MainMenu(ttk.Frame):
                    command=banner.pack_forget).pack(side=RIGHT, padx=8, pady=4)
         self._rollover_banner = banner
 
+    def _after_year_rollover(self):
+        """Tidy up after Teacher Tools has rolled the year over."""
+        win = self._windows.pop("students", None)
+        if win is not None:
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
+        self._refresh_stats()
+
     def _open_year_wizard(self):
-        """Roll the whole program into the next school year.  Lives here (not
-        buried in Teacher Tools) because everything else — rosters, seating
-        charts, percussion sections — depends on it having been run."""
+        """Roll the whole program into the next school year.
+
+        Kept for the rollover banner, which offers the wizard when the calendar
+        has moved on but the data has not.  The button that used to sit on the
+        hub is gone -- see _build_nav_buttons."""
         from ui.year_wizard import NewSchoolYearWizard
         from lesson_plan_db import current_school_year
         try:
@@ -980,6 +984,10 @@ class MainMenu(ttk.Frame):
         win.state("zoomed")
         hub = LessonPlansHub(win, self.db)
         hub.pack(fill=BOTH, expand=True)
+        # New School Year now lives inside the hub, so the hub tells the main
+        # window when it has run: the hub can move itself to the new year, but
+        # it cannot know about an open Student Manager showing the old one.
+        hub.bind("<<YearRolledOver>>", lambda e: self._after_year_rollover())
         win.protocol("WM_DELETE_WINDOW",
                      lambda: self._on_child_close("lesson_plans"))
         self._windows["lesson_plans"] = win

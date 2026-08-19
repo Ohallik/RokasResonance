@@ -171,24 +171,23 @@ def all_class_options(db, base_dir=None, program_type="band", school_year=None):
     except Exception:
         pass
     try:
-        for stu in db.get_all_students(school_year=school_year):
+        rows = list(db.get_all_students(school_year=school_year))
+        if not rows and school_year:
+            # Nothing on this year's roster yet -- see selectable_ensembles.
+            rows = list(db.get_all_students())
+        for stu in rows:
             held = stu["ensembles"] if "ensembles" in stu.keys() else ""
             for part in (held or "").split(","):
                 add(rest, part)
     except Exception:
         pass
     # The configured class list belongs to a SECONDARY program.  At elementary
-    # the schools' own sections are the class list, and the placeholder in the
-    # elementary registry ("Beginning Band") names no school and is the wrong
-    # word entirely at an orchestra school.  So it is offered only to a teacher
-    # who actually has a secondary posting.
-    secondary = True
-    if program_type == "elementary":
-        try:
-            secondary = bool([x for x in db.get_sites() if x["level"] != "elementary"])
-        except Exception:
-            secondary = False
-    if secondary:
+    # the schools' own sections ARE the class list, and the registry's one
+    # placeholder ("Beginning Band") is worse than useless: same_class treats
+    # "beginning" and "entry" as one level, so it wins the canonical spelling
+    # and a roster full of "Entry Band" is displayed as a class that does not
+    # exist.  Secondary classes come from the roster in their own spelling.
+    if program_type != "elementary":
         try:
             import class_registry
             for c in class_registry.load_classes(base_dir, program_type):
@@ -294,6 +293,18 @@ def roster_ensembles(main_db, school_year=None, site_id=None):
     return seen
 
 
+def site_groups_for(main_db, site_id, school_year=None):
+    """One school's own sections, looked up by id.  Used when that school has
+    no students yet -- the sections exist before anybody is in them, and a
+    picker that is empty until the roster arrives looks broken on the day it
+    is first opened."""
+    try:
+        site = main_db.get_site(site_id)
+        return site_groups(main_db, site, school_year) if site else []
+    except Exception:
+        return []
+
+
 def selectable_ensembles(main_db, school_year=None, program_type="band",
                          base_dir=None, include_empty=False, site_id=None):
     """What a class picker should offer.
@@ -319,12 +330,34 @@ def selectable_ensembles(main_db, school_year=None, program_type="band",
     """
     import class_registry as cr
     found = roster_ensembles(main_db, school_year, site_id=site_id)
+    if not found and school_year:
+        # The year being asked about has no students on it yet -- which is
+        # exactly the situation when somebody is IMPORTING into it, and the
+        # moment they most need the class list.  Falling back to every year
+        # they have taught offers the names their own data uses instead of the
+        # bare program default.
+        found = roster_ensembles(main_db, None, site_id=site_id)
     if site_id:
         # One school's own sections and choir, nothing configured for the
         # secondary program.  A Clyde Hill picker offering "Advanced Band"
         # is offering a class that cannot contain any of its children.
-        return found
-    configured = ensembles_for(program_type, base_dir)
+        return found or site_groups_for(main_db, site_id, school_year)
+
+    # Each elementary school's own sections, whether or not anybody is in them
+    # yet.  A teacher with both kinds of school needs both halves; before this,
+    # whichever one their program type named was the only one they saw.
+    elementary = []
+    try:
+        for site in main_db.get_sites(level="elementary"):
+            for g in site_groups(main_db, site, school_year):
+                if g not in elementary:
+                    elementary.append(g)
+    except Exception:
+        pass
+
+    configured = [] if program_type == "elementary" \
+        else ensembles_for(program_type, base_dir)
+
     out, seen = [], set()
 
     def add(name):
@@ -333,6 +366,8 @@ def selectable_ensembles(main_db, school_year=None, program_type="band",
             seen.add(key)
             out.append(name)
 
+    for g in elementary:                     # a school's own sections, always
+        add(g)
     for e in configured:                     # set up AND populated → canonical
         if any(cr.same_class(e, f) for f in found):
             add(e)

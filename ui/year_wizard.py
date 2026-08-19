@@ -580,7 +580,10 @@ class _AssignDialog(ttk.Toplevel):
         from ui.settings_dialog import load_settings
         program_type = (load_settings(base_dir).get("teacher") or {}).get(
             "program_type", "band")
-        from ui.ensembles import ensembles_for, PERIOD_OPTIONS
+        from ui.ensembles import all_class_options, PERIOD_OPTIONS
+        classes = all_class_options(getattr(parent, "main_db", None), base_dir,
+                                    program_type,
+                                    getattr(parent, "current_year", None))
 
         ttk.Label(self, text=f"📄  {filename}",
                   font=("Segoe UI", fs(11), "bold"),
@@ -592,9 +595,10 @@ class _AssignDialog(ttk.Toplevel):
         ttk.Label(self, text="Ensemble / class",
                   font=("Segoe UI", fs(9), "bold")).pack(anchor=W, padx=16)
         self._ens_var = tk.StringVar()
-        ttk.Combobox(self, textvariable=self._ens_var,
-                     values=ensembles_for(program_type),
-                     width=26).pack(anchor=W, padx=16)
+        # Typeable: the list is everything Roka knows about, not a claim to
+        # know every class that exists.
+        ttk.Combobox(self, textvariable=self._ens_var, values=classes,
+                     width=30).pack(anchor=W, padx=16)
 
         ttk.Label(self, text="Class period(s)",
                   font=("Segoe UI", fs(9), "bold")).pack(anchor=W, padx=16,
@@ -641,8 +645,10 @@ class _SectionAssignDialog(ttk.Toplevel):
         from ui.settings_dialog import load_settings
         program_type = (load_settings(base_dir).get("teacher") or {}).get(
             "program_type", "band")
-        from ui.ensembles import ensembles_for, PERIOD_OPTIONS
-        opts = ["— skip —"] + list(ensembles_for(program_type))
+        from ui.ensembles import all_class_options, PERIOD_OPTIONS
+        opts = ["— skip —"] + all_class_options(
+            getattr(parent, "main_db", None), base_dir, program_type,
+            getattr(parent, "current_year", None))
 
         ttk.Label(self, text=f"📄  {filename}", font=("Segoe UI", fs(11), "bold"),
                   bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(14, 0))
