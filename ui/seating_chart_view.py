@@ -692,7 +692,7 @@ class SeatingChartView(ttk.Frame):
                 bits.append("Add or import students in Manage Students first.")
         else:
             bits.append("Those students have no class/ensemble set. Open "
-                        "Manage Students, tick the students, and use "
+                        "Manage Students, check the students, and use "
                         "“🏷️ Assign” to put them in a class.")
         return "  ".join(bits)
 
@@ -1238,7 +1238,7 @@ class _StudentPicker(ttk.Toplevel):
             v = tk.BooleanVar(value=e in selected)
             self._vars[e] = v
             ttk.Checkbutton(body, text=e, variable=v, bootstyle=INFO).pack(anchor=W, padx=(10, 0))
-        ttk.Label(body, text="Leave unticked to use the whole current roster.",
+        ttk.Label(body, text="Leave unchecked to use the whole current roster.",
                   font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W, pady=(2, 0))
 
         # Scope — all sections (whole ensemble / concert) or one class period.
@@ -1822,8 +1822,8 @@ class _GroupDialog(ttk.Toplevel):
 
         body = ttk.Frame(self)
         body.pack(fill=BOTH, expand=True, padx=16, pady=10)
-        ttk.Label(body, text="Tick a whole ensemble, or specific class periods. "
-                             "Tick several to combine for a concert.",
+        ttk.Label(body, text="Check a whole ensemble, or specific class periods. "
+                             "Check several to combine for a concert.",
                   font=("Segoe UI", 9), wraplength=340, justify=LEFT).pack(anchor=W)
 
         self._all_vars = {}
@@ -1847,8 +1847,8 @@ class _GroupDialog(ttk.Toplevel):
             self._period_vars[e] = {}
             if len(periods) <= 1:
                 # Meets all together, all the time — one box is enough.
-                ticked = (e, "all") in cur or any((e, p) in cur for p in periods)
-                av = tk.BooleanVar(value=ticked)
+                checked = (e, "all") in cur or any((e, p) in cur for p in periods)
+                av = tk.BooleanVar(value=checked)
                 self._all_vars[e] = av
                 ttk.Checkbutton(body, text=disp, variable=av,
                                 bootstyle=INFO).pack(anchor=W, pady=(8, 0))

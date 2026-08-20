@@ -254,7 +254,7 @@ def fifth_grade_instruments(program_type: str):
     the rest of the concert band follows, because the rare gifted child really
     does turn up on oboe or french horn and has to be recordable. Those
     families almost always buy or rent privately, so the instrument seldom
-    reaches the school cupboard -- but the child still plays it.
+    reaches the school inventory -- but the child still plays it.
     """
     if program_type == "orchestra":
         return list(FIFTH_GRADE_STRINGS_COMMON) + ["Other"]

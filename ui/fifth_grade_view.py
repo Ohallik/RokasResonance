@@ -118,7 +118,7 @@ class FifthGradeView(ttk.Frame):
                    ).pack(side=RIGHT)
 
         # Start-of-year jobs, in the order a teacher actually meets them:
-        # bring the cupboard across (once), then load this year's children
+        # bring the inventory across (once), then load this year's children
         # (every year).  Same wording and same file types as the secondary
         # Import Data wizard, because plenty of people do both jobs.
         setup = ttk.Frame(outer)
@@ -204,7 +204,8 @@ class FifthGradeView(ttk.Frame):
         self.refresh()
 
     def _import_legacy(self, site):
-        """First year only: bring a cupboard across from CutTime or Charms."""
+        """First year only: bring an inventory across from CutTime or
+        Charms."""
         from tkinter import filedialog
         import import_service
 

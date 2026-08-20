@@ -836,7 +836,7 @@ class Database:
             except Exception:
                 pass
             # Some elementary schools run a choir before or after school and
-            # simply put the whole 5th grade in it.  When that is true, ticking
+            # simply put the whole 5th grade in it.  When that is true, checking
             # every child by hand is a hundred clicks nobody should make.
             try:
                 conn.execute("ALTER TABLE sites ADD COLUMN choir_default INTEGER DEFAULT 0")
@@ -1000,8 +1000,8 @@ class Database:
         back after a year or two away and the children who were in it then are
         in secondary school now; carrying them forward would hand the returning
         teacher a roster of people who left.  Anything still checked out to one
-        of them is returned too, or the cupboard looks fuller on paper than it
-        is on the shelf.
+        of them is checked back in too, or the inventory looks fuller on paper
+        than it is on the shelf.
 
         At SECONDARY none of that is true and none of it happens.  A middle
         school's roster is its roster, its 6th graders are its 7th graders, and
@@ -2888,7 +2888,7 @@ class Database:
 
         The handoff needs the history and not just what is out today: next
         year's teacher wants to know which horn has been through four children
-        and which has never left the cupboard."""
+        and which has never left the shelf."""
         with self._connect() as conn:
             return conn.execute(
                 """SELECT c.*, i.category, i.description AS instrument_desc,

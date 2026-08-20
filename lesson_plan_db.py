@@ -474,7 +474,7 @@ class LessonPlanDatabase:
                         "sub_rate TEXT",            # which of the three
                         "supervision TEXT",         # who is supervising, in
                                                     # the teacher's own words
-                        # The teacher's own per-student tick columns, as JSON:
+                        # The teacher's own per-student check columns, as JSON:
                         # [{"key": ..., "label": ...}].  A Microsoft Forms
                         # interest survey, a deposit, a signed code of conduct
                         # -- whatever this trip actually chases.
@@ -1716,7 +1716,7 @@ class LessonPlanDatabase:
             conn.commit()
 
     def clear_trip_form(self, trip_id, form_key):
-        """Drop every tick for one column -- used when the teacher removes a
+        """Drop every check for one column -- used when the teacher removes a
         checklist item they added."""
         with self._connect() as conn:
             conn.execute("DELETE FROM field_trip_student_forms "

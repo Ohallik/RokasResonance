@@ -163,7 +163,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         self._filter_ensemble_var = tk.StringVar(value="All")
         self._filter_period_var = tk.StringVar(value="All")
         self._selected_id = None
-        self._checked = set()   # student ids ticked for bulk actions
+        self._checked = set()   # student ids checked for bulk actions
         self._repair_prompted = False
         self._dup_prompted = False
 
@@ -279,10 +279,10 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         self._count_lbl = ttk.Label(filter_bar, text="", foreground=muted_fg())
         self._count_lbl.pack(side=RIGHT, padx=6)
 
-        # ── Selection bar (tick boxes for bulk actions) ─────────────────────────
+        # ── Selection bar (checkboxes for bulk actions) ─────────────────────────
         sel_bar = ttk.Frame(self)
         sel_bar.pack(fill=X, padx=6, pady=(2, 0))
-        ttk.Label(sel_bar, text="☑ Tick students to bulk-assign:",
+        ttk.Label(sel_bar, text="☑ Check students to bulk-assign:",
                   font=("Segoe UI", 8), foreground=muted_fg()).pack(side=LEFT, padx=(2, 6))
         ttk.Button(sel_bar, text="Select All Shown", bootstyle=(SECONDARY, OUTLINE),
                    command=self._check_all_shown).pack(side=LEFT, padx=2)
@@ -516,16 +516,16 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             school_year=year, include_inactive=include_inactive,
             site_id=self.site_id,
             level=None if self.site_id else "secondary"))
-        # Keep only ticks for students still in the loaded roster
+        # Keep only checkmarks for students still in the loaded roster
         loaded_ids = {s["id"] for s in self._all_students}
         self._checked &= loaded_ids
         self._apply_filter()
         self._populate_year_options()
 
-    # ─────────────────────────────────────────────── Tick-box multi-select ─────
+    # ─────────────────────────────────────────────── Checkbox multi-select ─────
 
     def _on_tree_click(self, event):
-        """Toggle a row's tick box when the checkbox column is clicked."""
+        """Toggle a row's checkbox when the checkbox column is clicked."""
         if self.tree.identify("region", event.x, event.y) != "cell":
             return
         if self.tree.identify_column(event.x) != "#1":
@@ -785,7 +785,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         return int(sel[0])
 
     def _selected_ids(self):
-        """Ticked students take priority; otherwise fall back to the highlighted row."""
+        """Checked students take priority; otherwise fall back to the highlighted row."""
         if self._checked:
             return list(self._checked)
         return [int(iid) for iid in self.tree.selection()]
@@ -794,7 +794,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         ids = self._selected_ids()
         if not ids:
             Messagebox.show_warning(
-                "Tick the ☐ boxes next to the students you want (or use 'Select All Shown'),\n"
+                "Check the ☐ boxes next to the students you want (or use 'Select All Shown'),\n"
                 "then assign an ensemble, class period, and/or instrument to all of them at once.",
                 title="No Students Selected",
                 parent=self.winfo_toplevel())
@@ -804,7 +804,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                                 site_id=self.site_id
                                 if self._elementary else None)
         self.wait_window(dlg)
-        # Ticks are cleared once an assignment lands.  Leaving them on invites
+        # Checkmarks are cleared once an assignment lands.  Leaving them on invites
         # the next assignment to silently hit the same students again — that is
         # how a whole roster ends up playing one instrument.
         if getattr(dlg, "applied", False):
@@ -990,9 +990,9 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         return f"{st['first_name']} {st['last_name']}".strip()
 
     def _delete_student(self):
-        """Remove the ticked students, or the highlighted one if none are ticked.
+        """Remove the checked students, or the highlighted one if none are checked.
 
-        This used to read only the highlighted row, so ticking a whole roster
+        This used to read only the highlighted row, so checking a whole roster
         and pressing Delete did nothing at all, and then deleted exactly the
         one student who happened to be highlighted.  Silence is the worst
         possible answer to a bulk action: it reads as a broken button, and the
@@ -1002,7 +1002,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         ids = [i for i in self._selected_ids() if i]
         if not ids:
             Messagebox.show_warning(
-                "Tick the boxes next to the students you want to remove "
+                "Check the boxes next to the students you want to remove "
                 "(or use 'Select All Shown'), then press Delete.",
                 title="No Students Selected",
                 parent=self.winfo_toplevel())
@@ -1035,7 +1035,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                         f"\n\n{listed}")
         kept = ""
         if held:
-            kept = (f"\n\n{len(held)} of the ones you ticked "
+            kept = (f"\n\n{len(held)} of the ones you checked "
                     f"{'has' if len(held) == 1 else 'have'} instruments "
                     f"checked out and will be kept.")
         if Messagebox.yesno(
@@ -1864,14 +1864,14 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
     def _ensure_option(self, key, opt, value=False):
         """Add a checkbox for ``opt`` if the group doesn't already have one.
 
-        Save rebuilds these fields from the ticked boxes alone, so an option
+        Save rebuilds these fields from the checked boxes alone, so an option
         that isn't on screen is an option that gets ERASED the moment the
         teacher opens a student and clicks Save.  Any value a student actually
         holds therefore gets a box, whether or not it matches the configured
         class list — the record decides what's offered, not the other way round.
 
         For the ensembles group, "already have one" means BY CLASS IDENTITY:
-        a student holding "Entry Band" ticks the offered "MS Band (Entry)" box
+        a student holding "Entry Band" checks the offered "MS Band (Entry)" box
         rather than growing a duplicate.  The box then saves the canonical
         spelling, so records converge on the configured names as they're
         edited.  Checkbox labels show the short form ("Entry"); the stored
@@ -2039,9 +2039,9 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
         for key, var in self._vars.items():
             val = student[key] if key in student.keys() else None
             var.set("" if val is None else str(val))
-        # Multi-value checkbox groups.  Held values tick their box by class
-        # IDENTITY ("Entry Band" ticks the "MS Band (Entry)" box); anything
-        # that matches no option at all still gets its own box (ticked) rather
+        # Multi-value checkbox groups.  Held values check their box by class
+        # IDENTITY ("Entry Band" checks the "MS Band (Entry)" box); anything
+        # that matches no option at all still gets its own box (checked) rather
         # than being dropped on the next Save.
         import class_registry as cr
         for key in list(self._multi_vars):
@@ -2162,7 +2162,7 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
         ttk.Checkbutton(row, text="Also sings in choir",
                         variable=self._choir_var,
                         bootstyle=PRIMARY).pack(side=LEFT)
-        note = ("This school's choir is ticked for every child by default."
+        note = ("This school's choir is checked for every child by default."
                 if (self.site or {}).get("choir_default")
                 else "Only if this school runs a choir and this child is in it.")
         ttk.Label(row, text=note, font=("Segoe UI", 8), foreground=muted_fg(),
@@ -2229,7 +2229,7 @@ class _BulkAssignDialog(_ClassOptionsMixin, ttk.Toplevel):
         # Set when assigning within one school: its own sections, no class
         # periods, no second instrument.
         self.site_id = site_id
-        self.applied = False    # caller clears the roster ticks only if we ran
+        self.applied = False    # caller clears the roster checkmarks only if we ran
         self._ens_vars = {}
         self._per_vars = {}
         self._mode_var = tk.StringVar(value="add")
@@ -2326,11 +2326,11 @@ class _BulkAssignDialog(_ClassOptionsMixin, ttk.Toplevel):
         if self._mode_var.get() == "replace":
             self._mode_hint.config(
                 text="⚠ Replace: clears each student's current ensembles/periods and sets "
-                     "only what you tick below. Use with care.")
+                     "only what you check below. Use with care.")
         else:
             self._mode_hint.config(
                 text="Add (default): keeps each student's current ensembles/periods and adds "
-                     "the ones you tick below — nothing is erased.")
+                     "the ones you check below — nothing is erased.")
 
     def _names(self, limit=4):
         """The first few students this will hit, then how many more."""
@@ -2376,11 +2376,11 @@ class _BulkAssignDialog(_ClassOptionsMixin, ttk.Toplevel):
                                     parent=self)
             return
 
-        # Ticks carry over between assignments, and the roster this runs
+        # Checkmarks carry over between assignments, and the roster this runs
         # against is invisible from here -- so a teacher who assigns the
-        # violins, then ticks the violas without unticking, silently puts
+        # violins, then checks the violas without unchecking, silently puts
         # every violin on viola too.  That happened.  The count and the first
-        # few names are what catch it: six names when you ticked four is
+        # few names are what catch it: six names when you checked four is
         # obvious, and nothing else on screen would have told you.
         n = len(self.student_ids)
         overwrites = bool(prim or sec or replace)
@@ -2565,7 +2565,7 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
         self._generate()
 
     def _chosen_instruments(self):
-        """The ticked instruments, or None meaning every one of them.
+        """The selected instruments, or None meaning every one of them.
 
         Selecting nothing is the same as selecting everything, which is what a
         teacher means when they have not narrowed it -- rather than an empty

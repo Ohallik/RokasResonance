@@ -51,11 +51,11 @@ class PerformanceDialog(ttk.Toplevel):
         # Date
         self._make_field(content, "Date (YYYY-MM-DD)", "performance_date")
 
-        # Ensemble(s) — tick every class that performed this piece.  Combined
+        # Ensemble(s) — check every class that performed this piece.  Combined
         # performances (e.g. Intermediate + Advanced Band) can select several.
         f = ttk.Frame(content)
         f.pack(fill=X, pady=4)
-        ttk.Label(f, text="Ensemble(s) — tick all that performed this piece",
+        ttk.Label(f, text="Ensemble(s) — check all that performed this piece",
                   font=("Segoe UI", 9)).pack(anchor=W)
         grid = ttk.Frame(f)
         grid.pack(fill=X, pady=(2, 0))
@@ -109,12 +109,12 @@ class PerformanceDialog(ttk.Toplevel):
         for key in ("performance_date", "event_name"):
             if key in self._vars:
                 self._vars[key].set(row[key] or "")
-        # Ensemble(s): tick known ones, put anything else in "Other"
+        # Ensemble(s): check known ones, put anything else in "Other"
         parts = [p.strip() for p in (row["ensemble"] or "").split(",") if p.strip()]
         extras = []
         from class_registry import same_class
         for p in parts:
-            # Tick by class identity so "Entry Band" finds the "MS Band
+            # Check by class identity so "Entry Band" finds the "MS Band
             # (Entry)" box; only genuinely unknown groups land in "Other".
             hit = next((opt for opt in self._ens_vars if same_class(opt, p)),
                        None)

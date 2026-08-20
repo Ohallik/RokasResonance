@@ -218,9 +218,9 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
 
         tools = ttk.Frame(self)
         tools.pack(fill=X, padx=16, pady=(6, 4))
-        ttk.Button(tools, text="Tick All", bootstyle=(SECONDARY, OUTLINE),
+        ttk.Button(tools, text="Check All", bootstyle=(SECONDARY, OUTLINE),
                    command=lambda: self._set_all(True)).pack(side=LEFT, padx=(0, 4))
-        ttk.Button(tools, text="Untick All", bootstyle=(SECONDARY, OUTLINE),
+        ttk.Button(tools, text="Uncheck All", bootstyle=(SECONDARY, OUTLINE),
                    command=lambda: self._set_all(False)).pack(side=LEFT, padx=4)
         ttk.Label(tools, text="String players who have grown get a ⬆ button on "
                               "their own row.",
@@ -240,7 +240,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                  "instrument assigned"
         ).pack(side=LEFT)
         ttk.Label(fees, text="(a student taking two instruments is billed twice; "
-                             "untick only if these were already billed)",
+                             "uncheck only if these were already billed)",
                   font=("Segoe UI", 8), foreground=muted_fg()).pack(side=LEFT, padx=6)
 
         # Column headings, aligned with the row grid below.
@@ -271,7 +271,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         btn.pack(fill=X, padx=16, pady=12)
         ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
                    command=self.destroy).pack(side=RIGHT, padx=4)
-        self._apply_btn = ttk.Button(btn, text="Assign Ticked", bootstyle=SUCCESS,
+        self._apply_btn = ttk.Button(btn, text="Assign Selected", bootstyle=SUCCESS,
                                      command=self._apply)
         self._apply_btn.pack(side=RIGHT, padx=4)
 
@@ -298,9 +298,9 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
 
         self._intro.config(
             text=f"These students had a school instrument in {self.prior_year} "
-                 f"and are on the {self.school_year} roster. Ticked rows will be "
+                 f"and are on the {self.school_year} roster. Selected rows will be "
                  f"checked out for {self.school_year} and billed the "
-                 f"{self._fee_label()} rental. Untick anyone who no longer needs "
+                 f"{self._fee_label()} rental. Uncheck anyone who no longer needs "
                  f"one. Each row is one instrument, so a student who really "
                  f"keeps two is billed for both. Students who graduated or did "
                  f"not continue are not listed at all.")
@@ -351,7 +351,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         # behind says nothing about where the program ends, and a wrong ceiling
         # would quietly hide students who really are coming back.  Nobody is
         # dropped on this test either way: a student above the ceiling is shown
-        # unticked, with the reason, for the teacher to judge.
+        # unchecked, with the reason, for the teacher to judge.
         top_grade = None
         try:
             last_roster = [dict(s) for s in self.db.get_all_students(
@@ -496,7 +496,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         f = ttk.Frame(self._list)
         f.pack(fill=X, pady=1)
 
-        # Only enrolled students reach this point, so every row starts ticked.
+        # Only enrolled students reach this point, so every row starts checked.
         keep = tk.BooleanVar(value=True)
         cb = ttk.Checkbutton(f, variable=keep, bootstyle=PRIMARY,
                              command=self._update_count)
@@ -571,7 +571,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                     if free_labels else "none free — sharing only")
 
         # Already carried over — a second run must not check the same horn out
-        # twice or bill the rental fee twice, so the row starts unticked.  A
+        # twice or bill the rental fee twice, so the row starts unchecked.  A
         # loan begun this year says so by its date; one that simply ran on from
         # the summer says so by the note carry-over left on it.
         held = self._held_by(row, prior_id)
@@ -585,7 +585,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         # Still on the roster, but a grade above where the program ends: most
         # likely a leftover row for someone who has moved up to the high
         # school.  Shown rather than hidden — the teacher knows which it is —
-        # but never ticked, because ticking it bills them.
+        # but never checked, because checking it bills them.
         past = row.get("_past_top")
         if past:
             keep.set(False)
@@ -617,7 +617,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
 
     def _set_all(self, value):
         for r in self._rows:
-            # Rows already assigned this year stay off: Tick All is a
+            # Rows already assigned this year stay off: Check All is a
             # convenience, not a reason to bill somebody twice.
             if r.get("done") and value:
                 continue
@@ -675,7 +675,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
             picks.append((r["data"], r["options"][i]))
 
         if not picks:
-            Messagebox.show_warning("Nothing is ticked to assign.",
+            Messagebox.show_warning("Nothing is checked to assign.",
                                     title="Nothing to Do", parent=self)
             return
 

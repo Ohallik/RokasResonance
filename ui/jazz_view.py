@@ -5,7 +5,7 @@ A jazz ensemble's rhythm section is variable, so this tool lets the teacher:
 
   * list the SEATS in play (Drum set, Vibraphone, Piano, Electric piano, Bass,
     Guitar, plus any custom part like a doubled Tenor Sax),
-  * enter each PLAYER and tick the seats they can actually cover (a kid who can
+  * enter each PLAYER and check the seats they can actually cover (a kid who can
     play drum set OR vibes, one who can only play vibes, etc.),
   * see a warm-up ROTATION that cycles eligible players through the open seats
     day by day, and
@@ -895,7 +895,7 @@ class _AddPlayersDialog(ttk.Toplevel):
 
 
 class _PlayerPartsDialog(ttk.Toplevel):
-    """Tick the seats one player can cover."""
+    """Check the seats one player can cover."""
 
     def __init__(self, parent, name, seats, current):
         super().__init__(master=parent)

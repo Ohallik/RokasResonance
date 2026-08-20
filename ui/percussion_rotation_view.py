@@ -310,7 +310,7 @@ class PercussionRotationView(ttk.Frame):
         ttk.Button(rbar, text="🎚 Limit Rotation…", bootstyle=(WARNING, OUTLINE),
                    command=self._limit_player).pack(side=LEFT, padx=(8, 1))
         self._earn_hint = ttk.Label(
-            rbar, text="Tick “Full Rotation” once a player passes 5 assessments.",
+            rbar, text="Check “Full Rotation” once a player passes 5 assessments.",
             font=("Segoe UI", fs(8)), foreground=muted_fg())
         self._earn_hint.pack(side=LEFT, padx=10)
 
@@ -455,7 +455,7 @@ class PercussionRotationView(ttk.Frame):
         is_entry = g["class_type"] == pr.ENTRY
         # Show/hide the earn hint + rotation column meaning for int/adv
         self._earn_hint.config(text=(
-            "Tick “Full Rotation” once a player passes 5 assessments."
+            "Check “Full Rotation” once a player passes 5 assessments."
             if is_entry else
             "All players are in the full rotation."))
         self._day_var.set(str(g["current_day"] or 1))
@@ -1262,7 +1262,7 @@ class _FromStudentsDialog(ttk.Toplevel):
         self._per_var.trace_add("write", lambda *_: self._reload())
 
         ttk.Label(body, text="Students whose instrument is a percussion "
-                             "instrument. Tick the ones in this class period.",
+                             "instrument. Check the ones in this class period.",
                   font=("Segoe UI", 9), foreground=muted_fg(),
                   wraplength=430, justify=LEFT).pack(anchor=W)
 
@@ -1400,7 +1400,7 @@ class _FromStudentsDialog(ttk.Toplevel):
         self.names = [self._rows[i]["name"] for i in sorted(self._picked)]
         self.start_full = self._full.get()
         if not self.names:
-            Messagebox.show_warning("Tick at least one student.",
+            Messagebox.show_warning("Check at least one student.",
                                     title="Nobody selected", parent=self)
             return
         self.destroy()

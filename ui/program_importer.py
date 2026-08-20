@@ -460,7 +460,7 @@ class ProgramImportDialog(ttk.Toplevel):
         note = f"Each row keeps its own concert date/event (from its program)."
         if n_files > 1:
             note = f"{len(self._items)} pieces from {n_files} programs.  " + note
-        ttk.Label(self, text=note + "  Tick the ones to record; double-click a row to fix "
+        ttk.Label(self, text=note + "  Check the ones to record; double-click a row to fix "
                                     "its details or library match. ✓ = matched to your library.",
                   font=("Segoe UI", 8), foreground="#666", wraplength=880,
                   justify=LEFT).pack(anchor=W, padx=16, pady=(8, 4))
@@ -478,17 +478,17 @@ class ProgramImportDialog(ttk.Toplevel):
                                      foreground="#8B4000")
         self._hidden_lbl.pack(side=LEFT, padx=(10, 0))
 
-        # Bulk-correct date/event for the ticked rows (handy if AI missed a date)
+        # Bulk-correct date/event for the checked rows (handy if AI missed a date)
         top = ttk.Frame(self)
         top.pack(fill=X, padx=16, pady=(0, 4))
-        ttk.Label(top, text="Set for ticked →", font=("Segoe UI", 8, "bold")).pack(side=LEFT)
+        ttk.Label(top, text="Set for checked →", font=("Segoe UI", 8, "bold")).pack(side=LEFT)
         ttk.Label(top, text="Date:", font=("Segoe UI", 8)).pack(side=LEFT, padx=(6, 2))
         self._bulk_date = tk.StringVar()
         ttk.Entry(top, textvariable=self._bulk_date, width=12).pack(side=LEFT)
         ttk.Label(top, text="Event:", font=("Segoe UI", 8)).pack(side=LEFT, padx=(8, 2))
         self._bulk_event = tk.StringVar()
         ttk.Entry(top, textvariable=self._bulk_event, width=22).pack(side=LEFT)
-        ttk.Button(top, text="Apply to ticked", bootstyle=(SECONDARY, OUTLINE),
+        ttk.Button(top, text="Apply to checked", bootstyle=(SECONDARY, OUTLINE),
                    command=self._apply_bulk_dateevent).pack(side=LEFT, padx=(6, 0))
 
         # Selection controls
@@ -575,10 +575,10 @@ class ProgramImportDialog(ttk.Toplevel):
         if getattr(self, "_hidden_lbl", None):
             self._hidden_lbl.config(
                 text=(f"{hidden} piece(s) by other schools' ensembles hidden "
-                      "— untick to review them" if hidden else ""))
+                      "— uncheck to review them" if hidden else ""))
 
     def _on_own_only_toggle(self):
-        # Re-hiding also un-ticks other-school rows so they can't sneak in.
+        # Re-hiding also un-checkmarks other-school rows so they can't sneak in.
         if self._own_only():
             for it in self._items:
                 if it.get("other_school"):
@@ -831,7 +831,7 @@ class ProgramImportDialog(ttk.Toplevel):
             parts.append(f"skipped {skipped_dup} duplicate(s) already recorded")
         if skipped_unmatched:
             parts.append(f"left {skipped_unmatched} unmatched piece(s) out "
-                         "(tick 'add unknown pieces' to include them)")
+                         "(check 'add unknown pieces' to include them)")
         msg = ".\n".join(parts) + "."
         if self._failed:
             msg += "\n\nCouldn't read:\n" + "\n".join(f"• {n}: {r}" for n, r in self._failed)

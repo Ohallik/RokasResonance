@@ -30,7 +30,7 @@ STUDENTS_PER_CHAPERONE = 10
 
 # The three substitute rates the district form offers as a "check one".  Kept
 # as data because they are stamped with a school year on the form itself and
-# change: the amount stays editable, this only decides which box is ticked.
+# change: the amount stays editable, this only decides which box is checked.
 SUB_RATES = [
     ("4hr", "$212/4 hrs", 212.0),
     ("5hr", "$266/5 hrs", 266.0),
@@ -85,7 +85,7 @@ FORM_MEDICATION = "medication"
 FORM_LABELS = {
     FORM_EXHIBIT_A: "Exhibit A — parent authorization",
     FORM_EXHIBIT_C: "Exhibit C — parent authorization and risk",
-    # Retired, and kept only so a tick recorded against one before they were
+    # Retired, and kept only so a check recorded against one before they were
     # retired still has a name to display.  Neither is chased any more:
     #   Exhibit E   -- the overnight emergency health form, now entirely
     #                  covered by FinalForms.
@@ -156,7 +156,7 @@ def required_forms(trip, elementary=False):
     """The per-student forms this trip has to collect on paper.
 
     Empty for a middle or high school day trip: FinalForms replaced those, and
-    listing them anyway would have teachers ticking boxes for paperwork nobody
+    listing them anyway would have teachers checking boxes for paperwork nobody
     collects.
     """
     # What is genuinely still collected on paper, checked against the district
@@ -179,7 +179,7 @@ def required_forms(trip, elementary=False):
     return []
 
 
-# ── The teacher's own tick columns ───────────────────────────────────────────
+# ── The teacher's own check columns ───────────────────────────────────────────
 # The district's forms are not the only per-student thing a trip chases.  An
 # overnight trip usually starts with an interest survey, then a deposit, then a
 # code of conduct -- none of which 2320P has ever heard of, and all of which
@@ -238,10 +238,10 @@ def rename_custom_form(trip, key, label):
     """Give a column a new name.  Returns (json, True) or (json, False) when
     the name is already taken.
 
-    The KEY does not change, which is the whole point: every tick recorded
+    The KEY does not change, which is the whole point: every check recorded
     against this column stays attached to it.  Deleting and re-adding would
     lose them, and a teacher renaming "Interest form" to "Interest survey"
-    does not expect to lose forty ticks.
+    does not expect to lose forty checkmarks.
     """
     label = (label or "").strip()
     items = custom_forms(trip)
@@ -322,10 +322,10 @@ DEADLINES_OVERNIGHT = [
 ]
 
 
-# Which checklist tick means a deadline has been met.
+# Which checklist check means a deadline has been met.
 #
 # "Packet to the principal" IS the field trip form: they are one action, and
-# ticking the form and then being told the packet is past due is the planner
+# checking the form and then being told the packet is past due is the planner
 # arguing with the teacher about something she has already done.  Athletics &
 # Activities is the same packet -- the principal's office forwards it, so the
 # teacher's part is finished when it reaches the principal.
@@ -340,11 +340,11 @@ DEADLINE_SATISFIED_BY = {
 def deadline_done(trip, key):
     """Whether the checklist says this deadline has been dealt with.  N/A
     counts: an item marked "does not apply" is not outstanding."""
-    tick = DEADLINE_SATISFIED_BY.get(key)
-    if not tick:
+    check = DEADLINE_SATISFIED_BY.get(key)
+    if not check:
         return False
     try:
-        return int(trip.get(tick) or 0) in (CHECK_DONE, CHECK_NA)
+        return int(trip.get(check) or 0) in (CHECK_DONE, CHECK_NA)
     except (TypeError, ValueError):
         return False
 

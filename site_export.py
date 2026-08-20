@@ -3,7 +3,7 @@ site_export.py - Hand one school's instruments on to whoever teaches it next.
 
 Elementary assignments change often. A teacher who carried six schools last
 year may carry three different ones this year, and the person taking over
-Sherwood Forest starts with a cupboard full of instruments and no idea which
+Sherwood Forest starts with a room full of instruments and no idea which
 ones are out, which are broken, or what has already been repaired twice.
 
 Three exports, all for one school:
@@ -257,8 +257,8 @@ def import_handoff(db, site, path):
 
     Runs twice safely. An instrument already here -- matched on serial number,
     barcode or district number -- is left alone rather than added again, since
-    a teacher who imports the same file twice should end up with one cupboard,
-    not two.
+    a teacher who imports the same file twice should end up with one
+    inventory, not two.
     """
     site = dict(site)
     sid = site["id"]

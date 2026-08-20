@@ -3,7 +3,7 @@ ui/instrumentation_view.py - "How many of each part do I need?"
 
 The copier question.  Standing at the machine you need to know how many flute
 copies Advanced Band takes, or how many flutes there are across Intermediate
-AND Advanced when both play the same piece.  Tick the classes, read the count.
+AND Advanced when both play the same piece.  Check the classes, read the count.
 
 Everything comes straight from the student records — instrument and ensemble
 are already on each student, so nothing here is typed in and nothing can drift
@@ -104,8 +104,8 @@ class InstrumentationDialog(ttk.Toplevel):
 
         body = ttk.Frame(self)
         body.pack(fill=BOTH, expand=True, padx=16, pady=10)
-        ttk.Label(body, text="How many copies of each part to print. Tick the "
-                             "class(es) you're making copies for — tick several "
+        ttk.Label(body, text="How many copies of each part to print. Check the "
+                             "class(es) you're making copies for — check several "
                              "to combine (e.g. Intermediate + Advanced playing "
                              "the same piece).",
                   font=("Segoe UI", fs(9)), wraplength=460,
@@ -196,7 +196,7 @@ class InstrumentationDialog(ttk.Toplevel):
         """One checkbox per class, built from the classes the ROSTER uses (plus
         any configured class that's set up but empty).
 
-        Offering only the configured class names is why ticking a single class
+        Offering only the configured class names is why checking a single class
         used to return nothing: a roster imported as "Entry Band" never matches
         a configured "MS Band (Entry)", so the filter excluded everyone while
         "All classes" — which doesn't filter at all — looked fine.
@@ -245,7 +245,7 @@ class InstrumentationDialog(ttk.Toplevel):
         chosen = self._selected()
         if chosen is not None and not chosen:
             self._tree.delete(*self._tree.get_children())
-            self._total_lbl.config(text="Tick at least one class.")
+            self._total_lbl.config(text="Check at least one class.")
             self._rows = []
             return
         rows, total = count_parts(students, chosen, self._secondary.get())

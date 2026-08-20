@@ -881,7 +881,7 @@ class _FieldTripDialog(ttk.Toplevel):
             per = self._per_student_fee(total, len(attendees))
             if not tagged:
                 Messagebox.show_warning(
-                    "Tick at least one attending ensemble to charge students.",
+                    "Check at least one attending ensemble to charge students.",
                     title="No Ensemble", parent=self)
                 return
             if per > 0 and attendees:
@@ -979,7 +979,7 @@ class _FeesDialog(ttk.Toplevel):
         self.school_year = default
         self._year_var = tk.StringVar(value=default)
         self._fee_var = tk.StringVar()
-        self._checked = set()   # fee-row ids ticked for bulk actions
+        self._checked = set()   # fee-row ids checked for bulk actions
         self.title("Student Fees — Roka's Resonance")
         self.resizable(True, True)
         self.grab_set()
@@ -1038,7 +1038,7 @@ class _FeesDialog(ttk.Toplevel):
         ttk.Button(tb, text="📊 Export", bootstyle=(SECONDARY, OUTLINE),
                    command=self._export).pack(side=LEFT, padx=2)
 
-        ttk.Label(self, text="Tick the ☐ boxes (or Ctrl/Shift-click rows) to select several, "
+        ttk.Label(self, text="Check the ☐ boxes (or Ctrl/Shift-click rows) to select several, "
                              "then Paid / Waive.", font=("Segoe UI", 8),
                   foreground="#888").pack(anchor=W, padx=14)
 
@@ -1110,7 +1110,7 @@ class _FeesDialog(ttk.Toplevel):
                     "✓ Yes" if out else "",
                 ))
         self._count.config(text=f"{len(rows)} student(s) • {n_unpaid} unpaid "
-                                f"• {len(self._checked)} ticked")
+                                f"• {len(self._checked)} selected")
 
     def _on_click(self, event):
         if self.tree.identify("region", event.x, event.y) != "cell":
@@ -1126,7 +1126,7 @@ class _FeesDialog(ttk.Toplevel):
         n = len([1 for i in self.tree.get_children()
                  if self.tree.set(i, "status") == "Unpaid"])
         self._count.config(text=f"{len(self.tree.get_children())} student(s) • {n} unpaid "
-                                f"• {len(self._checked)} ticked")
+                                f"• {len(self._checked)} selected")
 
     def _check_all(self):
         for iid in self.tree.get_children():
@@ -1145,7 +1145,7 @@ class _FeesDialog(ttk.Toplevel):
             self._check_all()
 
     def _sel_ids(self):
-        """Ticked rows take priority; otherwise the highlighted selection."""
+        """Checked rows take priority; otherwise the highlighted selection."""
         if self._checked:
             return list(self._checked)
         return [int(i) for i in self.tree.selection()]
@@ -1153,7 +1153,7 @@ class _FeesDialog(ttk.Toplevel):
     def _set_status(self, status):
         ids = self._sel_ids()
         if not ids:
-            Messagebox.show_warning("Tick or select student(s) first.", title="No Selection",
+            Messagebox.show_warning("Check or select student(s) first.", title="No Selection",
                                     parent=self)
             return
         today = datetime.today().strftime("%Y-%m-%d") if status == "paid" else None
@@ -1175,7 +1175,7 @@ class _FeesDialog(ttk.Toplevel):
         3 summer rentals = 3 × $20).  Each click adds one more copy per row."""
         ids = self._sel_ids()
         if not ids:
-            Messagebox.show_warning("Tick or select the student fee(s) to duplicate.",
+            Messagebox.show_warning("Check or select the student fee(s) to duplicate.",
                                     title="No Selection", parent=self)
             return
         rows = {r["id"]: r for r in self.db.get_student_fees(self._fee_var.get(),
@@ -1610,7 +1610,7 @@ class _StudentPickerDialog(ttk.Toplevel):
         return list(self.db.get_all_students(school_year=self.school_year))
 
     def _add_one(self):
-        """Tick the student named in the box.  The list below is the record of
+        """Check the student named in the box.  The list below is the record of
         who will be charged, so one path leads to one place."""
         want = (self._student.get() or "").strip().lower()
         if not want:
@@ -1641,7 +1641,7 @@ class _StudentPickerDialog(ttk.Toplevel):
                                      display_last_first(s), s["grade"] or "", ens))
         self._student_cb["values"] = sorted(names)
         if getattr(self, "_count", None) is not None:
-            self._count.config(text=f"{len(self._checked)} student(s) ticked")
+            self._count.config(text=f"{len(self._checked)} student(s) selected")
 
     def _click(self, e):
         if self.tree.identify("region", e.x, e.y) != "cell" or self.tree.identify_column(e.x) != "#1":
@@ -1652,12 +1652,12 @@ class _StudentPickerDialog(ttk.Toplevel):
         sid = int(iid)
         self._checked.symmetric_difference_update({sid})
         self.tree.set(iid, "chk", "☑" if sid in self._checked else "☐")
-        self._count.config(text=f"{len(self._checked)} student(s) ticked")
+        self._count.config(text=f"{len(self._checked)} student(s) selected")
 
     def _all(self):
         for iid in self.tree.get_children():
             self._checked.add(int(iid)); self.tree.set(iid, "chk", "☑")
-        self._count.config(text=f"{len(self._checked)} student(s) ticked")
+        self._count.config(text=f"{len(self._checked)} student(s) selected")
 
     def _ok(self):
         if not self._checked:

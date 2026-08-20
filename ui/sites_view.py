@@ -190,12 +190,13 @@ class SitesPanel(ttk.Frame):
                          f"list from the school's own tab.")
         if res["checkouts_returned"]:
             lines.append(f"{res['checkouts_returned']} instrument(s) still "
-                         f"showing as checked out to them were returned to the "
-                         f"cupboard.")
+                         f"showing as checked out to them were checked back "
+                         f"in.")
         if res.get("elementary"):
             lines.append("If somebody else looked after this school in the "
                          "meantime, use Import Inventory From Another Teacher "
-                         "on its tab to take on the cupboard as they left it.")
+                         "on its tab to take on the inventory as they left "
+                         "it.")
         Messagebox.show_info("\n\n".join(lines),
                              title="School restored",
                              parent=self.winfo_toplevel())
@@ -286,7 +287,7 @@ class SiteDialog(ttk.Toplevel):
                                     justify=LEFT)
         self._fees_note.pack(anchor=W)
 
-        # Where a school's choir is simply "the 5th grade", ticking two hundred
+        # Where a school's choir is simply "the 5th grade", checking two hundred
         # children one at a time is not a reasonable thing to ask.
         self._choir = tk.BooleanVar(value=bool(site.get("choir_default", 0)))
         self._choir_chk = ttk.Checkbutton(
@@ -295,9 +296,9 @@ class SiteDialog(ttk.Toplevel):
         self._choir_chk.pack(anchor=W, pady=(10, 0))
         self._choir_note = ttk.Label(
             body, text="Some schools run a choir before or after school and put "
-                       "the whole year group in it. Tick this and every child "
+                       "the whole year group in it. Check this and every child "
                        "imported here joins it automatically; leave it off to "
-                       "tick them individually.",
+                       "check them individually.",
             font=("Segoe UI", 8), foreground=muted_fg(), wraplength=340,
             justify=LEFT)
         self._choir_note.pack(anchor=W)

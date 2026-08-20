@@ -1397,7 +1397,7 @@ class MusicManager(ttk.Frame):
             else:
                 rows = self.db.get_performances_by_ensemble(ens)  # newest first
                 note.config(text="See everything an ensemble has performed — handy for spotting "
-                                 "repertoire gaps. Tick 'Cohort view' to trace a group's history "
+                                 "repertoire gaps. Check 'Cohort view' to trace a group's history "
                                  "back through Entry → Intermediate → Advanced.")
 
             _insert(rows)
@@ -1789,7 +1789,7 @@ class _TidyMarkupDialog(ttk.Toplevel):
     The change is only ever "take the tags off, keep the words", but it is
     shown rather than simply done: this is text the teacher wrote or checked,
     and a screen full of edits made behind her back is how trust in a tool
-    goes.  Tick boxes are there so one odd piece can be left alone."""
+    goes.  Checkboxes are there so one odd piece can be left alone."""
 
     def __init__(self, parent, db, affected):
         super().__init__(master=parent)
@@ -1828,9 +1828,9 @@ class _TidyMarkupDialog(ttk.Toplevel):
 
         tools = ttk.Frame(self)
         tools.pack(fill=X, padx=16, pady=(6, 4))
-        ttk.Button(tools, text="Tick All", bootstyle=(SECONDARY, OUTLINE),
+        ttk.Button(tools, text="Check All", bootstyle=(SECONDARY, OUTLINE),
                    command=lambda: self._set_all(True)).pack(side=LEFT, padx=(0, 4))
-        ttk.Button(tools, text="Untick All", bootstyle=(SECONDARY, OUTLINE),
+        ttk.Button(tools, text="Uncheck All", bootstyle=(SECONDARY, OUTLINE),
                    command=lambda: self._set_all(False)).pack(side=LEFT, padx=4)
         self._count_lbl = ttk.Label(tools, text="", font=("Segoe UI", fs(9), "bold"))
         self._count_lbl.pack(side=RIGHT)
@@ -1859,7 +1859,7 @@ class _TidyMarkupDialog(ttk.Toplevel):
         btn.pack(fill=X, padx=16, pady=12)
         ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
                    command=self.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(btn, text="Tidy Ticked", bootstyle=SUCCESS,
+        ttk.Button(btn, text="Tidy Checked", bootstyle=SUCCESS,
                    command=self._apply).pack(side=RIGHT, padx=4)
         self._update_count()
 
@@ -1911,7 +1911,7 @@ class _TidyMarkupDialog(ttk.Toplevel):
     def _apply(self):
         ids = [mid for mid, v in self._vars.items() if v.get()]
         if not ids:
-            Messagebox.show_warning("Nothing is ticked to tidy.",
+            Messagebox.show_warning("Nothing is checked to tidy.",
                                     title="Nothing to Do", parent=self)
             return
         try:

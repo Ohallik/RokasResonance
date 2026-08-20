@@ -1126,7 +1126,7 @@ class _ConcertDialog(ttk.Toplevel):
         import class_registry as cr
         dmap = class_display_map(std)
         for i, e in enumerate(std):
-            # Tick by identity so an old concert saved as "Entry Band" still
+            # Check by identity so an old concert saved as "Entry Band" still
             # shows checked when the picker offers "MS Band (Entry)".
             bv = tk.BooleanVar(value=any(cr.same_class(e, c) for c in chosen))
             self._ens_vars[e] = bv
@@ -1515,7 +1515,7 @@ class _RepertoireDialog(ttk.Toplevel):
 # ═══════════════════════════════════════════ Honors marks ════════════════════
 
 class _HonorsDialog(ttk.Toplevel):
-    """Tick Honors (♪) and Jr. All-State (★) for students in this concert's
+    """Check Honors (♪) and Jr. All-State (★) for students in this concert's
     ensembles — the marks print next to their names on the program."""
 
 
@@ -1540,7 +1540,7 @@ class _HonorsDialog(ttk.Toplevel):
                   font=("Segoe UI", 12, "bold"),
                   bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(12, 2))
         ttk.Label(self, text=f"♪ = Honors   ★ = {_award} — marks "
-                             "appear next to names on every program until unticked.",
+                             "appear next to names on every program until unchecked.",
                   font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W, padx=16)
 
         wrap = ttk.Frame(self)

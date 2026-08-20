@@ -203,12 +203,12 @@ class InstrumentDialog(ttk.Toplevel):
         ttk.Entry(notes, textvariable=acc_var, width=70).pack(fill=X, pady=2)
 
         # Stick & mallet bags: instead of typing brands/serials for each piece,
-        # tick what's in the bag.  These populate the Accessories field above, and
-        # each ticked item becomes a Yes/No accountability line on the loan form.
+        # check what's in the bag.  These populate the Accessories field above, and
+        # each checked item becomes a Yes/No accountability line on the loan form.
         # (For a bag, set Category=Percussion, Instrument="Stick bag + sticks/
         # mallets", and Brand = the bag's own brand.)  Leave blank for everything
         # else.
-        ttk.Label(notes, text="Bag contents (stick & mallet bags) — tick what's "
+        ttk.Label(notes, text="Bag contents (stick & mallet bags) — check what's "
                   "in the bag:", font=("Segoe UI", 8),
                   bootstyle=SECONDARY).pack(anchor=W, pady=(6, 0))
         self._kit_vars = {}

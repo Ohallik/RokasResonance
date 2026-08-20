@@ -398,7 +398,7 @@ class FieldTripsView(ttk.Frame):
             lbl.bind("<Button-1>", lambda e, k=key: _cycle(k))
             lbl.bind("<Button-3>", lambda e, k=key: _set_na(k))
         # Derived item: staff emailed (auto from the teachers reminders)
-        # Not clickable, because it is not a note you keep: it ticks itself the
+        # Not clickable, because it is not a note you keep: it checks itself the
         # moment the staff email is marked sent in Reminders.  "(auto)" said
         # that to nobody.
         text, color = _item_label(
@@ -432,7 +432,7 @@ class FieldTripsView(ttk.Frame):
         dl = ft.deadlines(t, cal)
         if dl:
             overdue = [x for x in dl if x["overdue"]]
-            # Skip the ones already ticked off: "next deadline" meant the
+            # Skip the ones already checked off: "next deadline" meant the
             # next one CHRONOLOGICALLY, so a deadline she had just marked done
             # was still being offered as the thing to do next, with a date in
             # the past and "-0 school weeks away" beside it.
@@ -935,7 +935,7 @@ class _TripDialog(ttk.Toplevel):
         # Roka guesses this from the groups attending, and the guess is right
         # nearly always -- but it has nothing to go on before the roster is
         # imported, and it is what decides whether permission is FinalForms or
-        # paper.  So it is a box, pre-ticked from the guess, and the teacher's
+        # paper.  So it is a box, pre-checked from the guess, and the teacher's
         # answer is the one that counts.
         self._elem_var = tk.BooleanVar(value=bool(elementary))
         self._elem_touched = bool(seed.get("elementary") is not None
@@ -971,7 +971,7 @@ class _TripDialog(ttk.Toplevel):
         import class_registry as cr
         dmap = class_display_map(std)
         for i, g in enumerate(std):
-            # Tick by identity so an old trip saved as "Entry Band" still
+            # Check by identity so an old trip saved as "Entry Band" still
             # shows checked when the picker offers "MS Band (Entry)".
             bv = tk.BooleanVar(value=any(cr.same_class(g, c) for c in chosen))
             self._grp_vars[g] = bv
@@ -1077,7 +1077,7 @@ class _TripDialog(ttk.Toplevel):
         def _make_item(idx, key, label):
             # setdefault, not assignment: the checklist is rebuilt whenever the
             # trip type changes, and re-reading the seed each time threw away
-            # everything ticked since the window opened.
+            # everything checked since the window opened.
             self._check_states.setdefault(key, int(seed.get(key) or 0))
             btn = ttk.Button(cgrid)
 
@@ -1409,9 +1409,9 @@ class _DeadlinesDialog(ttk.Toplevel):
                                 font=("Segoe UI", 9, "bold"), padx=10, pady=6)
             box.pack(fill=X, pady=4)
             if d.get("done"):
-                tick = ft.DEADLINE_SATISFIED_BY.get(d["key"], "")
-                label = dict(ft.CHECKLIST_ITEMS).get(tick, "the checklist")
-                line = f"✓ done — “{label}” is ticked"
+                check = ft.DEADLINE_SATISFIED_BY.get(d["key"], "")
+                label = dict(ft.CHECKLIST_ITEMS).get(check, "the checklist")
+                line = f"✓ done — “{label}” is checked"
                 color = "#1a7a1a"
             elif d["due"]:
                 when = ct.fmt_date(d["due"].isoformat())
@@ -1931,7 +1931,7 @@ class _RosterFormsDialog(ttk.Toplevel):
 
         # No "everyone / nobody is going": the roster already arrives as
         # everyone in the chosen groups, which is the answer nine times in ten,
-        # and the tenth is one or two children -- untick them.
+        # and the tenth is one or two children -- uncheck them.
         bar = ttk.Frame(self)
         bar.pack(fill=X, padx=16, pady=(6, 2))
         ttk.Button(bar, text="\u2795 Add checklist item",
@@ -1994,7 +1994,7 @@ class _RosterFormsDialog(ttk.Toplevel):
         self.tree.heading("name", text="Student", anchor=W)
         # Fixed, not stretchy.  A stretching name column swallows every pixel
         # the window is wider than its contents, which put a hand's width of
-        # nothing between a student and their tick box.
+        # nothing between a student and their checkbox.
         self.tree.column("name", width=px(200), anchor=W, stretch=False)
         self.tree.heading("grade", text="Gr", anchor=CENTER)
         self.tree.column("grade", width=px(40), anchor=CENTER, stretch=False)
@@ -2019,10 +2019,10 @@ class _RosterFormsDialog(ttk.Toplevel):
                 btn.pack_forget()
         self._build_all_in()
 
-        why = ("Everyone in the groups on this trip. Untick anyone who is not "
+        why = ("Everyone in the groups on this trip. Uncheck anyone who is not "
                "going: they drop to the bottom and stop being chased.")
         if self.columns:
-            why += "  Tick each column as it comes back."
+            why += "  Check each column as it comes back."
         elif ft.uses_finalforms(self.trip, self._elementary):
             why += ("  No paper forms for this trip — FinalForms is the "
                     "permission record. Add a checklist item for anything else "
@@ -2086,8 +2086,8 @@ class _RosterFormsDialog(ttk.Toplevel):
         ttk.Label(win, text="Your checklist items",
                   font=("Segoe UI", 10, "bold")).pack(anchor=W, padx=16,
                                                       pady=(14, 2))
-        ttk.Label(win, text="Renaming keeps everything already ticked. "
-                            "Removing takes its ticks with it. The district's "
+        ttk.Label(win, text="Renaming keeps everything already checked. "
+                            "Removing takes its checkmarks with it. The district's "
                             "own forms are not listed: those are set by the "
                             "kind of trip.",
                   font=("Segoe UI", 8), foreground=muted_fg(), wraplength=400,
@@ -2127,7 +2127,7 @@ class _RosterFormsDialog(ttk.Toplevel):
             key, label, idx = got
             new = _ask_text(win, "Rename checklist item",
                             "What should this column be called?",
-                            "Everything already ticked stays ticked.",
+                            "Everything already checked stays checked.",
                             initial=label, ok="Rename")
             if not new or new == label:
                 return
@@ -2145,7 +2145,7 @@ class _RosterFormsDialog(ttk.Toplevel):
                 return
             key, label, idx = got
             if Messagebox.yesno(
-                    f"Remove “{label}” and everything ticked in it?\n\nThe "
+                    f"Remove “{label}” and everything checked in it?\n\nThe "
                     f"students and their other columns are not affected.",
                     title="Remove column", parent=win) != "Yes":
                 return
@@ -2175,7 +2175,7 @@ class _RosterFormsDialog(ttk.Toplevel):
         """Everyone going, then everyone not.
 
         A student who has said they are not coming still has to be ON the list
-        -- untick them and they vanish is alarming, and they may change their
+        -- uncheck them and they vanish is alarming, and they may change their
         mind -- but they should not sit between the students still being
         chased, where an absent-minded click marks a form for somebody who is
         not going.  So they drop to the bottom, greyed, with nothing tickable
@@ -2265,7 +2265,7 @@ class _RosterFormsDialog(ttk.Toplevel):
         self.tree.see(iid)
 
     def _mark_all(self, form):
-        """One tick for a column the whole class handed in together, which is
+        """One check for a column the whole class handed in together, which is
         what happens when they are collected in the room."""
         for stu in self._students:
             if not self._going.get(stu["id"]):

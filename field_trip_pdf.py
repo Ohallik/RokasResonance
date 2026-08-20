@@ -151,7 +151,7 @@ def _num(v):
 
 
 def _checkbox(checked=False):
-    """A small square, ticked or not.  Drawn rather than typed: the standard
+    """A small square, checked or not.  Drawn rather than typed: the standard
     PDF fonts have no ballot-box glyph, so a literal box character prints as
     nothing or as a black blob depending on the reader."""
     mark = Paragraph('<font size=7><b>X</b></font>',
@@ -204,7 +204,7 @@ def _grid(rows, s, label_w=1.55, value_w=1.95):
 
 def _sub_row(trip, s, note=True, note_w=1.95):
     """Substitute teacher – check one: the district's three rates, with the
-    one recorded in Roka ticked.
+    one recorded in Roka checked.
 
     The day form carries the rate footnote on the same line; the overnight
     form puts it on the line below, beside the Total.  Same row builder, two
@@ -215,7 +215,7 @@ def _sub_row(trip, s, note=True, note_w=1.95):
     for key, label, _amt in ft.SUB_RATES:
         # Box BEFORE its rate, not after.  The district's own form puts it
         # after -- "$212/4 hrs ☐ $266/5 hrs ☐" -- and at this width that reads
-        # as though the tick belongs to the NEXT rate: a $212 substitute
+        # as though the check belongs to the NEXT rate: a $212 substitute
         # printed with the box beside $266/5 hrs, on a form somebody signs.
         # Same three rates, same order, unambiguous.
         cells.append(_checkbox(chosen == key))
@@ -230,7 +230,7 @@ def _sub_row(trip, s, note=True, note_w=1.95):
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 1),
         # Tight after a box, roomy after its label: that spacing is what makes
-        # each tick visibly belong to the rate it sits beside.
+        # each check visibly belong to the rate it sits beside.
         ("RIGHTPADDING", (0, 0), (0, -1), 3),
         ("RIGHTPADDING", (1, 0), (1, -1), 10),
         ("RIGHTPADDING", (3, 0), (3, -1), 10),
@@ -641,7 +641,7 @@ def build_permission_forms(trip, students, path, teacher_name="",
     when = fmt_date(trip.get("depart_date")) or ""
     back = fmt_date(trip.get("return_date")) or ""
     dates = when if (not back or back == when) else f"{when} to {back}"
-    ticked = _transport_tick(trip.get("travel_method"))
+    checked = _transport_tick(trip.get("travel_method"))
 
     doc = SimpleDocTemplate(path, pagesize=letter,
                             leftMargin=0.75 * inch, rightMargin=0.75 * inch,
@@ -695,12 +695,12 @@ def build_permission_forms(trip, students, path, teacher_name="",
             "chaperones. They have my permission to do so.", s["val"]))
         flow.append(Spacer(1, 8))
 
-        # Transportation, ticked from the planner where it can be.
+        # Transportation, checked from the planner where it can be.
         flow.append(Paragraph("TRANSPORTATION BEING PROVIDED BY "
                               "(Check all that apply)", s["q"]))
         cells, widths = [], []
         for label in _TRANSPORT_TICKS:
-            cells.append(_checkbox(ticked == label))
+            cells.append(_checkbox(checked == label))
             widths.append(0.20 * inch)
             cells.append(Paragraph(label, s["lbl"]))
             widths.append(1.05 * inch)

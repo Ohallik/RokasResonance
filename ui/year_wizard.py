@@ -379,7 +379,7 @@ class NewSchoolYearWizard(ttk.Toplevel):
             # No checkbox, and no uniforms.  Every 5th grader leaves for middle
             # school at the end of every year, without exception, so archiving
             # them is not a decision to put to anybody -- and an itinerant has
-            # no uniform cupboard to roll forward.
+            # no uniform closet to roll forward.
             self._archive_var = tk.BooleanVar(value=True)
             self._release_uniforms_var = tk.BooleanVar(value=False)
             nstep("Last year's children",

@@ -622,7 +622,7 @@ class MainMenu(ttk.Frame):
         ).grid(row=row, column=0, columnspan=2, sticky=W, pady=(10, 2))
 
         # Sheet Music and Uniforms are not here at all: an itinerant has no
-        # uniform cupboard, and the music library is a secondary idea.  Budget
+        # uniform closet, and the music library is a secondary idea.  Budget
         # and Teacher Tools are ordinary buttons here now: the class pickers
         # offer each school's own sections, the concert planner has had its
         # gym assumptions taken out, and an itinerant runs concerts, seating

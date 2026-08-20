@@ -75,7 +75,7 @@ def import_students(db, csv_source, ensemble_label, period, school_year,
     existing = {s["student_id"]: s for s in db.get_all_students(school_year)
                 if s["student_id"]}
     # Where a school's choir IS the year group, every child imported joins it.
-    # Ticking two hundred boxes by hand is not a reasonable alternative.
+    # Checking two hundred boxes by hand is not a reasonable alternative.
     choir_label = site_name = None
     if site_id:
         site = db.get_site(site_id)
@@ -288,7 +288,7 @@ def import_inventory(db, cuttime_path=None, charms_inv_path=None,
     repair history.  Returns a summary of what happened.
 
     ``site_id`` puts the instruments at one school, for a 5th grade teacher
-    bringing an elementary cupboard across in their first year."""
+    bringing an elementary inventory across in their first year."""
     summary = {"added": 0, "enriched": 0, "charms_only_added": 0,
                "repairs": 0, "loans": 0, "loans_unmatched": 0}
     pending_loans = []                    # (instrument_id, checkout dict)
