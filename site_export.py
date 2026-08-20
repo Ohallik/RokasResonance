@@ -127,12 +127,8 @@ def export_handoff(db, site, out_path):
 
     site = dict(site)
     sid = site["id"]
-    # Only the school's OWN instruments.  A school's list now also shows what
-    # it has borrowed from another school, and handing those on would give
-    # next year's teacher somebody else's clarinet.
     instruments = [dict(r) for r in db.get_instruments_with_status(
-        include_inactive=True, site_id=sid)
-        if dict(r).get("site_id") == sid]
+        include_inactive=True, site_id=sid)]
     checkouts = [dict(r) for r in db.get_checkouts_for_site(sid)]
     repairs = [dict(r) for r in db.get_all_repairs(site_id=sid)]
 
