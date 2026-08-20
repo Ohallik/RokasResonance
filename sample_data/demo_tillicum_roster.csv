@@ -1,0 +1,13 @@
+﻿Student ID,Student Name,Grd,Gen,Birth Date,Address,CityStateZip,Email,Parent Name,Relation,ParentEmail,Phone,Orderby,Communication Home Language,Section,Teacher
+2320601,"Ahmadi, Yusuf",07,M,03/25/2014,16230 SE 8th St,"Bellevue, WA 98008",yusufahma@student.example.com,"Ahmadi, Leila",Mother,leila.ahmadi@example.com,425-555-0510,1,Farsi,MSBAND1,"Gillespie, P"
+2320601,"Ahmadi, Yusuf",07,M,03/25/2014,16230 SE 8th St,"Bellevue, WA 98008",yusufahma@student.example.com,"Ahmadi, Reza",Father,reza.ahmadi@example.com,425-555-0511,2,Farsi,MSBAND1,"Gillespie, P"
+2320617,"Boone, Harper",08,F,10/09/2013,1420 156th Ave SE,"Bellevue, WA 98008",harperboon@student.example.com,"Boone, Trisha",Mother,trisha.boone@example.com,425-555-0523,1,English,MSBAND1,"Gillespie, P"
+2320622,"Fitzgerald, Declan",06,M,06/02/2015,15905 SE 14th St,"Bellevue, WA 98008",declanfitz@student.example.com,"Fitzgerald, Nora",Mother,nora.fitzgerald@example.com,425-555-0534,1,English,MSBAND1,"Gillespie, P"
+2320622,"Fitzgerald, Declan",06,M,06/02/2015,15905 SE 14th St,"Bellevue, WA 98008",declanfitz@student.example.com,"Fitzgerald, Sean",Father,sean.fitzgerald@example.com,425-555-0535,2,English,MSBAND1,"Gillespie, P"
+2320638,"Guo, Lian",07,F,08/17/2014,1650 161st Ave SE,"Bellevue, WA 98008",lianguo@student.example.com,"Guo, Mei",Mother,mei.guo@example.com,425-555-0546,1,Mandarin,MSBAND1,"Gillespie, P"
+2320644,"Novak, Petra",08,F,12/28/2012,14812 SE 12th Pl,"Bellevue, WA 98007",petranova@student.example.com,"Novak, Ivana",Mother,ivana.novak@example.com,425-555-0557,1,Czech,MSBAND1,"Gillespie, P"
+2320644,"Novak, Petra",08,F,12/28/2012,14812 SE 12th Pl,"Bellevue, WA 98007",petranova@student.example.com,"Novak, Tomas",Father,tomas.novak@example.com,425-555-0558,2,Czech,MSBAND1,"Gillespie, P"
+2320659,"Oyelaran, Tunde",06,M,04/06/2015,16104 SE 6th St,"Bellevue, WA 98008",tundeoyel@student.example.com,"Oyelaran, Folake",Mother,folake.oyelaran@example.com,425-555-0561,1,English,MSBAND1,"Gillespie, P"
+2320665,"Reyes, Camila",07,F,09/19/2014,1530 148th Ave SE,"Bellevue, WA 98007",camilareye@student.example.com,"Reyes, Lucia",Mother,lucia.reyes@example.com,425-555-0572,1,Spanish,MSBAND1,"Gillespie, P"
+2320665,"Reyes, Camila",07,F,09/19/2014,1530 148th Ave SE,"Bellevue, WA 98007",camilareye@student.example.com,"Reyes, Miguel",Father,miguel.reyes@example.com,425-555-0573,2,Spanish,MSBAND1,"Gillespie, P"
+2320671,"Thorsen, Magnus",08,M,02/13/2013,16420 SE 10th St,"Bellevue, WA 98008",magnusthor@student.example.com,"Thorsen, Ingrid",Mother,ingrid.thorsen@example.com,425-555-0584,1,English,MSBAND1,"Gillespie, P"

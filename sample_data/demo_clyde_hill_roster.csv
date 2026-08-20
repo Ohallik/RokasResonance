@@ -1,0 +1,12 @@
+﻿Student ID,Student Name,Grd,Gen,Birth Date,Address,CityStateZip,Email,Parent Name,Relation,ParentEmail,Phone,Orderby,Communication Home Language,Section,Teacher
+1770401,"Barros, Ines",05,F,02/26/2016,9420 NE 24th St,"Clyde Hill, WA 98004",inesbarr@student.example.com,"Barros, Teresa",Mother,teresa.barros@example.com,425-555-0710,1,Portuguese,5BAND1,"Rampersad, R"
+1770401,"Barros, Ines",05,F,02/26/2016,9420 NE 24th St,"Clyde Hill, WA 98004",inesbarr@student.example.com,"Barros, Joao",Father,joao.barros@example.com,425-555-0711,2,Portuguese,5BAND1,"Rampersad, R"
+1770416,"Fairbanks, Miles",05,M,09/14/2015,2810 92nd Ave NE,"Clyde Hill, WA 98004",milesfair@student.example.com,"Fairbanks, Deborah",Mother,deborah.fairbanks@example.com,425-555-0722,1,English,5BAND1,"Rampersad, R"
+1770423,"Hollingsworth, Georgia",05,F,12/02/2015,9705 NE 20th St,"Clyde Hill, WA 98004",georgiaholl@student.example.com,"Hollingsworth, Meredith",Mother,meredith.hollingsworth@example.com,425-555-0733,1,English,5BAND1,"Rampersad, R"
+1770423,"Hollingsworth, Georgia",05,F,12/02/2015,9705 NE 20th St,"Clyde Hill, WA 98004",georgiaholl@student.example.com,"Hollingsworth, Charles",Father,charles.hollingsworth@example.com,425-555-0734,2,English,5BAND1,"Rampersad, R"
+1770438,"Kapoor, Arjun",05,M,04/19/2016,2440 96th Ave NE,"Clyde Hill, WA 98004",arjunkapo@student.example.com,"Kapoor, Neha",Mother,neha.kapoor@example.com,425-555-0745,1,Hindi,5BAND1,"Rampersad, R"
+1770438,"Kapoor, Arjun",05,M,04/19/2016,2440 96th Ave NE,"Clyde Hill, WA 98004",arjunkapo@student.example.com,"Kapoor, Rohan",Father,rohan.kapoor@example.com,425-555-0746,2,Hindi,5BAND1,"Rampersad, R"
+1770445,"Lindqvist, Elsa",05,F,07/07/2016,9130 NE 26th Pl,"Clyde Hill, WA 98004",elsalind@student.example.com,"Lindqvist, Marta",Mother,marta.lindqvist@example.com,425-555-0757,1,Swedish,5BAND1,"Rampersad, R"
+1770452,"Sandoval, Emiliano",05,M,11/23/2015,2615 94th Ave NE,"Clyde Hill, WA 98004",emilianosand@student.example.com,"Sandoval, Guadalupe",Mother,guadalupe.sandoval@example.com,425-555-0768,1,Spanish,5BAND1,"Rampersad, R"
+1770452,"Sandoval, Emiliano",05,M,11/23/2015,2615 94th Ave NE,"Clyde Hill, WA 98004",emilianosand@student.example.com,"Sandoval, Hector",Father,hector.sandoval@example.com,425-555-0769,2,Spanish,5BAND1,"Rampersad, R"
+1770467,"Yamamoto, Sora",05,F,01/08/2016,9840 NE 18th St,"Clyde Hill, WA 98004",sorayama@student.example.com,"Yamamoto, Keiko",Mother,keiko.yamamoto@example.com,425-555-0779,1,Japanese,5BAND1,"Rampersad, R"
