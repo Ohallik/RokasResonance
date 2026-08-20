@@ -197,6 +197,12 @@ class InventoryManager(ttk.Frame):
                    command=self._show_checkouts).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="🔧 Repair", bootstyle=SECONDARY,
                    command=self._open_repair_hub).pack(side=LEFT, padx=2, pady=6)
+        # Importing belonged only to a link at the bottom of the hub, which
+        # is a long way from the screen you are looking at when you realize
+        # the inventory is empty.
+        ttk.Button(toolbar, text="📥 Import ▾", bootstyle=SECONDARY,
+                   command=self._open_imports_menu).pack(side=LEFT, padx=2,
+                                                         pady=6)
         ttk.Button(toolbar, text="📊 Exports ▾", bootstyle=SECONDARY,
                    command=self._open_exports_menu).pack(side=LEFT, padx=2, pady=6)
 
@@ -1142,6 +1148,86 @@ class InventoryManager(ttk.Frame):
         self.refresh()
         if self._selected_id:
             self._load_detail(self._selected_id)
+
+    def _open_imports_menu(self):
+        """Bring instruments in, into THIS window's school.
+
+        An elementary window has its own two buttons in the 5th grade header,
+        so this offers what a secondary screen needs: the full wizard, or an
+        inventory file on its own.
+        """
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="📦  Import Data (instruments, rosters, music)…",
+                         command=self._open_import_wizard)
+        menu.add_command(label="🗄  Instrument List (CutTime, Charms, CSV)…",
+                         command=self._import_instrument_list)
+        try:
+            menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
+        finally:
+            menu.grab_release()
+
+    def _open_import_wizard(self):
+        from ui.import_wizard import ImportWizard
+        ImportWizard(self.winfo_toplevel(), self.db, self.base_dir,
+                     self.db.current_school_year(), site_id=self.site_id)
+        self.refresh()
+
+    def _import_instrument_list(self):
+        """One inventory file, straight into this window's school."""
+        from tkinter import filedialog
+        import import_service
+        where = self._site_name() or "this school"
+        path = filedialog.askopenfilename(
+            parent=self.winfo_toplevel(),
+            title=f"Instrument list for {where}",
+            filetypes=[("Spreadsheet or CSV", "*.xlsx *.xls *.csv"),
+                       ("All files", "*.*")])
+        if not path:
+            return
+        kind = import_service.detect_inventory_format(path)
+        if kind == "charms_xlsx":
+            Messagebox.show_error(
+                "That looks like a Charms inventory saved as a spreadsheet."
+                "\n\nExport it from Charms as a CSV and try again.",
+                title="Could not import", parent=self.winfo_toplevel())
+            return
+        if kind is None:
+            Messagebox.show_error(
+                "That file is not an instrument list Roka recognizes."
+                "\n\nCutTime exports a spreadsheet (.xlsx); Charms exports "
+                "a CSV.",
+                title="Could not import", parent=self.winfo_toplevel())
+            return
+        try:
+            res = import_service.import_inventory(
+                self.db,
+                cuttime_path=path if kind == "cuttime" else None,
+                charms_inv_path=path if kind == "charms" else None,
+                charms_repair_path=path if kind == "charms_repairs" else None,
+                site_id=self.site_id)
+        except Exception as e:
+            Messagebox.show_error(f"That file could not be read.\n\n{e}",
+                                  title="Could not import",
+                                  parent=self.winfo_toplevel())
+            return
+        added = res.get("added", 0) + res.get("charms_only_added", 0)
+        Messagebox.show_info(
+            f"{added} instrument(s) added to {where}."
+            + (f"\n\n{res['enriched']} existing record(s) were filled in with "
+               f"purchase details." if res.get("enriched") else "")
+            + (f"\n\n{res['repairs']} repair record(s) imported."
+               if res.get("repairs") else ""),
+            title="Inventory imported", parent=self.winfo_toplevel())
+        self.refresh()
+
+    def _site_name(self):
+        if not self.site_id:
+            return ""
+        try:
+            return (dict(self.db.get_site(self.site_id) or {}).get("name")
+                    or "")
+        except Exception:
+            return ""
 
     def _open_exports_menu(self):
         menu = tk.Menu(self, tearoff=0)

@@ -23,12 +23,25 @@ from ui.ensembles import PERIOD_OPTIONS
 
 
 class ImportWizard(ttk.Toplevel):
-    def __init__(self, parent, main_db, base_dir, school_year):
+    def __init__(self, parent, main_db, base_dir, school_year, site_id=None):
         super().__init__(master=parent)
         self.db = main_db
         self.base_dir = base_dir
         self.school_year = school_year
-        self.title("Import Data")
+        # The school everything in this run belongs to.  Elementary rows carry
+        # their own school in the label and override this; everything else --
+        # a secondary roster, every instrument -- used to arrive stamped with
+        # nothing, which put Interlake's import into no school at all.
+        self.site_id = site_id
+        self._site_name = ""
+        if site_id:
+            try:
+                self._site_name = (dict(main_db.get_site(site_id) or {})
+                                   .get("name") or "")
+            except Exception:
+                pass
+        self.title("Import Data"
+                   + (f" — {self._site_name}" if self._site_name else ""))
         self.grab_set()
         self.lift()
 
@@ -403,7 +416,8 @@ class ImportWizard(ttk.Toplevel):
             if ct or ci or cr:
                 s = isvc.import_inventory(self.db, cuttime_path=ct or None,
                                           charms_inv_path=ci or None,
-                                          charms_repair_path=cr or None)
+                                          charms_repair_path=cr or None,
+                                          site_id=self.site_id)
                 lines.append("Inventory:")
                 lines.append(f"  • {s['added']} instruments added"
                              + (f", {s['charms_only_added']} from Charms"
@@ -466,7 +480,8 @@ class ImportWizard(ttk.Toplevel):
                 per = "" if per == "(all)" else per
                 if r.get("section_map"):
                     res = isvc.import_students_sectioned(
-                        self.db, p, r["section_map"], per, self.school_year)
+                        self.db, p, r["section_map"], per, self.school_year,
+                        site_id=self.site_id)
                     by = ", ".join(f"{k}: {v}" for k, v in
                                    (res.get("per_class") or {}).items()) or "none"
                     lines.append(f"{os.path.basename(p)}: {res['added']} added, "
@@ -474,7 +489,8 @@ class ImportWizard(ttk.Toplevel):
                                  f"→ {by}")
                 else:
                     res = isvc.import_students(self.db, p, r["cls"].get(), per,
-                                               self.school_year)
+                                               self.school_year,
+                                               site_id=self.site_id)
                     lines.append(f"{r['cls'].get()} (P{per or 'all'}): "
                                  f"{res['added']} added, {res['updated']} merged "
                                  f"(of {res['total']})")

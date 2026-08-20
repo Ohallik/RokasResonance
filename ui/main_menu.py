@@ -1295,7 +1295,9 @@ class MainMenu(ttk.Frame):
             year = current_school_year()
         except Exception:
             year = None
-        ImportWizard(self.winfo_toplevel(), self.db, self.base_dir, year)
+        site = self._active_site()
+        ImportWizard(self.winfo_toplevel(), self.db, self.base_dir, year,
+                     site_id=site["id"] if site else None)
         self._refresh_stats()
 
     def after_onboarding(self):
