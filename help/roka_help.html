@@ -259,8 +259,6 @@
       time. <a href="#uniforms">More</a></td></tr>
     <tr><td>🎓 Manage Students</td><td>Your roster for a school year.
       <a href="#students">More</a></td></tr>
-    <tr><td>📦 New School Year</td><td>Rolls everybody forward into the next
-      year. <a href="#newyear">More</a></td></tr>
     <tr><td>💵 Budget</td><td>Money in, money out, and student fees.
       <a href="#budget">More</a></td></tr>
     <tr><td>🧰 Teacher Tools</td><td>Seating, percussion, concerts, field trips
@@ -303,6 +301,8 @@
       it, like your Downloads folder.</li>
     <li>In Roka, use the import screen, pick the file, and tell it which class
       and period the file belongs to.</li>
+    <li>Roka works out for itself whether a file came from CutTime or from
+      Charms, so it does not ask you.</li>
   </ol>
 
   <div class="note"><p>Synergy puts one row per parent or guardian, so a student
@@ -378,12 +378,17 @@
   <ol class="steps">
     <li>Select the instrument.</li>
     <li>Press <span class="btn-ref">📤 Check Out</span>.</li>
-    <li>Pick the student and check the return date.</li>
+    <li>Pick the student from the list and check the return date. The list holds
+    the children at that instrument's own school, so a Medina cello cannot go
+    out to a child at Clyde Hill by mistake. Start typing to narrow it.</li>
     <li>Leave the rental fee ticked unless this student has already paid.</li>
   </ol>
   <p>Checking in is the same, with <span class="btn-ref">📥 Check In</span>.</p>
 
   <h3>The rental fee</h3>
+  <div class="note"><p>Elementary loans carry no fee, so at a 5th grade school
+  there is nothing to pick, no fee is raised, and the loan form that prints
+  says no charge will be made rather than quoting 75 dollars.</p></div>
   <p>Checking an instrument out adds the school year rental fee (75 dollars
   unless you have changed it) to that student's account, one fee per instrument.
   A student who takes home two instruments owes two fees. You can see, change,
@@ -465,6 +470,9 @@
 <!-- ══════════════════════════════════════════════════════════ -->
 <section id="carryover">
   <h2>Carry over instruments to a new year</h2>
+  <div class="note"><p>This is for middle and high school. A 5th grader does
+  not do 5th grade again, so there is no last year to carry forward and the
+  button is not on an elementary school's screen at all.</p></div>
   <p class="lede">Most students keep the instrument they had, so the new year
   starts from last year's list instead of an empty screen.</p>
 
@@ -632,16 +640,29 @@
   Import one class at a time and tell it the class and period. It also has an
   option to update instruments from another school's CSV, for when a feeder
   school sends you their outgoing students.</p>
+  <p>Roka reads the columns by their headings, so it does not matter which
+  fields you chose to include in the export or what order they came out in. At
+  a 5th grade school you are not asked for a class period, because there are
+  none.</p>
   <p><span class="btn-ref">➕ Add Student</span> types one in by hand.</p>
 
   <h3>Working with the list</h3>
   <ul>
     <li><span class="btn-ref">🏷️ Assign</span> puts several selected students
-      into an ensemble or class period at once.</li>
+      into an ensemble or class period at once. For more than five it shows
+      you what it is about to do, to how many, and names the first few. Ticks
+      clear themselves once an assignment lands, so the violins you did a
+      moment ago cannot come along with the violas.</li>
     <li><span class="btn-ref">✉️ Email List</span> builds an address list for
       the students you have selected, ready to paste into Outlook.</li>
+    <li><span class="btn-ref">🗑️ Delete</span> removes everyone you have
+      ticked, not just the row you have highlighted. It asks first, saying how
+      many and naming the first few. A student still holding an instrument is
+      kept back and named, so one unreturned trumpet does not stop you
+      clearing a whole roster.</li>
     <li><span class="btn-ref">🗂️ Inactive Students</span> shows students you have
-      archived, and brings any of them back.</li>
+      archived, and brings any of them back. Nothing you delete is really
+      gone, it moves here.</li>
     <li>The <b>Instrument History</b> tab shows everything a student has ever had
       out.</li>
   </ul>
@@ -679,6 +700,12 @@
   schools appear on the main screen as buttons instead, and Sheet Music and
   Uniforms are hidden.</p>
 
+  <div class="note"><p><b>What an elementary school does not have.</b> No
+  class periods, only sections. No rental fee, on the loan or on the form that
+  prints. No carry over, because a 5th grader does not do 5th grade twice.
+  Roka leaves all three off those screens rather than asking you to ignore
+  them.</p></div>
+
   <h3>Inside a school's tab</h3>
   <ul>
     <li><b>Instruments</b> and <b>Students</b> work exactly as they do for a
@@ -687,9 +714,11 @@
       loads the file the previous teacher saved when they handed the school on.
       It is safe to run twice: anything already there is left alone.</li>
     <li><span class="btn-ref">🗄 Import From CutTime / Charms</span> is for your
-      first year, bringing a cupboard across from whatever came before.</li>
+      first year, bringing a cupboard across from whatever came before. Roka
+      works out which of the two a file came from, so it does not ask.</li>
     <li><span class="btn-ref">🎓 Import Class List (CSV)</span> loads this year's
-      children. Import each section separately.</li>
+      children. Import each section separately. They arrive belonging to this
+      school, which is what lets you lend them its instruments.</li>
     <li><span class="btn-ref">📦 Hand Over This School</span> saves the
       inventory, checkout history and repair history in one file for whoever
       teaches here next.</li>
@@ -728,8 +757,10 @@
 <!-- ══════════════════════════════════════════════════════════ -->
 <section id="newyear">
   <h2>Starting a new school year</h2>
-  <p class="lede"><span class="btn-ref">📦 New School Year…</span> on the main
-  screen. Do this once, in the autumn.</p>
+  <p class="lede"><span class="btn-ref">🧰 Teacher Tools</span> ▸
+  <span class="btn-ref">📦 New School Year…</span>. Do this once, in the
+  autumn. It used to sit on the main screen, where it was too easy to press by
+  accident.</p>
 
   <ol class="steps">
     <li><b>Choose the new year.</b> It suggests the next one.</li>
@@ -748,7 +779,7 @@
   <p>Afterwards, go to <a href="#carryover">Carry Over</a> on the Equipment
   screen to hand instruments back out.</p>
 
-  <div class="note"><p>Honours and Junior All State marks reset every year,
+  <div class="note"><p>Honors and Junior All State marks reset every year,
   because they are earned again each year.</p></div>
 
   <div class="note"><p>A student who is a year ahead of their classmates, for
@@ -935,7 +966,7 @@
   </ol>
 
   <ul>
-    <li><span class="btn-ref">🎖 Honors</span> records Honours and Junior All
+    <li><span class="btn-ref">🎖 Honors</span> records Honors and Junior All
       State students for the program.</li>
     <li><span class="btn-ref">📊 Export Roster (Excel)…</span> gives the office a
       simple who is out sheet for a school day performance.</li>
@@ -949,26 +980,96 @@
 <!-- ══════════════════════════════════════════════════════════ -->
 <section id="fieldtrips">
   <h2>Field trips</h2>
-  <p class="lede">Laid out the way the district application asks for it.</p>
+  <p class="lede">Everything BSD procedure 2320P asks for, in the order it
+  asks for it.</p>
 
+  <h3>Setting one up</h3>
   <ul>
-    <li><span class="btn-ref">➕ New Field Trip</span>: who, when, where, how, and
-      what it costs.</li>
-    <li><span class="btn-ref">👥 Roster &amp; Costs</span>: who is going, who has
-      opted out, and the cost per student worked out for you.</li>
+    <li><span class="btn-ref">➕ New Field Trip</span>: who is going, when,
+      where, how you are travelling, and what it costs. Say whether it is a
+      day trip or an overnight one, because the district asks for different
+      things for each.</li>
+    <li>Tick <b>this is an elementary school trip</b> for a 5th grade group.
+      Middle and high school day trips use FinalForms instead of paper
+      permission slips, elementary trips do not.</li>
+    <li><span class="btn-ref">📋 Copy From Previous…</span> starts from a trip
+      you have already run and brings every answer with it, including your own
+      checklist columns.</li>
+  </ul>
+
+  <h3>The district application</h3>
+  <p><span class="btn-ref">📄 Application</span> opens the whole district form
+  in one window. Fill it in, save it, and come back to it as often as you like.
+  <b>Generate PDF of completed form</b> prints it ready to sign.</p>
+  <ul>
+    <li>The number of students participating is counted from your roster.</li>
+    <li>The substitute cost is the district rate you tick, not a figure you
+      work out.</li>
+    <li><b>Total Trip Cost</b> adds up whatever you have entered as figures.
+      Type <b>N/A</b> where there is nothing to pay and it counts as zero.
+      Type <b>TBD</b> where you do not know yet and the total says what it is
+      waiting on, for example <i>266.00 plus transportation</i>. Until at
+      least one line holds a figure the total stays empty rather than
+      guessing.</li>
+  </ul>
+
+  <h3>Deadlines and dates</h3>
+  <ul>
+    <li>Every deadline is counted in <b>school weeks</b>, the way the district
+      counts them, so winter break does not eat your notice period.</li>
+    <li>An overnight trip needs school board approval. Pick the board meeting
+      you are aiming for and the tick box shows the date, for example
+      <i>School board approval (expected Sept 17)</i>. Only regular meetings
+      are offered, and the packet is due to your principal four school weeks
+      before it.</li>
+    <li>Day trips do not go to the board, whatever the age group.</li>
+    <li>Roka warns about <b>blackout dates</b>: the day before a break, the
+      first week of a semester, the week before exams, and AP testing. A trip
+      in spring break itself is not flagged, since those are usually the good
+      ones.</li>
+    <li>Overdue deadlines show in red, ones coming up soon in amber.</li>
+  </ul>
+
+  <h3>Who is going, and what they have handed in</h3>
+  <ul>
+    <li><span class="btn-ref">👥 Roster &amp; Forms</span>: tick who is going,
+      and tick off each form as it comes back. Untick <b>Going</b> for a child
+      who is staying behind and they drop to the bottom of the list, greyed
+      out, with nothing more chased up. Tick them back on if they change their
+      mind.</li>
+    <li>Overnight trips track the paper <b>Parent Authorization</b> form.
+      Elementary day trips track the paper permission slip. Middle and high
+      school day trips need neither, because FinalForms covers them.</li>
+    <li><span class="btn-ref">Add Checklist Item</span> makes a column of your
+      own, for an interest survey, a deposit, a uniform, anything. Rename or
+      delete it later without losing the ticks.</li>
+    <li>The status line counts what is still outstanding, both the district
+      forms and your own columns.</li>
+  </ul>
+
+  <h3>Printing and sending</h3>
+  <ul>
+    <li><b>Permission forms</b> prints one PDF with a page per student, the
+      school portion already filled in.</li>
+    <li><b>Student list</b> exports to Excel with the header frozen and
+      filters on, for the office or the nurse.</li>
     <li><span class="btn-ref">🧑‍🤝‍🧑 Chaperones</span>: parent chaperones with
       contacts filled in from your student data, and the one adult per ten
       students count done for you.
-      <span class="btn-ref">⟳ Fill Missing Contacts</span> chases up the gaps.</li>
-    <li><span class="btn-ref">✉ Reminders</span>: emails for families, chaperones
-      and the teachers whose classes lose students that day, opened straight in
-      Outlook. See <a href="#emails">Sending emails</a>.</li>
-    <li><span class="btn-ref">📋 Copy From Previous…</span> starts from a trip you
-      have already run.</li>
+      <span class="btn-ref">⟳ Fill Missing Contacts</span> chases up the
+      gaps.</li>
+    <li><span class="btn-ref">✉ Reminders</span>: emails for families,
+      chaperones and the teachers whose classes lose students that day, opened
+      straight in Outlook. See <a href="#emails">Sending emails</a>. The staff
+      email carries the student list as a table.</li>
   </ul>
 
-  <p>Trip costs can be pushed into the <a href="#budget">Budget</a> so the money
-  side stays in one place.</p>
+  <div class="tip"><p>Use the arrow to the left of a trip's date to fold it
+  away. Editing a trip leaves you where you were in the list rather than
+  jumping you back to the top.</p></div>
+
+  <p>Trip costs can be pushed into the <a href="#budget">Budget</a> so the
+  money side stays in one place.</p>
 
   <a class="top" href="#fieldtrips">Back to top</a>
 </section>
