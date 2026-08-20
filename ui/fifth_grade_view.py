@@ -110,12 +110,12 @@ class FifthGradeView(ttk.Frame):
                    bootstyle=(SUCCESS, OUTLINE),
                    command=lambda s=site: self._export(s, "handoff")
                    ).pack(side=RIGHT, padx=(6, 0))
-        ttk.Button(bar, text="🔧 Needs Repair", bootstyle=(WARNING, OUTLINE),
-                   command=lambda s=site: self._export(s, "needs_repair")
-                   ).pack(side=RIGHT, padx=6)
-        ttk.Button(bar, text="Repair History", bootstyle=(SECONDARY, OUTLINE),
-                   command=lambda s=site: self._export(s, "repair_history")
-                   ).pack(side=RIGHT)
+        # Needs Repair and Repair History used to sit here as well, and both
+        # opened a Save As box.  A button called "Needs Repair" should show
+        # the instruments that need repair -- the Repair button below does
+        # that -- and both exports are already on the Exports menu beside it.
+        # Two buttons that promise a list and hand over a file dialog are
+        # worse than no buttons.
 
         # Start-of-year jobs, in the order a teacher actually meets them:
         # bring the inventory across (once), then load this year's children

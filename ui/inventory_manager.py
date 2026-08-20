@@ -179,6 +179,11 @@ class InventoryManager(ttk.Frame):
                    command=self._open_checkin_chooser).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="📄 Generate Form", bootstyle=PRIMARY,
                    command=self._generate_form).pack(side=LEFT, padx=2, pady=6)
+        # Lending a spare to the school down the road is ordinary enough to
+        # deserve a button.  It was only ever on a right-click menu, which is
+        # why an itinerant covering six schools never found it.
+        ttk.Button(toolbar, text="🏫 Loan Out", bootstyle=(INFO, OUTLINE),
+                   command=self._loan_selected).pack(side=LEFT, padx=2, pady=6)
         if not self._elementary:
             ttk.Button(toolbar, text="🔁 Carry Over…",
                        bootstyle=(SUCCESS, OUTLINE),
@@ -988,6 +993,16 @@ class InventoryManager(ttk.Frame):
         self.wait_window(dlg)
         self.refresh()
         self._load_detail(iid)
+
+    def _loan_selected(self):
+        """Loan the highlighted instrument, or say which one to pick."""
+        iid = self._selected_id
+        if not iid:
+            Messagebox.show_info(
+                "Select the instrument you are lending, then press Loan Out.",
+                title="Which instrument?", parent=self.winfo_toplevel())
+            return
+        self._loan_instrument(iid)
 
     def _lookup_by_scan(self, text):
         """Resolve a typed/scanned barcode or serial to an instrument id."""

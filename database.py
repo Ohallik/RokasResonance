@@ -861,6 +861,15 @@ class Database:
                 except Exception:
                     pass
 
+            # A loan can point at another school in this profile, which is
+            # what lets the borrowing school use the instrument.  Free text
+            # in `school` still covers a school outside the profile.
+            try:
+                conn.execute("ALTER TABLE loans ADD COLUMN to_site_id INTEGER")
+                conn.commit()
+            except Exception:
+                pass
+
             # The hub color a teacher picked for a school, kept on the
             # school itself so it follows the data.
             try:
@@ -1073,6 +1082,12 @@ class Database:
             return True
 
     @staticmethod
+    def _borrowed_clause(alias: str):
+        """SQL for "or this school has it on loan from another school"."""
+        return (f" OR EXISTS (SELECT 1 FROM loans l WHERE l.instrument_id = "
+                f"{alias}.id AND l.to_site_id = ? AND l.date_returned IS NULL)")
+
+    @staticmethod
     def _site_scope(alias: str, site_id=None, level: str = None):
         """(sql, params) restricting a query to one school, or to one level.
 
@@ -1084,6 +1099,11 @@ class Database:
         """
         col = f"{alias}.site_id"
         if site_id:
+            # A school's own instruments, plus anything it has borrowed.
+            if alias == "i":
+                return (f" AND ({col} = ?"
+                        + Database._borrowed_clause(alias) + ")"), [site_id,
+                                                                    site_id]
             return f" AND {col} = ?", [site_id]
         if level:
             return (f" AND ({col} IS NULL OR {col} IN "
@@ -1112,6 +1132,15 @@ class Database:
             return
         i_site, s_site = row["i_site"], row["s_site"]
         if i_site is None or s_site is None or i_site == s_site:
+            return
+        # Borrowed from another school in this profile: while the loan is
+        # open the borrowing school may lend it to its own children, which is
+        # the entire point of the loan.
+        on_loan_here = conn.execute(
+            "SELECT 1 FROM loans WHERE instrument_id = ? AND to_site_id = ? "
+            "AND date_returned IS NULL LIMIT 1",
+            (instrument_id, s_site)).fetchone()
+        if on_loan_here:
             return
         names = {}
         for sid in (i_site, s_site):
@@ -1984,7 +2013,7 @@ class Database:
 
     def add_loan(self, data: dict) -> int:
         cols = ["instrument_id", "school", "contact_name", "contact_email",
-                "contact_phone", "date_out", "date_due", "notes"]
+                "contact_phone", "date_out", "date_due", "notes", "to_site_id"]
         values = [data.get(c) for c in cols]
         placeholders = ",".join(["?"] * len(cols))
         with self._connect() as conn:

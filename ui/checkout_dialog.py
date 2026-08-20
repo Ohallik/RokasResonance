@@ -380,6 +380,18 @@ class LoanDialog(ttk.Toplevel):
         self.db = db
         self.instrument_id = instrument_id
         self.saved = False
+        # The schools in this profile, other than the one that owns the
+        # instrument.  Lending Medina's spare clarinet to Ardmore is the
+        # common case for an itinerant, and picking the school (rather than
+        # typing its name) is what lets Ardmore actually use it.
+        self._sites = []
+        try:
+            owner = dict(db.get_instrument(instrument_id) or {}).get("site_id")
+            self._sites = [dict(x) for x in db.get_sites()
+                           if dict(x)["id"] != owner]
+        except Exception:
+            pass
+        self._site_by_name = {x["name"]: x["id"] for x in self._sites}
 
         self.title("Loan to Another School")
         self.resizable(False, False)
@@ -427,7 +439,26 @@ class LoanDialog(ttk.Toplevel):
             ttk.Entry(main, textvariable=var, width=44).pack(fill=X)
             return var
 
-        _field("School", "school", required=True)
+        # One of your own schools, or anywhere else.  Picking one of yours
+        # is what lets that school lend the instrument to its own children;
+        # a school outside this profile is still just a name to type.
+        ttk.Label(main, text="School *", font=("Segoe UI", 9, "bold")).pack(
+            anchor=W, pady=(6, 0))
+        self._vars["school"] = tk.StringVar()
+        if self._sites:
+            self._school_box = ttk.Combobox(
+                main, textvariable=self._vars["school"], width=42,
+                values=[x["name"] for x in self._sites])
+            self._school_box.pack(fill=X)
+            ttk.Label(main,
+                      text="Pick one of your schools and it can lend this "
+                           "instrument to its own students, or type any other "
+                           "school.",
+                      font=("Segoe UI", 8), foreground="#888",
+                      wraplength=400, justify=LEFT).pack(anchor=W)
+        else:
+            ttk.Entry(main, textvariable=self._vars["school"],
+                      width=44).pack(fill=X)
         _field("Teacher / Contact Name", "contact_name")
         _field("Contact Email", "contact_email")
         _field("Contact Phone", "contact_phone")
@@ -454,6 +485,9 @@ class LoanDialog(ttk.Toplevel):
         self.db.add_loan({
             "instrument_id": self.instrument_id,
             "school": school,
+            # Set only when the name matches a school in this profile, which
+            # is what unlocks checkout there.  A typed name stays a name.
+            "to_site_id": self._site_by_name.get(school),
             "contact_name": self._vars["contact_name"].get().strip(),
             "contact_email": self._vars["contact_email"].get().strip(),
             "contact_phone": self._vars["contact_phone"].get().strip(),
