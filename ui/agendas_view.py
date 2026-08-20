@@ -2102,8 +2102,8 @@ class _PresentWindow(ttk.Toplevel):
 
     # ── content ──
 
-    def _hdr(self, parent, text):
-        return _tk(tk.Label, parent, text=text, bg=HDR_BG, fg=HDR_FG, anchor="w",
+    def _hdr(self, parent, text, bg=HDR_BG, fg=HDR_FG):
+        return _tk(tk.Label, parent, text=text, bg=bg, fg=fg, anchor="w",
                    font=("Segoe UI", fs(15), "bold"), padx=10, pady=3)
 
     def rebuild(self):
@@ -2148,7 +2148,7 @@ class _PresentWindow(ttk.Toplevel):
             return                              # hide an empty banner column
         col = _tk(tk.Frame, parent, bg=bg)
         col.pack(side=LEFT, fill=Y, padx=(0, 40), anchor=N)
-        self._hdr(col, title).pack(fill=X)
+        self._hdr(col, title, bg=BAN_BG, fg=BAN_FG).pack(fill=X)
         for ln in lines:
             _tk(tk.Label, col, text="•  " + ln, bg=bg, fg=_auto_fg(bg),
                 font=("Segoe UI", fs(14)), wraplength=460,
@@ -2173,8 +2173,8 @@ class _PresentWindow(ttk.Toplevel):
 
         if self._perc_collapsed:
             btn = _tk(tk.Button, self._stage, text="🥁 Percussion  ▾",
-                      bg=HDR_BG, fg=HDR_FG, activebackground=HDR_BG,
-                      activeforeground=HDR_FG, bd=0, cursor="hand2",
+                      bg=BAN_BG, fg=BAN_FG, activebackground=BAN_BG,
+                      activeforeground=BAN_FG, bd=0, cursor="hand2",
                       relief="flat", padx=10, pady=4,
                       font=("Segoe UI", fs(12), "bold"), command=self._toggle_perc)
             btn.place(relx=1.0, y=8, anchor="ne", x=-10)
@@ -2183,13 +2183,13 @@ class _PresentWindow(ttk.Toplevel):
 
         panel = _tk(tk.Frame, self._stage, bg=bg,
                     highlightbackground="#8aa0b8", highlightthickness=2)
-        head = _tk(tk.Frame, panel, bg=HDR_BG)
+        head = _tk(tk.Frame, panel, bg=BAN_BG)
         head.pack(fill=X)
         _tk(tk.Label, head, text=f"🥁 Percussion — day {dnum} of {cyc}",
-            bg=HDR_BG, fg=HDR_FG, anchor="w", padx=8, pady=3,
+            bg=BAN_BG, fg=BAN_FG, anchor="w", padx=8, pady=3,
             font=("Segoe UI", fs(13), "bold")).pack(side=LEFT, fill=X, expand=True)
-        _tk(tk.Button, head, text="▸ hide", bg=HDR_BG, fg=HDR_FG,
-            activebackground=HDR_BG, activeforeground=HDR_FG, bd=0, cursor="hand2",
+        _tk(tk.Button, head, text="▸ hide", bg=BAN_BG, fg=BAN_FG,
+            activebackground=BAN_BG, activeforeground=BAN_FG, bd=0, cursor="hand2",
             relief="flat", padx=6, font=("Segoe UI", fs(10), "bold"),
             command=self._toggle_perc).pack(side=RIGHT, padx=2)
         table = _tk(tk.Frame, panel, bg=bg)
@@ -2220,8 +2220,8 @@ class _PresentWindow(ttk.Toplevel):
         dnum = self.view._jazz_day()
         if self._perc_collapsed:
             btn = _tk(tk.Button, self._stage, text="🎷 Rhythm  ▾",
-                      bg=HDR_BG, fg=HDR_FG, activebackground=HDR_BG,
-                      activeforeground=HDR_FG, bd=0, cursor="hand2",
+                      bg=BAN_BG, fg=BAN_FG, activebackground=BAN_BG,
+                      activeforeground=BAN_FG, bd=0, cursor="hand2",
                       relief="flat", padx=10, pady=4,
                       font=("Segoe UI", fs(12), "bold"), command=self._toggle_perc)
             btn.place(relx=1.0, y=8, anchor="ne", x=-10)
@@ -2229,13 +2229,13 @@ class _PresentWindow(ttk.Toplevel):
             return
         panel = _tk(tk.Frame, self._stage, bg=bg,
                     highlightbackground="#8aa0b8", highlightthickness=2)
-        head = _tk(tk.Frame, panel, bg=HDR_BG)
+        head = _tk(tk.Frame, panel, bg=BAN_BG)
         head.pack(fill=X)
         _tk(tk.Label, head, text=f"🎷 Rhythm — warm-up day {dnum}",
-            bg=HDR_BG, fg=HDR_FG, anchor="w", padx=8, pady=3,
+            bg=BAN_BG, fg=BAN_FG, anchor="w", padx=8, pady=3,
             font=("Segoe UI", fs(13), "bold")).pack(side=LEFT, fill=X, expand=True)
-        _tk(tk.Button, head, text="▸ hide", bg=HDR_BG, fg=HDR_FG,
-            activebackground=HDR_BG, activeforeground=HDR_FG, bd=0, cursor="hand2",
+        _tk(tk.Button, head, text="▸ hide", bg=BAN_BG, fg=BAN_FG,
+            activebackground=BAN_BG, activeforeground=BAN_FG, bd=0, cursor="hand2",
             relief="flat", padx=6, font=("Segoe UI", fs(10), "bold"),
             command=self._toggle_perc).pack(side=RIGHT, padx=2)
         table = _tk(tk.Frame, panel, bg=bg)
