@@ -411,12 +411,21 @@ class MainMenu(ttk.Frame):
         ).grid(row=0, column=1, sticky="ew", padx=(3, 0), ipady=btn_pad)
 
     def _elementary_only(self) -> bool:
-        """Every school this teacher has is an elementary one."""
+        """Every school this teacher has is an elementary one.
+
+        Also true when they have said they teach elementary and have not added
+        a school yet.  Without that, an itinerant who finished setup without
+        adding any schools was handed the secondary hub -- Sheet Music,
+        Uniforms, Manage Students -- with nothing on it belonging to them and
+        no hint about what was missing.
+        """
         try:
             active = [dict(x) for x in self.db.get_sites()]
         except Exception:
             return False
-        return bool(active) and all(x["level"] == "elementary" for x in active)
+        if active:
+            return all(x["level"] == "elementary" for x in active)
+        return str(self._program_type or "").strip() == "elementary"
 
     # The schools get the palette in turn, so a teacher with six of them finds
     # Medina by its color before they have read the word -- the same reason the
@@ -436,6 +445,18 @@ class MainMenu(ttk.Frame):
 
         grid = ttk.Frame(btn_area)
         grid.grid(row=1, column=0, columnspan=2, sticky="ew", pady=2)
+        if not sites:
+            # Setup can be finished without naming a school.  Say so and offer
+            # the way in, rather than showing a heading over an empty space.
+            ttk.Label(grid,
+                      text="No schools yet.  Add the schools you are posted "
+                           "to and each one appears here.",
+                      font=("Segoe UI", fs(9)), foreground=muted_fg(),
+                      wraplength=fs(24) * 16, justify=LEFT).pack(anchor=W,
+                                                                 pady=(0, 4))
+            self._nav_button(grid, "  🏫  Add My Schools…",
+                             self._open_settings, "teal").pack(fill=X,
+                                                               ipady=btn_pad)
         # Three across at most.  Six schools in one row would be six slivers,
         # and the name is the whole content of the button.
         cols = min(3, max(1, len(sites)))

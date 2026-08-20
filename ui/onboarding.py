@@ -397,9 +397,35 @@ class OnboardingWizard(ttk.Toplevel):
         save_settings(self.base_dir, s)
         if elementary:
             self._save_elementary_schools()
+        else:
+            self._save_home_school()
         classes = self._collect_classes()
         if classes:
             self._cr.save_classes(self.base_dir, classes)
+
+    def _save_home_school(self):
+        """Create the secondary teacher's own school as a school.
+
+        Written here rather than left to the migration in Database._migrate:
+        that runs when the Database is constructed, which on a new profile is
+        before this wizard has saved anything, so it found no school name and
+        created nothing.  The name reached Settings a moment later and the
+        school only turned up on the next launch, which is why Settings ▸
+        Schools was empty for a teacher who had just typed one in.
+        """
+        name = (self._school.get() or "").strip()
+        if not name:
+            return
+        try:
+            db = self.main_db
+            existing = [dict(x)["name"].strip().lower()
+                        for x in db.get_sites(include_inactive=True)]
+            if name.lower() in existing:
+                return
+            db.add_site(name, "secondary",
+                        (self._focus.get() or "").strip() or None)
+        except Exception:
+            pass
 
     def _save_elementary_schools(self):
         """Create a site per school the teacher listed."""
