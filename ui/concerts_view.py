@@ -305,6 +305,50 @@ class ConcertsView(ttk.Frame):
                       font=("Segoe UI", fs(9)), foreground=muted_fg()
                       ).pack(anchor=W, padx=6, pady=6)
 
+    def _maybe_link_trip(self, c):
+        """An off-site concert is a field trip with a downbeat.
+
+        Buses, permission and supervision live on the Field Trips tab, so an
+        off-site concert with no linked trip offers to join one or start one.
+        Asked once per save, never nagged: "Not now" simply leaves it, and the
+        card shows a reminder line instead.
+        """
+        if not c or not c.get("offsite") or c.get("field_trip_id"):
+            return
+        trips = [dict(t) for t in self.db.get_field_trips(self._year())]
+        dlg = _LinkTripDialog(self.winfo_toplevel(), c, trips)
+        self.wait_window(dlg)
+        if dlg.choice == "create":
+            trip_id = self.db.add_field_trip({
+                "school_year": self._year(),
+                "name": c.get("title") or "Concert trip",
+                "trip_type": "day",
+                "depart_date": c.get("concert_date") or "",
+                "return_date": c.get("concert_date") or "",
+                "destination": c.get("location") or "",
+                "groups_list": c.get("ensembles") or "",
+                "objectives": f"Perform: {c.get('title') or ''}".strip(": "),
+            })
+            self.db.update_concert(c["id"], {"field_trip_id": trip_id})
+            Messagebox.show_info(
+                "The trip is on the Field Trips tab, seeded from this "
+                "concert. Deadlines, forms and the district application are "
+                "all tracked there.",
+                title="Field trip created", parent=self.winfo_toplevel())
+        elif dlg.choice is not None:          # an existing trip's id
+            self.db.update_concert(c["id"], {"field_trip_id": dlg.choice})
+        self.refresh()
+
+    def _linked_trip(self, c):
+        tid = c.get("field_trip_id") if hasattr(c, "get") else None
+        if not tid:
+            return None
+        try:
+            t = self.db.get_field_trip(tid)
+            return dict(t) if t else None
+        except Exception:
+            return None
+
     def _restore_scroll(self, was_at):
         if was_at is None:
             return
@@ -394,15 +438,26 @@ class ConcertsView(ttk.Frame):
         ttk.Label(top, text=badge, font=("Segoe UI", fs(10), "bold"),
                   bootstyle=style).pack(side=RIGHT)
 
+        trip = self._linked_trip(c)
+        if trip:
+            ttk.Label(top, text=f"\U0001F68C {trip.get('name') or 'field trip'}",
+                      font=("Segoe UI", fs(9)),
+                      foreground=muted_fg()).pack(side=RIGHT, padx=(0, 10))
+        elif c.get("offsite"):
+            ttk.Label(top, text="\U0001F68C off-site, no field trip yet",
+                      font=("Segoe UI", fs(9)),
+                      foreground="#B45309").pack(side=RIGHT, padx=(0, 10))
+
         if collapsed:
             # Folded: heading, one-line summary and countdown, nothing else.
             return
 
         # ── Checklist: left-click cycles, right-click marks N/A ──
+        # No column weights: weighted columns spread three items across the
+        # whole card, which read as three unrelated corners.  Compressed to
+        # the left, the same way the field trip checklist sits.
         grid = ttk.Frame(card)
         grid.pack(fill=X, pady=(6, 2))
-        for col in range(3):
-            grid.columnconfigure(col, weight=1)
 
         def _item_label(state, label):
             if state == ct.CHECK_DONE:
@@ -528,8 +583,9 @@ class ConcertsView(ttk.Frame):
             data = dict(template) if template else {}
             data.update(dlg.result)
             data["school_year"] = self._year()
-            self.db.add_concert(data)
+            cid = self.db.add_concert(data)
             self.refresh()
+            self._maybe_link_trip(dict(self.db.get_concert(cid) or {}))
 
     def _edit_concert(self, c):
         dlg = _ConcertDialog(self, seed=dict(c),
@@ -539,6 +595,7 @@ class ConcertsView(ttk.Frame):
         if dlg.result:
             self.db.update_concert(c["id"], dlg.result)
             self.refresh()
+            self._maybe_link_trip(dict(self.db.get_concert(c["id"]) or {}))
 
     def _delete_concert(self, c):
         if Messagebox.yesno(f"Delete “{c['title']}” and its repertoire list?\n"
@@ -904,6 +961,57 @@ class _PastConcertDialog(ttk.Toplevel):
 
 
 # ═══════════════════════════════════════════ Concert editor ══════════════════
+
+class _LinkTripDialog(ttk.Toplevel):
+    """Off-site concert: join an existing field trip, or start one."""
+
+    def __init__(self, parent, concert, trips):
+        super().__init__(parent)
+        self.choice = None          # None | "create" | trip id
+        self.title("Off-site concert")
+        self.resizable(False, False)
+        self.grab_set()
+        self.lift()
+        body = ttk.Frame(self, padding=16)
+        body.pack(fill=BOTH, expand=True)
+        ttk.Label(body, text=f"\u201c{concert.get('title') or 'This concert'}\u201d "
+                             "is off-site.",
+                  font=("Segoe UI", 11, "bold")).pack(anchor=W)
+        ttk.Label(body, text="Off-site events need the field trip paperwork: "
+                             "buses, permission, supervision. Connect it to a "
+                             "field trip so all of that is tracked in one "
+                             "place.",
+                  wraplength=380, justify=LEFT).pack(anchor=W, pady=(4, 10))
+        self._trips = [t for t in trips if t.get("id")]
+        if self._trips:
+            row = ttk.Frame(body)
+            row.pack(fill=X, pady=(0, 8))
+            ttk.Label(row, text="Existing trip:").pack(side=LEFT)
+            self._pick = ttk.Combobox(
+                row, state="readonly", width=32,
+                values=[t.get("name") or "(untitled)" for t in self._trips])
+            self._pick.pack(side=LEFT, padx=(6, 6))
+            ttk.Button(row, text="Link", bootstyle=PRIMARY,
+                       command=self._link).pack(side=LEFT)
+        btn = ttk.Frame(body)
+        btn.pack(fill=X, pady=(6, 0))
+        ttk.Button(btn, text="Not now", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Create a field trip", bootstyle=SUCCESS,
+                   command=self._create).pack(side=RIGHT, padx=4)
+        from ui.theme import fit_window
+        fit_window(self, 430, 240)
+
+    def _link(self):
+        i = self._pick.current()
+        if i >= 0:
+            self.choice = self._trips[i]["id"]
+            self.destroy()
+
+    def _create(self):
+        self.choice = "create"
+        self.destroy()
+
 
 class _ConcertDialog(ttk.Toplevel):
     """Everything about one concert, in three small tabs."""

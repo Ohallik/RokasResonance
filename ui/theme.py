@@ -379,11 +379,43 @@ def _shift(hexcolor: str, factor: float) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+_last_nav_fonts = (None, None)
+
+
+def register_custom_nav(token: str, hexcolor: str):
+    """A Nav.<token>.TButton in an arbitrary color -- for a school whose
+    teacher picked their own, rather than one of the palette hues.  Reuses
+    the fonts the palette styles were registered with."""
+    import tkinter.ttk as _ttk
+    style = _ttk.Style()
+    font, small_font = _last_nav_fonts
+    bg = hexcolor
+    fg = best_fg(bg)
+    hover = _shift(bg, 1.14 if is_dark() else 0.86)
+    press = _shift(bg, 1.24 if is_dark() else 0.76)
+    for prefix, f in (("Nav", font), ("NavSm", small_font)):
+        sname = f"{prefix}.{token}.TButton"
+        kw = {"background": bg, "foreground": fg, "focuscolor": bg,
+              "bordercolor": bg, "lightcolor": bg, "darkcolor": bg,
+              "relief": "flat", "anchor": "w"}
+        if f:
+            kw["font"] = f
+        style.configure(sname, **kw)
+        style.map(
+            sname,
+            background=[("pressed", press), ("active", hover)],
+            foreground=[("pressed", fg), ("active", fg)],
+        )
+    return token
+
+
 def register_nav_styles(font=None, small_font=None):
     """Create ``Nav.<hue>.TButton`` / ``NavSm.<hue>.TButton`` styles for every
     palette hue and return the list of hue names.  Safe to call again after a
     theme change — the styles are simply reconfigured."""
     import tkinter.ttk as _ttk
+    global _last_nav_fonts
+    _last_nav_fonts = (font, small_font)
     style = _ttk.Style()
     names = []
     for name in (_NAV_DARK if is_dark() else _NAV_LIGHT):

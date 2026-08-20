@@ -861,6 +861,14 @@ class Database:
                 except Exception:
                     pass
 
+            # The hub color a teacher picked for a school, kept on the
+            # school itself so it follows the data.
+            try:
+                conn.execute("ALTER TABLE sites ADD COLUMN color TEXT")
+                conn.commit()
+            except Exception:
+                pass
+
             # First run on an existing profile: the teacher already has a
             # school, so turn it into their one site rather than asking again.
             try:
@@ -975,7 +983,7 @@ class Database:
 
     def update_site(self, site_id: int, **fields):
         allowed = ("name", "level", "program", "charges_fees", "is_active",
-                   "choir_default")
+                   "choir_default", "color")
         sets = [(k, v) for k, v in fields.items() if k in allowed]
         if not sets:
             return

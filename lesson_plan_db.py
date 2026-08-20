@@ -425,7 +425,11 @@ class LessonPlanDatabase:
                         # The family reminder, saved once she has reworded it,
                         # so the next concert starts from her version instead
                         # of throwing the edit away and regenerating.
-                        "email_families TEXT"):
+                        "email_families TEXT",
+                        # An off-site concert is a field trip with a downbeat:
+                        # buses, permission, supervision.  This ties the
+                        # concert to the trip that carries that paperwork.
+                        "field_trip_id INTEGER"):
                 try:
                     conn.execute(f"ALTER TABLE concerts ADD COLUMN {col}")
                     conn.commit()
@@ -1509,6 +1513,7 @@ class LessonPlanDatabase:
                      "bring", "arrival", "setup", "seated_by", "rehearsals",
                      "itinerary", "perf_order", "directors", "special_guests",
                      "acknowledgements", "upcoming", "extra_info",
+                     "field_trip_id",
                      "venue_reserved", "tutorials_scheduled",
                      "repertoire_final", "details_sent", "program_printed",
                      "setup_ready", "email_staff", "email_families", "notes"]

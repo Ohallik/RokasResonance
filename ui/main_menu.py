@@ -348,15 +348,17 @@ class MainMenu(ttk.Frame):
             combo.bind("<<ComboboxSelected>>", _picked)
             # The school's own color, right beside its name, so the hub reads
             # as "you are at the red school" before the word is read.
-            from ui.theme import nav_color
             sw = tk.Frame(pick_row, width=fs(18), height=fs(18),
-                          bg=nav_color(self._site_hue(active_site)))
+                          bg=self._site_color(active_site), cursor="hand2")
             sw.pack(side=LEFT, padx=(6, 0))
             sw.pack_propagate(False)
+            sw.bind("<Button-1>",
+                    lambda _e, s=active_site: self._pick_site_color(s))
             ttk.Label(
                 btn_area,
                 text="Everything below opens for this school. Teacher Tools "
-                     "is shared for now.",
+                     "is shared for now. Click the color square to change "
+                     "this school's color.",
                 font=("Segoe UI", fs(8)), foreground=muted_fg(),
             ).grid(row=cur_row + 1, column=0, columnspan=2, sticky=W)
             cur_row += 2
@@ -374,23 +376,16 @@ class MainMenu(ttk.Frame):
         inv_row.grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2)
         for _c in (0, 1, 2):
             inv_row.columnconfigure(_c, weight=1, uniform="inv")
-        from ui.fifth_grade_view import _short as _short_school
-        equip_label = ("  🎺  Equipment" if active_site is None
-                       else f"  🎺  Equipment · {_short_school(active_site['name'])}")
         self._nav_button(
-            inv_row, equip_label, self._open_inventory,
+            inv_row, "  🎺  Equipment", self._open_inventory,
             "red" if active_site is None else self._site_hue(active_site)
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
-        music_label = ("  🎼  Sheet Music" if active_site is None
-                       else f"  🎼  Sheet Music · {_short_school(active_site['name'])}")
         self._nav_button(
-            inv_row, music_label, self._open_music_manager,
+            inv_row, "  🎼  Sheet Music", self._open_music_manager,
             "orange" if active_site is None else self._site_hue(active_site)
         ).grid(row=0, column=1, sticky="ew", padx=3, ipady=btn_pad)
-        uni_label = ("  👕  Uniforms" if active_site is None
-                     else f"  👕  Uniforms · {_short_school(active_site['name'])}")
         self._nav_button(
-            inv_row, uni_label, self._open_uniforms,
+            inv_row, "  👕  Uniforms", self._open_uniforms,
             "amber" if active_site is None else self._site_hue(active_site)
         ).grid(row=0, column=2, sticky="ew", padx=(3, 0), ipady=btn_pad)
         cur_row += 1
@@ -422,11 +417,8 @@ class MainMenu(ttk.Frame):
         ttk.Label(stu_group, text="Students",
                   font=("Segoe UI", fs(9), "bold"),
                   foreground=muted_fg()).pack(anchor=W, pady=(0, 2))
-        stu_label = ("  🎓  Manage Students" if active_site is None
-                     else "  🎓  Manage Students · "
-                          f"{_short_school(active_site['name'])}")
         self._nav_button(
-            stu_group, stu_label, self._open_students,
+            stu_group, "  🎓  Manage Students", self._open_students,
             "green" if active_site is None else self._site_hue(active_site)
         ).pack(fill=X, ipady=btn_pad)
 
@@ -457,10 +449,8 @@ class MainMenu(ttk.Frame):
         prep_row.grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2)
         for _c in (0, 1):
             prep_row.columnconfigure(_c, weight=1)
-        budget_label = ("  💵  Budget" if active_site is None
-                        else f"  💵  Budget · {_short_school(active_site['name'])}")
         self._nav_button(
-            prep_row, budget_label, self._open_budget,
+            prep_row, "  💵  Budget", self._open_budget,
             "teal" if active_site is None else self._site_hue(active_site)
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
         self._nav_button(
@@ -535,13 +525,45 @@ class MainMenu(ttk.Frame):
         self._grow_to_fit()
 
     def _site_hue(self, site):
-        """The school's own color, stable across sessions: its position in the
-        site list decides it, the same rule the elementary hub uses."""
+        """The style token for a school's color.
+
+        A color the teacher picked (click the swatch by the dropdown) wins;
+        otherwise the school's position in the site list assigns a palette
+        hue, the same rule the elementary hub uses.
+        """
+        color = (site.get("color") or "").strip()
+        if color.startswith("#") and len(color) == 7:
+            from ui.theme import register_custom_nav
+            return register_custom_nav(f"site{site['id']}", color)
         sites = self._secondary_sites()
         for i, x in enumerate(sites):
             if x["id"] == site["id"]:
                 return self._SCHOOL_HUES[i % len(self._SCHOOL_HUES)]
         return "blue"
+
+    def _site_color(self, site):
+        """The school's color as hex, for banners and the swatch."""
+        from ui.theme import nav_color
+        color = (site.get("color") or "").strip()
+        if color.startswith("#") and len(color) == 7:
+            return color
+        return nav_color(self._site_hue(site))
+
+    def _pick_site_color(self, site):
+        """The swatch opens a color chooser; the choice sticks to the school."""
+        from tkinter import colorchooser
+        _rgb, hexcolor = colorchooser.askcolor(
+            initialcolor=self._site_color(site),
+            title=f"Hub color for {site['name']}",
+            parent=self.winfo_toplevel())
+        if not hexcolor:
+            return
+        try:
+            self.db.update_site(site["id"], color=hexcolor)
+        except Exception:
+            return
+        self._build_nav_buttons()
+        self._grow_to_fit()
 
     def _school_banner(self, win, site):
         """A colored band naming the school a window belongs to.
@@ -552,7 +574,7 @@ class MainMenu(ttk.Frame):
         Without the band, nothing on screen says whose instruments those are.
         """
         from ui.theme import nav_color, best_fg
-        bg = nav_color(self._site_hue(site))
+        bg = self._site_color(site)
         bar = tk.Frame(win, bg=bg)
         bar.pack(fill=X, side=TOP)
         tk.Label(bar, text=f"\U0001F3EB  {site['name']}", bg=bg, fg=best_fg(bg),

@@ -71,11 +71,12 @@ GROUP_CONFIG = {
 # Section-header chip.
 HDR_BG = "#3b7dc4"          # agenda sections: the steps of the lesson
 HDR_FG = "#ffffff"
-# The banner is about the day, not part of it.  Amber against the sections'
-# blue, so the two read as different kinds of thing from across the room.
-BAN_BG = "#B26A0F"
-BAN_FG = "#ffffff"
-DIVIDER = "#B26A0F"
+# The banner is about the day, not part of it.  Light yellow against the
+# sections' blue, so the two read as different kinds of thing from across
+# the room without the headers shouting.
+BAN_BG = "#FFF3BF"
+BAN_FG = "#5C4A00"
+DIVIDER = "#E0C048"
 # Assessment-line highlight (the light-blue emphasis she uses for test lines).
 ASSESS_BG = "#dbeafe"
 ASSESS_FG = "#0b3d6b"
@@ -584,22 +585,34 @@ class AgendasView(ttk.Frame):
         out.sort(key=lambda c: c["date"])
         return out
 
+    def _kw_match(self, name):
+        """Whether this class's keyword names the ensemble.
+
+        Word-prefix, not substring: "adv" matches "Advanced Band" because a
+        word starts with it, but a short keyword can no longer match inside an
+        unrelated class name and hand this class somebody else's concert.
+        """
+        kw = (self._cfg["ensemble"] or "").lower()
+        return bool(kw) and any(w.startswith(kw)
+                                for w in (name or "").lower().split())
+
     def _is_mine(self, concert):
         """Whether this class is on a concert.
 
-        Two ways it can be: the Concert Planner names the class in the
-        concert's ensemble list, or a piece on the program is assigned to it.
-        Either counts, so a concert built by adding repertoire still lands even
-        if the ensemble list was never filled in.
+        The planner's ensemble list is the authority: when it names who plays,
+        that answer is final.  Pieces only speak for a concert whose ensemble
+        list was never filled in -- a shared piece tagged for several bands
+        must not override "ADVANCED plays Veterans Day" and put the assembly
+        on every class's agenda.
         """
         import class_registry as cr
-        kw = self._cfg["ensemble"]
         label = self._cfg["label"]
         listed = (concert["ensembles"]
                   if "ensembles" in concert.keys() else "") or ""
-        for name in [x.strip() for x in listed.split(",") if x.strip()]:
-            if kw in name.lower() or cr.same_class(name, label):
-                return True
+        names = [x.strip() for x in listed.split(",") if x.strip()]
+        if names:
+            return any(self._kw_match(n) or cr.same_class(n, label)
+                       for n in names)
         try:
             return bool(self._pieces(concert))
         except Exception:
@@ -620,10 +633,10 @@ class AgendasView(ttk.Frame):
 
         def mine(r):
             name = r["ensemble"] or ""
-            # Keyword substring covers the built-in classes; identity covers
+            # Word-prefix keyword covers the built-in classes; identity covers
             # custom classes whose keyword is a slug ("chamber_winds") that
             # never appears in the printed ensemble name.
-            return kw in name.lower() or cr.same_class(name, self._cfg["label"])
+            return self._kw_match(name) or cr.same_class(name, self._cfg["label"])
 
         matched = [r for r in rows if mine(r)]
         use = matched if matched else rows
@@ -870,7 +883,18 @@ class AgendasView(ttk.Frame):
                    font=("Segoe UI", fs(size), "bold"), padx=8, pady=3)
 
     def _render_divider(self, parent):
-        """The line between what the day is about and what the day IS."""
+        """The line between what the day is about and what the day IS.
+
+        The next-performance countdown rides on it, small and right-aligned:
+        it had been squeezed into the Announcements header, where it clipped
+        to "ext performance in 69 days" on an ordinary laptop screen.
+        """
+        line = self._performance_line()
+        if line:
+            row = ttk.Frame(parent)
+            row.pack(fill=X, pady=(2, 0))
+            _tk(tk.Label, row, text=line, fg=BAN_FG,
+                font=("Segoe UI", fs(9), "bold")).pack(side=RIGHT, padx=2)
         rule = _tk(tk.Frame, parent, bg=DIVIDER, height=2)
         rule.pack(fill=X, pady=(2, 10))
         rule.pack_propagate(False)
@@ -889,8 +913,7 @@ class AgendasView(ttk.Frame):
         if show_third:
             row.columnconfigure(2, weight=0, minsize=fs(24) * 12)
         self._banner_text(row, "Reminders", "reminders", 0)
-        self._banner_text(row, "Announcements", "announcements", 1,
-                          trailer=self._performance_line())
+        self._banner_text(row, "Announcements", "announcements", 1)
         # The rotation pane is the most intricate part of the banner and it sits
         # BEFORE the agenda body in the render order.  If it ever throws, the
         # teacher loses the whole day's agenda rather than one panel, so it is
@@ -924,19 +947,12 @@ class AgendasView(ttk.Frame):
             return f"{c['title']} is TODAY"
         if days == 1:
             return f"{c['title']} is TOMORROW"
-        return f"Next performance in {days} days: {c['title']}"
+        return f"{c['title']} in {days} days"
 
-    def _banner_text(self, parent, title, key, col, trailer=""):
+    def _banner_text(self, parent, title, key, col):
         wrap = ttk.Frame(parent)
         wrap.grid(row=0, column=col, sticky="nsew", padx=(0, 6))
-        head = ttk.Frame(wrap)
-        head.pack(fill=X)
-        self._hdr_label(head, title, 11, bg=BAN_BG,
-                        fg=BAN_FG).pack(side=LEFT, fill=X, expand=True)
-        if trailer:
-            _tk(tk.Label, head, text=trailer, bg=BAN_BG, fg=BAN_FG,
-                font=("Segoe UI", fs(9), "bold"), padx=8,
-                pady=3).pack(side=RIGHT, fill=Y)
+        self._hdr_label(wrap, title, 11, bg=BAN_BG, fg=BAN_FG).pack(fill=X)
         txt = tk.Text(wrap, height=5, wrap="word", relief="solid", bd=1,
                       font=("Segoe UI", fs(10)))
         txt.pack(fill=BOTH, expand=True)

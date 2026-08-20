@@ -382,10 +382,41 @@ def selectable_ensembles(main_db, school_year=None, program_type="band",
         # bare program default.
         found = roster_ensembles(main_db, None, site_id=site_id)
     if site_id:
-        # One school's own sections and choir, nothing configured for the
-        # secondary program.  A Clyde Hill picker offering "Advanced Band"
-        # is offering a class that cannot contain any of its children.
-        return found or site_groups_for(main_db, site_id, school_year)
+        level = None
+        try:
+            site = main_db.get_site(site_id)
+            level = dict(site).get("level") if site else None
+        except Exception:
+            pass
+        if level == "elementary":
+            # One school's own sections and choir, nothing configured for the
+            # secondary program.  A Clyde Hill picker offering "Advanced Band"
+            # is offering a class that cannot contain any of its children.
+            return found or site_groups_for(main_db, site_id, school_year)
+        # A SECONDARY school scoped by site: its roster's own classes, plus
+        # the configured classes that belong to it (bound to it in Manage
+        # Classes, or unbound).  Treating every site_id as elementary was
+        # offering Tillicum's roster import "Section 1 / Section 2", which
+        # no middle school has.
+        import class_registry as cr
+        configured = [c for c in ensembles_for(program_type, base_dir)
+                      if class_school(c, base_dir) in (None, site_id)]
+        out2, seen2 = [], set()
+
+        def add2(name):
+            key = cr.class_identity(name)
+            if key not in seen2:
+                seen2.add(key)
+                out2.append(name)
+        for e in configured:
+            if any(cr.same_class(e, f) for f in found):
+                add2(e)
+        for f in found:
+            add2(f)
+        if include_empty or not out2:
+            for e in configured:
+                add2(e)
+        return out2
 
     # Each elementary school's own sections, whether or not anybody is in them
     # yet.  A teacher with both kinds of school needs both halves; before this,
