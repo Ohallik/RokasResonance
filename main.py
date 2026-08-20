@@ -126,7 +126,7 @@ sys.path.insert(0, APP_DIR)
 from database import Database
 from ui.main_menu import MainMenu
 
-VERSION = "v0.17.1"
+VERSION = "v0.17.2"
 
 # User data lives in AppData so app-folder updates never touch it
 _LOCALAPPDATA = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")

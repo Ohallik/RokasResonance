@@ -27,6 +27,21 @@ from ui.lesson_plans_hub import _TMPL_DISPLAY
 # conversation, and a handoff file written by a teacher who typed the short
 # form will not match one written by a teacher who typed the long form.  The
 # picker offers one spelling so the two never diverge.
+def school_level(name: str) -> str:
+    """"elementary" or "secondary", from the school's own name.
+
+    Every BSD elementary has "Elementary" in its name and no secondary does,
+    so this is a reading rather than a guess.  International School and Big
+    Picture are 6-12 and come back secondary, which is right.
+
+    Used wherever a school is created, because the level decides a great
+    deal downstream: whether the rental fee is charged, whether the loan form
+    quotes it, whether the roster has class periods, whether Carry Over is
+    offered, and whether the school appears on the 5th grade screen.
+    """
+    return "elementary" if "elementary" in (name or "").lower() else "secondary"
+
+
 BSD_SCHOOLS = [
     # Secondary
     "Chinook Middle School", "Highland Middle School", "Odle Middle School",
@@ -427,7 +442,10 @@ class OnboardingWizard(ttk.Toplevel):
                         for x in db.get_sites(include_inactive=True)]
             if name.lower() in existing:
                 return
-            db.add_site(name, "secondary",
+            # The name decides the level.  A band teacher whose home school
+            # is an elementary one is ordinary in this district, and creating
+            # it as secondary charged their 5th graders a rental fee.
+            db.add_site(name, school_level(name),
                         (self._focus.get() or "").strip() or None)
         except Exception:
             pass

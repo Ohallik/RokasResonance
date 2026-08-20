@@ -313,6 +313,14 @@ class SiteDialog(ttk.Toplevel):
         self._level_changed(initial=bool(site_id))
         fit_window(self, 420, 470)
 
+    def _name_picked(self, _e=None):
+        """Choosing a school name sets its level, because the name says it."""
+        from ui.onboarding import school_level
+        want = school_level(self._name_var.get())
+        if want != self._level.get():
+            self._level.set(want)
+            self._level_changed()
+
     def _level_changed(self, initial=False):
         """Elementary loans are free, so the fee comes off when elementary is
         chosen. Left switchable rather than locked, in case a school does
