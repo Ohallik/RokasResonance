@@ -321,6 +321,46 @@ class MainMenu(ttk.Frame):
             self._build_elementary_nav(btn_area, btn_pad)
             return
 
+        # ── School picker, when this profile runs more than one ──────────
+        active_site = self._active_site()
+        if active_site is not None:
+            ttk.Label(
+                btn_area, text="School",
+                font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
+            ).grid(row=cur_row, column=0, columnspan=2, sticky=W, pady=(4, 2))
+            cur_row += 1
+            pick_row = ttk.Frame(btn_area)
+            pick_row.grid(row=cur_row, column=0, columnspan=2, sticky="ew",
+                          pady=2)
+            names = [x["name"] for x in self._secondary_sites()]
+            self._school_var = tk.StringVar(value=active_site["name"])
+            combo = ttk.Combobox(pick_row, textvariable=self._school_var,
+                                 state="readonly", values=names,
+                                 font=("Segoe UI", fs(10), "bold"))
+            combo.pack(side=LEFT, fill=X, expand=True)
+
+            def _picked(_e=None):
+                chosen = self._school_var.get()
+                for x in self._secondary_sites():
+                    if x["name"] == chosen:
+                        self._set_active_site(x["id"])
+                        return
+            combo.bind("<<ComboboxSelected>>", _picked)
+            # The school's own color, right beside its name, so the hub reads
+            # as "you are at the red school" before the word is read.
+            from ui.theme import nav_color
+            sw = tk.Frame(pick_row, width=fs(18), height=fs(18),
+                          bg=nav_color(self._site_hue(active_site)))
+            sw.pack(side=LEFT, padx=(6, 0))
+            sw.pack_propagate(False)
+            ttk.Label(
+                btn_area,
+                text="Equipment and Manage Students open for this school. "
+                     "Sheet music, uniforms and money are shared.",
+                font=("Segoe UI", fs(8)), foreground=muted_fg(),
+            ).grid(row=cur_row + 1, column=0, columnspan=2, sticky=W)
+            cur_row += 2
+
         # ── Inventory (things: equipment + sheet music) ──
         ttk.Label(
             btn_area, text="Inventory",
@@ -334,8 +374,12 @@ class MainMenu(ttk.Frame):
         inv_row.grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2)
         for _c in (0, 1, 2):
             inv_row.columnconfigure(_c, weight=1, uniform="inv")
+        from ui.fifth_grade_view import _short as _short_school
+        equip_label = ("  🎺  Equipment" if active_site is None
+                       else f"  🎺  Equipment · {_short_school(active_site['name'])}")
         self._nav_button(
-            inv_row, "  🎺  Equipment", self._open_inventory, "red"
+            inv_row, equip_label, self._open_inventory,
+            "red" if active_site is None else self._site_hue(active_site)
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
         self._nav_button(
             inv_row, "  🎼  Sheet Music", self._open_music_manager, "orange"
@@ -372,8 +416,12 @@ class MainMenu(ttk.Frame):
         ttk.Label(stu_group, text="Students",
                   font=("Segoe UI", fs(9), "bold"),
                   foreground=muted_fg()).pack(anchor=W, pady=(0, 2))
+        stu_label = ("  🎓  Manage Students" if active_site is None
+                     else "  🎓  Manage Students · "
+                          f"{_short_school(active_site['name'])}")
         self._nav_button(
-            stu_group, "  🎓  Manage Students", self._open_students, "green"
+            stu_group, stu_label, self._open_students,
+            "green" if active_site is None else self._site_hue(active_site)
         ).pack(fill=X, ipady=btn_pad)
 
         if show_fifth:
@@ -432,6 +480,75 @@ class MainMenu(ttk.Frame):
     # secondary hub is not a stack of identical blue bars.
     _SCHOOL_HUES = ("red", "orange", "amber", "green", "teal", "blue",
                     "purple", "rose")
+
+    # ── more than one secondary school ────────────────────────────────────
+    def _secondary_sites(self):
+        """The active secondary schools, in a stable order."""
+        try:
+            return [dict(x) for x in self.db.get_sites()
+                    if dict(x).get("level") != "elementary"]
+        except Exception:
+            return []
+
+    def _multi_secondary(self):
+        return len(self._secondary_sites()) >= 2
+
+    def _active_site(self):
+        """The secondary school the hub is pointed at.
+
+        Only meaningful with two or more; with one there is nothing to point,
+        and everything behaves exactly as it always has (site_id unset, the
+        pooled single-school view).
+        """
+        sites = self._secondary_sites()
+        if len(sites) < 2:
+            return None
+        try:
+            from ui.settings_dialog import load_settings
+            want = (load_settings(self.base_dir).get("teacher")
+                    or {}).get("active_site_id")
+        except Exception:
+            want = None
+        for site in sites:
+            if str(site["id"]) == str(want):
+                return site
+        return sites[0]
+
+    def _set_active_site(self, site_id):
+        try:
+            from ui.settings_dialog import load_settings, save_settings
+            cfg = load_settings(self.base_dir) or {}
+            cfg.setdefault("teacher", {})["active_site_id"] = site_id
+            save_settings(self.base_dir, cfg)
+        except Exception:
+            pass
+        self._build_nav_buttons()
+        self._grow_to_fit()
+
+    def _site_hue(self, site):
+        """The school's own color, stable across sessions: its position in the
+        site list decides it, the same rule the elementary hub uses."""
+        sites = self._secondary_sites()
+        for i, x in enumerate(sites):
+            if x["id"] == site["id"]:
+                return self._SCHOOL_HUES[i % len(self._SCHOOL_HUES)]
+        return "blue"
+
+    def _school_banner(self, win, site):
+        """A colored band naming the school a window belongs to.
+
+        The window keeps the school it was OPENED for.  The scenario this
+        exists for: open Interlake's instruments, flip the hub to Tillicum,
+        open its students, come back to the first window twenty minutes later.
+        Without the band, nothing on screen says whose instruments those are.
+        """
+        from ui.theme import nav_color, best_fg
+        bg = nav_color(self._site_hue(site))
+        bar = tk.Frame(win, bg=bg)
+        bar.pack(fill=X, side=TOP)
+        tk.Label(bar, text=f"\U0001F3EB  {site['name']}", bg=bg, fg=best_fg(bg),
+                 font=("Segoe UI", fs(11), "bold"), padx=12,
+                 pady=4).pack(side=LEFT)
 
     def _build_elementary_nav(self, btn_area, btn_pad):
         """The hub for somebody who only teaches 5th grade."""
@@ -756,17 +873,26 @@ class MainMenu(ttk.Frame):
                        parent=self.winfo_toplevel())
 
     def _open_inventory(self):
-        if self._raise_or_open("inventory"):
+        # The window belongs to the school the hub pointed at when it opened,
+        # and each school gets its own window -- both can be open at once.
+        site = self._active_site()
+        key = f"inventory_{site['id']}" if site else "inventory"
+        if self._raise_or_open(key):
             return
         from ui.inventory_manager import InventoryManager
         win = ttk.Toplevel(self.winfo_toplevel())
-        win.title("Manage Equipment Inventory — Roka's Resonance")
+        win.title(("Manage Equipment Inventory — Roka's Resonance" if not site
+                   else f"Equipment — {site['name']}"))
         win.state("zoomed")
+        if site:
+            self._school_banner(win, site)
         manager = InventoryManager(win, self.db, self.base_dir,
-                                   on_checkouts=self._open_active_checkouts)
+                                   on_checkouts=self._open_active_checkouts,
+                                   site_id=site["id"] if site else None)
         manager.pack(fill=BOTH, expand=True)
-        win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("inventory"))
-        self._windows["inventory"] = win
+        win.protocol("WM_DELETE_WINDOW",
+                     lambda: self._on_child_close(key))
+        self._windows[key] = win
 
     def _open_uniforms(self):
         if self._raise_or_open("uniforms"):
@@ -856,18 +982,24 @@ class MainMenu(ttk.Frame):
         self._windows["budget"] = win
 
     def _open_students(self):
-        if self._raise_or_open("students"):
+        site = self._active_site()
+        key = f"students_{site['id']}" if site else "students"
+        if self._raise_or_open(key):
             return
         from ui.student_manager import StudentManager
         from ui.settings_dialog import load_settings
         program_type = (load_settings(self.base_dir).get("teacher") or {}).get("program_type", "band")
         win = ttk.Toplevel(self.winfo_toplevel())
-        win.title("Student Manager — Roka's Resonance")
+        win.title(("Student Manager — Roka's Resonance" if not site
+                   else f"Students — {site['name']}"))
         win.resizable(True, True)
-        manager = StudentManager(win, self.db, program_type=program_type)
+        if site:
+            self._school_banner(win, site)
+        manager = StudentManager(win, self.db, program_type=program_type,
+                                 site_id=site["id"] if site else None)
         manager.pack(fill=BOTH, expand=True)
-        win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("students"))
-        self._windows["students"] = win
+        win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close(key))
+        self._windows[key] = win
         from ui.theme import fit_window
         fit_window(win, 1000, 650)
 

@@ -144,6 +144,19 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         self.program_type = program_type or "band"
         # Set: this is one school's roster.  Unset: the secondary program.
         self.site_id = site_id
+        # site_id says WHICH school; the school's level says what SHAPE the
+        # roster takes.  An elementary roster has sections and no periods; a
+        # secondary school scoped by site keeps periods, second instruments
+        # and the class list.  Conflating the two dressed Tillicum's roster
+        # as a 5th grade one.
+        self._elementary = False
+        if site_id:
+            try:
+                site = db.get_site(site_id)
+                self._elementary = bool(site) and (
+                    dict(site).get("level") == "elementary")
+            except Exception:
+                pass
         self._year_var = tk.StringVar()
         self._search_var = tk.StringVar()
         self._show_inactive_var = tk.BooleanVar(value=False)
@@ -215,7 +228,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         # elementary school by "Advanced"; and elementary has no class periods
         # at all -- the group is a pullout on the specialist rotation.  Two
         # sections and a search box is the whole of what is needed here.
-        if self.site_id:
+        if self._elementary:
             # Section, not "Ensemble" -- and never the secondary class list that
             # was offering to filter an elementary school by "Advanced".  Both
             # sections are always here, even before the roster lands; choir
@@ -285,7 +298,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         # An elementary roster has no class periods, and its one grouping is the
         # section -- so it says Class Section rather than Ensembles, and the
         # Period column is not there to be sorted by something that cannot vary.
-        if self.site_id:
+        if self._elementary:
             cols = ("check", "Name", "Grade", "Class Section", "Instrument",
                     "Parent", "Active Instruments")
             widths = [34, 190, 60, 150, 130, 160, 90]
@@ -365,7 +378,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             ("P2 Email", "parent2_email"),
             ("Notes", "notes"),
         ]
-        if self.site_id:
+        if self._elementary:
             # A 5th grader has no class period and no second instrument, so
             # those two rows would sit blank on every child for the whole year.
             fields = [f for f in fields
@@ -568,7 +581,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                     continue
             if ens_filter and ens_filter != "All":
                 held = self._sval(s, "ensembles")
-                if self.site_id:
+                if self._elementary:
                     # Elementary groups are exact strings, not class identities
                     # -- "Section 1" is not a level the class parser knows.
                     want = self._section_full.get(ens_filter, ens_filter).lower()
@@ -673,7 +686,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             # Ensembles show their short display form ("Entry, Jazz 2") — the
             # full canonical names stay on the record and in the detail pane.
             import class_registry as cr
-            if self.site_id:
+            if self._elementary:
                 # "Section 2", not "Jing Mei Elementary School: Section 2".  The
                 # window is one school; repeating its name in every cell of
                 # every row pushes the part that differs off the edge.
@@ -691,7 +704,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                    name_display,
                    s["grade"] or "",
                    ensembles]
-            if not self.site_id:
+            if not self._elementary:
                 row.append(periods)
             row += [instr_display, s["parent1_name"] or "", active_str]
             self.tree.insert("", "end", iid=iid, tags=tags, values=tuple(row))
@@ -782,7 +795,9 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                 parent=self.winfo_toplevel())
             return
         dlg = _BulkAssignDialog(self.winfo_toplevel(), self.db, ids,
-                                self.program_type, site_id=self.site_id)
+                                self.program_type,
+                                site_id=self.site_id
+                                if self._elementary else None)
         self.wait_window(dlg)
         # Ticks are cleared once an assignment lands.  Leaving them on invites
         # the next assignment to silently hit the same students again — that is

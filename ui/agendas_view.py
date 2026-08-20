@@ -1714,11 +1714,9 @@ class AgendasView(ttk.Frame):
                             command=lambda sid=sec["sid"]:
                             self._set_section(sid)
                             ).pack(side=LEFT, padx=1)
-        ttk.Label(self._section_bar,
-                  text="(same plan; each period keeps its own rotation, "
-                       "Missing lists and section-only items)",
-                  font=("Segoe UI", fs(8)),
-                  foreground=muted_fg()).pack(side=LEFT, padx=(6, 0))
+        # No caption here.  The toolbar is the most crowded row on the screen,
+        # and a sentence beside the toggle squeezed the controls to its right
+        # into unreadability.  What the toggle switches is in the help guide.
 
     # ── per-section "Missing" name lists ─────────────────────────────────────
     # Typed by hand (no per-student pass tracking yet) but stored SEPARATELY per
