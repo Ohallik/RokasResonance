@@ -333,18 +333,21 @@ def _total_cell(trip):
     which number is coming.
     """
     waiting = _unknowns(trip)
-    filled = any(("" if trip.get(k) is None else str(trip.get(k))).strip()
-                 for k, _l in _COST_FIELDS)
-    if not filled:
+    figures = [k for k, _l in _COST_FIELDS
+               if _is_number(("" if trip.get(k) is None
+                              else str(trip.get(k))).strip() or None)]
+    # Nothing to add up.  Where no line holds a figure the box stays empty,
+    # whether that is because nothing was answered yet or because the answers
+    # so far are words: the line itself already says TBD, and a total that
+    # only repeats it tells the reader nothing they cannot see.
+    if not figures:
         return "$"
     total = _total(trip)
     if not waiting:
         return f"$ {total:,.2f}"
     listed = " and ".join([", ".join(waiting[:-1]), waiting[-1]]) \
         if len(waiting) > 1 else waiting[0]
-    if total:
-        return f"$ {total:,.2f} plus {listed}"
-    return f"Waiting on {listed}"
+    return f"$ {total:,.2f} plus {listed}"
 
 
 def _question(question, answer, s, lines=2):
