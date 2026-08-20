@@ -543,24 +543,15 @@ class _ManageClassesDialog(ttk.Toplevel):
                              "or reorder freely. Itinerant teachers can add as "
                              "many — or as few — as they run.",
                   font=("Segoe UI", 9), wraplength=560, justify=LEFT).pack(anchor=W)
-        ttk.Label(body, text="Periods: one per section of the class. Typing "
-                             "\u201c1, 2\u201d means two sections, and the agenda gets a "
-                             "P1 / P2 toggle. Leave it blank for a class with "
-                             "one section.",
+        ttk.Label(body, text="Periods: the class periods this class "
+                             "meets, separated by commas. \u201c1, 2\u201d "
+                             "means two sections, and the agenda gets a "
+                             "P1 / P2 toggle. Blank means one section.",
                   font=("Segoe UI", 9), foreground=muted_fg(),
                   wraplength=560, justify=LEFT).pack(anchor=W, pady=(4, 0))
 
-        cols = ttk.Frame(body)
-        cols.pack(fill=X, pady=(8, 2))
-        ttk.Label(cols, text="Class name", font=("Segoe UI", 9, "bold"),
-                  width=22).pack(side=LEFT)
-        ttk.Label(cols, text="Kind of class", font=("Segoe UI", 9, "bold"),
-                  width=36).pack(side=LEFT, padx=(6, 0))
-        ttk.Label(cols, text="Periods", font=("Segoe UI", 9, "bold")).pack(
-            side=LEFT, padx=(6, 0))
-
         self._rows_frame = ttk.Frame(body)
-        self._rows_frame.pack(fill=BOTH, expand=True)
+        self._rows_frame.pack(fill=BOTH, expand=True, pady=(8, 0))
         self._rows = []
         for k in classes:
             self._add_row(k)
@@ -586,22 +577,34 @@ class _ManageClassesDialog(ttk.Toplevel):
         self._render_rows()
 
     def _render_rows(self):
-        for w in self._rows_frame.winfo_children():
+        """Headers and fields share one grid, so the columns cannot drift the
+        way a separate header row packed to its own widths did."""
+        f = self._rows_frame
+        for w in f.winfo_children():
             w.destroy()
+        heads = ("Class name", "Kind of class", "Periods (e.g. 1, 2)")
+        for c, text in enumerate(heads):
+            ttk.Label(f, text=text, font=("Segoe UI", 9, "bold")).grid(
+                row=0, column=c, sticky=W, padx=(0 if c == 0 else 6, 0),
+                pady=(0, 2))
         for i, rec in enumerate(self._rows):
-            row = ttk.Frame(self._rows_frame)
-            row.pack(fill=X, pady=2)
-            ttk.Entry(row, textvariable=rec["label"], width=22).pack(side=LEFT)
-            ttk.Combobox(row, textvariable=rec["template"], state="readonly",
-                         values=self._tmpl_options, width=34).pack(side=LEFT, padx=(6, 0))
-            ttk.Entry(row, textvariable=rec["periods"], width=8).pack(
-                side=LEFT, padx=(6, 0))
-            ttk.Button(row, text="✕", width=2, bootstyle=(DANGER, OUTLINE, LINK),
-                       command=lambda r=rec: self._remove(r)).pack(side=RIGHT)
-            ttk.Button(row, text="▼", width=2, bootstyle=(SECONDARY, OUTLINE, LINK),
-                       command=lambda ix=i: self._move(ix, 1)).pack(side=RIGHT)
-            ttk.Button(row, text="▲", width=2, bootstyle=(SECONDARY, OUTLINE, LINK),
-                       command=lambda ix=i: self._move(ix, -1)).pack(side=RIGHT)
+            r = i + 1
+            ttk.Entry(f, textvariable=rec["label"], width=22).grid(
+                row=r, column=0, sticky="ew", pady=2)
+            ttk.Combobox(f, textvariable=rec["template"], state="readonly",
+                         values=self._tmpl_options, width=30).grid(
+                row=r, column=1, sticky="ew", padx=(6, 0), pady=2)
+            ttk.Entry(f, textvariable=rec["periods"], width=12).grid(
+                row=r, column=2, sticky="ew", padx=(6, 0), pady=2)
+            ttk.Button(f, text="▲", width=2, bootstyle=(SECONDARY, OUTLINE, LINK),
+                       command=lambda ix=i: self._move(ix, -1)).grid(
+                row=r, column=3, padx=(8, 0))
+            ttk.Button(f, text="▼", width=2, bootstyle=(SECONDARY, OUTLINE, LINK),
+                       command=lambda ix=i: self._move(ix, 1)).grid(
+                row=r, column=4)
+            ttk.Button(f, text="✕", width=2, bootstyle=(DANGER, OUTLINE, LINK),
+                       command=lambda rc=rec: self._remove(rc)).grid(
+                row=r, column=5)
 
     def _remove(self, rec):
         self._rows.remove(rec)
