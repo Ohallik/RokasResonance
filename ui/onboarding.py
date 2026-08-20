@@ -50,7 +50,7 @@ FOCUS = [("Band", "band"), ("Choir", "choir"), ("Orchestra", "orchestra"),
 
 class OnboardingWizard(ttk.Toplevel):
     def __init__(self, parent, base_dir, main_db, profile_name, on_finish=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.base_dir = base_dir
         self.main_db = main_db
         self._on_finish = on_finish
@@ -321,7 +321,7 @@ class OnboardingWizard(ttk.Toplevel):
         # Save first so the panel writes into a settings.json that already has the
         # teacher/classes chosen above.
         self._save()
-        top = ttk.Toplevel(self)
+        top = ttk.Toplevel(master=self)
         top.title("Co-director sharing")
         top.grab_set()
         from ui.sharing_view import SharingPanel

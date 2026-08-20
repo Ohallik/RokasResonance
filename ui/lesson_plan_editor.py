@@ -24,7 +24,7 @@ class LessonPlanEditor(ttk.Toplevel):
             date_str: Date string (YYYY-MM-DD format)
             on_save: Callback function when lesson plan is saved
         """
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self._class_id = class_id
         self._date_str = date_str
@@ -1026,7 +1026,7 @@ class TemplateNameDialog(ttk.Toplevel):
     """Simple dialog for entering a template name."""
 
     def __init__(self, parent, title="Enter Name"):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.title(title)
         self.geometry("350x120")
         self.resizable(False, False)

@@ -377,7 +377,7 @@ class _GarmentTypesDialog(ttk.Toplevel):
     orchestra dresses, etc. can be defined without code changes)."""
 
     def __init__(self, parent, db, on_change=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.on_change = on_change
         self.title("Garment Types")

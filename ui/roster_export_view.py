@@ -22,7 +22,7 @@ def open_roster_export(parent, db, base_dir, school_year, context="", handoff=Fa
 
 class RosterExportDialog(ttk.Toplevel):
     def __init__(self, parent, db, base_dir, school_year, context="", handoff=False):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.base_dir = base_dir or os.path.dirname(getattr(db, "db_path", "") or "")
         self.school_year = school_year

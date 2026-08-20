@@ -437,7 +437,7 @@ class ClassManager(ttk.Frame):
 
 class ClassDialog(ttk.Toplevel):
     def __init__(self, parent, db, class_id=None, default_year=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.class_id = class_id
         self.default_year = default_year or _current_school_year()
@@ -666,7 +666,7 @@ class ClassDialog(ttk.Toplevel):
 
 class ConcertDateDialog(ttk.Toplevel):
     def __init__(self, parent, db, concert_id=None, class_id=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.concert_id = concert_id
         self.class_id = class_id

@@ -649,7 +649,7 @@ class CurriculumPlanner(ttk.Frame):
             return
 
         parent_win = self.winfo_toplevel()
-        dlg = ttk.Toplevel(parent_win)
+        dlg = ttk.Toplevel(master=parent_win)
         dlg.title("AI Curriculum Generator")
         dlg.transient(parent_win)
         dlg.grab_set()

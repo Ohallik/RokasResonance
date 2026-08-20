@@ -1,0 +1,13 @@
+﻿Student ID,Student Name,Grd,Gen,Birth Date,Address,CityStateZip,Email,Parent Name,Relation,ParentEmail,Phone,Orderby,Communication Home Language,Section,Teacher
+1780501,"Adeyemi, Bisi",05,F,04/22/2016,1015 156th Ave SE,"Bellevue, WA 98008",bisiadey@student.example.com,"Adeyemi, Funke",Mother,funke.adeyemi@example.com,425-555-0810,1,Yoruba,5BAND1,"Rampersad, R"
+1780501,"Adeyemi, Bisi",05,F,04/22/2016,1015 156th Ave SE,"Bellevue, WA 98008",bisiadey@student.example.com,"Adeyemi, Segun",Father,segun.adeyemi@example.com,425-555-0811,2,Yoruba,5BAND1,"Rampersad, R"
+1780516,"Carmichael, Rowan",05,M,12/03/2015,14405 SE 16th St,"Bellevue, WA 98007",rowancarm@student.example.com,"Carmichael, Joan",Mother,joan.carmichael@example.com,425-555-0822,1,English,5BAND1,"Rampersad, R"
+1780523,"Dinh, Bao",05,M,06/17/2016,1550 148th Ave SE,"Bellevue, WA 98007",baodinh@student.example.com,"Dinh, Lan",Mother,lan.dinh@example.com,425-555-0833,1,Vietnamese,5BAND1,"Rampersad, R"
+1780523,"Dinh, Bao",05,M,06/17/2016,1550 148th Ave SE,"Bellevue, WA 98007",baodinh@student.example.com,"Dinh, Quan",Father,quan.dinh@example.com,425-555-0834,2,Vietnamese,5BAND1,"Rampersad, R"
+1780537,"Eriksen, Freya",05,F,02/08/2016,15712 SE 8th St,"Bellevue, WA 98008",freyaerik@student.example.com,"Eriksen, Astrid",Mother,astrid.eriksen@example.com,425-555-0845,1,English,5BAND1,"Rampersad, R"
+1780544,"Gutierrez, Marco",05,M,09/26/2015,1122 160th Ave SE,"Bellevue, WA 98008",marcoguti@student.example.com,"Gutierrez, Carmen",Mother,carmen.gutierrez@example.com,425-555-0856,1,Spanish,5BAND1,"Rampersad, R"
+1780544,"Gutierrez, Marco",05,M,09/26/2015,1122 160th Ave SE,"Bellevue, WA 98008",marcoguti@student.example.com,"Gutierrez, Luis",Father,luis.gutierrez@example.com,425-555-0857,2,Spanish,5BAND1,"Rampersad, R"
+1780558,"Haddad, Rania",05,F,07/14/2016,15220 SE 12th Pl,"Bellevue, WA 98007",raniahadd@student.example.com,"Haddad, Maha",Mother,maha.haddad@example.com,425-555-0868,1,Arabic,5BAND1,"Rampersad, R"
+1780558,"Haddad, Rania",05,F,07/14/2016,15220 SE 12th Pl,"Bellevue, WA 98007",raniahadd@student.example.com,"Haddad, Sami",Father,sami.haddad@example.com,425-555-0869,2,Arabic,5BAND1,"Rampersad, R"
+1780558,"Haddad, Rania",05,F,07/14/2016,15220 SE 12th Pl,"Bellevue, WA 98007",raniahadd@student.example.com,"Khoury, Nadia",Aunt,nadia.khoury@example.com,425-555-0870,3,Arabic,5BAND1,"Rampersad, R"
+1780561,"Pemberton, Georgia",05,F,10/30/2015,14830 SE 18th St,"Bellevue, WA 98007",georgiapemb@student.example.com,"Pemberton, Claire",Mother,claire.pemberton@example.com,425-555-0881,1,English,5BAND1,"Rampersad, R"

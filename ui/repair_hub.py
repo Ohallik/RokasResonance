@@ -51,7 +51,7 @@ _COST_WIDTHS = {
 
 class RepairHub(ttk.Toplevel):
     def __init__(self, parent, inventory_manager):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.inv = inventory_manager
         self.db = inventory_manager.db
         self._view = tk.StringVar(value="needs")
@@ -272,7 +272,7 @@ class RepairHub(ttk.Toplevel):
         if len(rows) == 1:
             return rows[0]["id"]
 
-        win = ttk.Toplevel(self)
+        win = ttk.Toplevel(master=self)
         win.title(f"Choose a repair to {verb}")
         win.grab_set()
         ttk.Label(win, text=f"This instrument has {len(rows)} open repairs.\n"
@@ -312,7 +312,7 @@ class RepairHub(ttk.Toplevel):
 
     def _add_repair_scan(self):
         """Scan/type a barcode or serial, then open a repair record for it."""
-        win = ttk.Toplevel(self)
+        win = ttk.Toplevel(master=self)
         win.title("Mark Instrument for Repair")
         win.resizable(False, False)
         win.grab_set()
@@ -434,7 +434,7 @@ class RepairHub(ttk.Toplevel):
         self._open_out_dialog(instrument_id, repair_ids)
 
     def _open_out_dialog(self, instrument_id, repair_ids):
-        win = ttk.Toplevel(self)
+        win = ttk.Toplevel(master=self)
         win.title("Mark Out for Repair")
         win.resizable(False, False)
         win.grab_set()
@@ -507,7 +507,7 @@ class RepairHub(ttk.Toplevel):
     def _open_mark_dialog(self, instrument_id, repair_ids, repair):
         multi = len(repair_ids) > 1
 
-        win = ttk.Toplevel(self)
+        win = ttk.Toplevel(master=self)
         win.title("Mark Repaired")
         win.resizable(False, False)
         win.grab_set()

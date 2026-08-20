@@ -192,8 +192,13 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                    command=self._delete_student).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="🗂️ Inactive Students", bootstyle=(SECONDARY, OUTLINE),
                    command=self._show_inactive_window).pack(side=LEFT, padx=2, pady=6)
-        ttk.Button(toolbar, text="📥 Import ▾", bootstyle=INFO,
-                   command=self._open_import_menu).pack(side=LEFT, padx=6, pady=6)
+        if not self._elementary:
+            # The 5th grade window already has the green Import Class List
+            # button in its own header; a second Import beside Inactive
+            # Students was one button too many for the same job.
+            ttk.Button(toolbar, text="📥 Import ▾", bootstyle=INFO,
+                       command=self._open_import_menu).pack(side=LEFT,
+                                                            padx=6, pady=6)
 
         ttk.Separator(toolbar, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=4)
 
@@ -1062,7 +1067,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                                      (s.get("last_name") or "").lower()),
                       reverse=True)
 
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title("Inactive / Former Students")
         win.resizable(True, True)
         win.grab_set()
@@ -1140,7 +1145,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         parent = parent or self.winfo_toplevel()
         sid = student["id"]
         name = f"{student['first_name']} {student['last_name']}".strip()
-        win = ttk.Toplevel(parent)
+        win = ttk.Toplevel(master=parent)
         win.title("Reactivate Student")
         win.resizable(False, False)
         win.grab_set()
@@ -1192,7 +1197,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             return
 
         # ── Scope dialog ───────────────────────────────────────────────────
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title("Export Students")
         win.resizable(False, False)
         win.grab_set()
@@ -1306,7 +1311,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         """Export a grade's students as a named-header CSV that a high-school
         director can re-import to auto-fill instrumentation + summer contacts."""
         # Choose grade + year
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title("Export for HS Directors")
         win.resizable(False, False)
         win.grab_set()
@@ -1501,7 +1506,7 @@ class _StudentImportDialog(_ClassOptionsMixin, ttk.Toplevel):
 
     def __init__(self, parent, db, paths: list, school_year: str,
                  program_type="band", site_id=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db          = db
         self.paths       = paths
         self.school_year = school_year
@@ -1746,7 +1751,7 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
 
     def __init__(self, parent, db, student_id=None, default_year=None,
                  program_type="band", site=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.student_id = student_id
         self.program_type = program_type or "band"
@@ -2217,7 +2222,7 @@ class _BulkAssignDialog(_ClassOptionsMixin, ttk.Toplevel):
     _class_options_include_empty = True     # assigns a class, so offer empties
 
     def __init__(self, parent, db, student_ids, program_type, site_id=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.student_ids = student_ids
         self.program_type = program_type
@@ -2406,7 +2411,7 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
     instrument, for students, parents, or everyone."""
 
     def __init__(self, parent, db, program_type, school_year, site_id=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.program_type = program_type
         self.school_year = school_year

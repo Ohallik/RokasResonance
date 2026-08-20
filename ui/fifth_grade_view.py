@@ -129,7 +129,11 @@ class FifthGradeView(ttk.Frame):
                    bootstyle=(PRIMARY, OUTLINE),
                    command=lambda s=site: self._import_handoff(s)
                    ).pack(side=LEFT, padx=(0, 6))
-        ttk.Button(setup, text="🗄 Import From CutTime / Charms",
+        # Named for what it does, not for two products.  Roka works the
+        # format out itself now, and a teacher whose list came from neither
+        # (or from a colleague's spreadsheet) had no reason to press a button
+        # naming software they have never used.
+        ttk.Button(setup, text="🗄 Import Instrument List",
                    bootstyle=(SECONDARY, OUTLINE),
                    command=lambda s=site: self._import_legacy(s)
                    ).pack(side=LEFT, padx=(0, 6))
@@ -206,7 +210,9 @@ class FifthGradeView(ttk.Frame):
 
         path = filedialog.askopenfilename(
             parent=self.winfo_toplevel(),
-            title=f"CutTime or Charms inventory export for {site['name']}",
+            title=f"Instrument list for {site['name']} "
+                  f"(CutTime spreadsheet, Charms CSV, or either exported "
+                  f"from a colleague)",
             filetypes=[("Spreadsheet or CSV", "*.xlsx *.xls *.csv"),
                        ("All files", "*.*")])
         if not path:
@@ -290,7 +296,7 @@ class FifthGradeView(ttk.Frame):
         would only repeat what the school record already knows.
         """
         options = [f"{site['name']}: Section {n}" for n in (1, 2)]
-        dlg = ttk.Toplevel(self.winfo_toplevel())
+        dlg = ttk.Toplevel(master=self.winfo_toplevel())
         dlg.title("Which section?")
         dlg.resizable(False, False)
         dlg.grab_set()
@@ -421,7 +427,7 @@ def _short(name: str) -> str:
 
 def open_fifth_grade_window(parent, db, base_dir, site_id=None):
     """Open (or raise) the 5th grade window, optionally on one school's tab."""
-    win = ttk.Toplevel(parent)
+    win = ttk.Toplevel(master=parent)
     win.title("5th Grade — Roka's Resonance")
     view = FifthGradeView(win, db, base_dir)
     view.pack(fill=BOTH, expand=True)

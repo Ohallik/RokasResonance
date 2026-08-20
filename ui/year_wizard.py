@@ -249,7 +249,7 @@ def import_class_list(db, students, school_year, ensemble, periods):
 
 class NewSchoolYearWizard(ttk.Toplevel):
     def __init__(self, parent, main_db, base_dir, current_year):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.main_db = main_db
         self.base_dir = base_dir
         self.current_year = current_year
@@ -572,7 +572,7 @@ class _AssignDialog(ttk.Toplevel):
     """Which ensemble + class period(s) a class list belongs to."""
 
     def __init__(self, parent, base_dir, filename, count):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.result = None
         self.title("Assign Class List")
         self.grab_set()
@@ -637,7 +637,7 @@ class _SectionAssignDialog(ttk.Toplevel):
     ``({section: ensemble}, [periods])``."""
 
     def __init__(self, parent, base_dir, filename, secs):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.result = None
         self.title("Map Class Sections")
         self.grab_set()

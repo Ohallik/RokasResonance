@@ -24,7 +24,7 @@ from ui.ensembles import PERIOD_OPTIONS
 
 class ImportWizard(ttk.Toplevel):
     def __init__(self, parent, main_db, base_dir, school_year):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = main_db
         self.base_dir = base_dir
         self.school_year = school_year
@@ -276,7 +276,7 @@ class ImportWizard(ttk.Toplevel):
         """Ask which of the teacher's classes each section in a multi-class file
         maps to (or skip).  Stores the map on the roster row."""
         secs = rec["sections"]
-        dlg = ttk.Toplevel(self)
+        dlg = ttk.Toplevel(master=self)
         dlg.title("Map class sections")
         dlg.grab_set()
         dlg.lift()
@@ -502,7 +502,7 @@ class _ReconcileDialog(ttk.Toplevel):
     the ones who never enrolled (recoverable), keep any late arrivals."""
 
     def __init__(self, parent, db, provisional):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.title("Review Incoming Students")
         self.grab_set()

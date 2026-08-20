@@ -1133,7 +1133,7 @@ class _JazzSetupDialog(ttk.Toplevel):
     and straight rows vs. concert arcs."""
 
     def __init__(self, parent, side="left", high_rows=1, view="rows"):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.result = None
         self.title("Jazz Setup")
         self.resizable(False, False)
@@ -1209,7 +1209,7 @@ class _JazzSetupDialog(ttk.Toplevel):
 
 class _StudentPicker(ttk.Toplevel):
     def __init__(self, parent, program_type, selected, scope, extra):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.result = None
         self.title("Choose Students")
         self.grab_set()
@@ -1302,7 +1302,7 @@ class _StudentPicker(ttk.Toplevel):
 
 class _ConflictsDialog(ttk.Toplevel):
     def __init__(self, parent, db, year, names):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.year = year
         self.names = names
@@ -1358,7 +1358,7 @@ class _ConflictsDialog(ttk.Toplevel):
 
 class _PinsDialog(ttk.Toplevel):
     def __init__(self, parent, db, year, names):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.year = year
         self.names = names
@@ -1459,7 +1459,7 @@ class _InstrumentDialog(ttk.Toplevel):
     than one and need a specific instrument for a particular concert)."""
 
     def __init__(self, parent, roster, overrides, options):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.result = None
         self._roster = roster
         self._overrides = dict(overrides or {})
@@ -1528,7 +1528,7 @@ class _SectionOrderDialog(ttk.Toplevel):
     """
 
     def __init__(self, parent, instruments, zones, n_rows, side_zones=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.result = None
         self.n_rows = n_rows
         self._zones = {i: list(zones.get(i, [])) for i in instruments}
@@ -1708,7 +1708,7 @@ def _chart_label(c):
 
 class _LoadDialog(ttk.Toplevel):
     def __init__(self, parent, charts):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.action = None
         self.chart_id = None
         self._charts = charts
@@ -1745,7 +1745,7 @@ class _LoadDialog(ttk.Toplevel):
 class _ShufflePrompt(ttk.Toplevel):
     def __init__(self, parent, on_all, on_members, on_sections,
                  on_clear_setup=None, has_setup=False):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.title("Shuffle")
         self.grab_set()
         self.lift()
@@ -1801,7 +1801,7 @@ class _GroupDialog(ttk.Toplevel):
 
     def __init__(self, parent, ensemble_periods, current, extra,
                  diagnostic=""):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.result = None
         self._ep = ensemble_periods
         cur = {(g.get("ensemble"), str(g.get("period", "all"))) for g in (current or [])}
@@ -1919,7 +1919,7 @@ class _SetupDialog(ttk.Toplevel):
     """View / rows / color / section-placement setup window."""
 
     def __init__(self, parent, cfg, concert):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.result = None
         self.title("Set Up")
         self.grab_set()
@@ -2005,7 +2005,7 @@ class _StudentSetupDialog(ttk.Toplevel):
     and name-display options."""
 
     def __init__(self, parent, view, roster):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self._view = view
         self.title("Student Set Up")
         self.grab_set()
@@ -2116,7 +2116,7 @@ def _ai_user_prompt(roster_lines, sections, instructions):
 
 class _AIDialog(ttk.Toplevel):
     def __init__(self, parent, base_dir, roster_lines, sections, on_apply):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.base_dir = base_dir
         self.roster_lines = roster_lines
         self.sections = sections

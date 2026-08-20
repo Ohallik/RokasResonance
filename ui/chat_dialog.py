@@ -581,7 +581,7 @@ def _build_combined_summary(db, band_db=None, mode: str = "band",
 class ChatDialog(ttk.Toplevel):
     def __init__(self, parent, db, base_dir: str, selected_instrument: dict = None,
                  summary_fn=None, selected_music: dict = None, mode: str = "band"):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.base_dir = base_dir
         self._mode = mode

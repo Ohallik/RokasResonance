@@ -1296,7 +1296,7 @@ class MusicManager(ttk.Frame):
 
         levels = progression_levels(self.mode)
 
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title("Performances by Ensemble — Roka's Resonance")
         win.resizable(True, True)
         win.lift()
@@ -1792,7 +1792,7 @@ class _TidyMarkupDialog(ttk.Toplevel):
     goes.  Tick boxes are there so one odd piece can be left alone."""
 
     def __init__(self, parent, db, affected):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self._affected = affected
         self.cleaned = 0
@@ -1933,7 +1933,7 @@ class _OMRProcessDialog(ttk.Toplevel):
     """Modal dialog that runs OMR processing with progress feedback."""
 
     def __init__(self, parent, db, music_id: int, base_dir: str):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.music_id = music_id
         self.base_dir = base_dir
@@ -2267,7 +2267,7 @@ class _LLMValidateDialog(ttk.Toplevel):
     _BACKUP_MODELS = ["claude-opus-4-6", "openai/gpt-4o"]
 
     def __init__(self, parent, db, base_dir: str, pieces: list[dict], mode: str = "band"):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.base_dir = base_dir
         self._mode = mode
@@ -3134,7 +3134,7 @@ class _FixSuggestionsDialog(ttk.Toplevel):
     """Shows LLM validation suggestions grouped by type with apply options."""
 
     def __init__(self, parent, db, base_dir: str, suggestions: list[dict]):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.base_dir = base_dir
         self.suggestions = suggestions

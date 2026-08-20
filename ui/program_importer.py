@@ -254,7 +254,7 @@ def convert_publisher_to_pdf(path: str) -> str:
 
 class ProgramImportDialog(ttk.Toplevel):
     def __init__(self, parent, db, base_dir, paths, mode="band", on_done=None, max_pages=1):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.base_dir = base_dir
         self.paths = [paths] if isinstance(paths, str) else list(paths)
@@ -645,7 +645,7 @@ class ProgramImportDialog(ttk.Toplevel):
         # Local, correctable copy of the match decision
         match_state = {"id": it["match_id"], "title": it["match_title"]}
 
-        win = ttk.Toplevel(self)
+        win = ttk.Toplevel(master=self)
         win.title("Verify / Correct Piece")
         win.grab_set()
         ttk.Label(win, text="Verify / Correct Piece", font=("Segoe UI", 12, "bold"),
@@ -733,7 +733,7 @@ class ProgramImportDialog(ttk.Toplevel):
     def _pick_library_piece(self):
         """Searchable picker over the library. Returns a piece dict, None (=make
         new), or the string 'cancel'."""
-        win = ttk.Toplevel(self)
+        win = ttk.Toplevel(master=self)
         win.title("Choose Library Piece")
         win.grab_set()
         ttk.Label(win, text="Type to filter, then pick the matching piece:",

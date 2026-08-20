@@ -18,7 +18,7 @@ from ui.theme import fs, muted_fg, fit_window
 
 class UniformChartView(ttk.Toplevel):
     def __init__(self, parent, db, base_dir):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.base_dir = base_dir
         self.title("Uniform Assignments — Who Has What")

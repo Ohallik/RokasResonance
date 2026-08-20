@@ -85,7 +85,7 @@ class SettingsDialog(ttk.Toplevel):
     _school_name_at_open = ""
 
     def __init__(self, parent, base_dir: str, app_dir: str = None, db=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.base_dir = base_dir
         self._app_dir = app_dir
         # Sites live in the database, not in settings.json.  Without a db the

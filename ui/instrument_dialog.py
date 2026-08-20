@@ -33,7 +33,7 @@ DEFAULT_SIZE_OPTIONS = ["1/16", "1/10", "1/8", "1/4", "1/2", "3/4", "7/8",
 
 class InstrumentDialog(ttk.Toplevel):
     def __init__(self, parent, db, instrument_id=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.instrument_id = instrument_id
         self._result = None
@@ -285,7 +285,7 @@ class InstrumentDialog(ttk.Toplevel):
         self._refresh_action_bar()
 
     def _pick_checkout(self, actives):
-        win = ttk.Toplevel(self)
+        win = ttk.Toplevel(master=self)
         win.title("Which checkout to check in?")
         win.grab_set()
         ttk.Label(win, text="Choose which person is returning it:",

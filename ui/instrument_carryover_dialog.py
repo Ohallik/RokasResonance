@@ -136,7 +136,7 @@ def _label_for(inst) -> str:
 
 class InstrumentCarryOverDialog(ttk.Toplevel):
     def __init__(self, parent, db, school_year=None, base_dir=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.base_dir = base_dir
         self.school_year = school_year or db.current_school_year()

@@ -17,7 +17,7 @@ class OneNoteDialog(ttk.Toplevel):
     """OneNote integration dialog with Import, Export, and Sync tabs."""
 
     def __init__(self, parent, db, base_dir, selected_class_id=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
 
         self.db = db
         self.base_dir = base_dir

@@ -20,7 +20,7 @@ from ui.uniform_dialog import StudentPicker
 
 class UniformScanDialog(ttk.Toplevel):
     def __init__(self, parent, db, refresh_callback=None, initial_tab=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.refresh_callback = refresh_callback
         self._out_uniform = None

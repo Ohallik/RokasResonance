@@ -217,6 +217,9 @@ class FieldTripsView(ttk.Frame):
                                         "template.",
                       font=("Segoe UI", fs(10)), foreground=muted_fg()
                       ).pack(anchor=W, padx=8, pady=14)
+        if getattr(self, "_folded", None) is None:
+            # First open: existing trips start folded; new ones appear open.
+            self._folded = {t["id"] for t in upcoming}
         for t in upcoming:
             self._trip_card(t, students)
 
@@ -638,7 +641,7 @@ class FieldTripsView(ttk.Frame):
                                  parent=self.winfo_toplevel())
             return
 
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title("Copy From Previous Trip")
         win.grab_set()
         ttk.Label(win, text="Choose the trip to use as a template:",
@@ -848,7 +851,7 @@ class _PastTripDialog(ttk.Toplevel):
             pass
 
     def _view_email(self, label, text):
-        win = ttk.Toplevel(self)
+        win = ttk.Toplevel(master=self)
         win.title(f"Saved email — {label}")
         win.grab_set()
         box = tk.Text(win, font=("Calibri", 11), width=74, height=20,
@@ -2710,7 +2713,7 @@ class _RemindersDialog(ttk.Toplevel):
 
     def _show_email(self, audience, label):
         subject, body = self._email_for(audience, label)
-        win = ttk.Toplevel(self)
+        win = ttk.Toplevel(master=self)
         win.title(f"Email Template — {audience}, {label}")
         win.grab_set()
         ttk.Label(win, text=f"✉  {audience.title()} — {label} reminder",

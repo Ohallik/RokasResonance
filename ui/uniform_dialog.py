@@ -138,7 +138,7 @@ class StudentPicker(ttk.Frame):
 class UniformDialog(ttk.Toplevel):
     def __init__(self, parent, db, uniform_id=None, garment_types=None,
                  default_type=None, site_id=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.site_id = site_id   # the school whose closet this garment joins
         self.uniform_id = uniform_id
@@ -316,7 +316,7 @@ class UniformDialog(ttk.Toplevel):
 # ──────────────────────────────────────────────── Single check out / in ───────
 class UniformCheckoutDialog(ttk.Toplevel):
     def __init__(self, parent, db, uniform_id, mode="checkout", checkout_data=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.uniform_id = uniform_id
         self.mode = mode

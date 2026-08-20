@@ -21,7 +21,7 @@ from ui.theme import px
 def _pick_from_list(parent, title, prompt, options):
     """Tiny modal: choose one option from a dropdown.  Returns the string or
     None if canceled."""
-    dlg = ttk.Toplevel(parent)
+    dlg = ttk.Toplevel(master=parent)
     dlg.title(title)
     dlg.resizable(False, False)
     dlg.grab_set()
@@ -477,7 +477,7 @@ class BudgetManager(ttk.Frame):
 
 class _TxnDialog(ttk.Toplevel):
     def __init__(self, parent, db, school_year, txn=None, on_done=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.school_year = school_year
         self.txn = txn
@@ -634,7 +634,7 @@ class _FieldTripDialog(ttk.Toplevel):
     substitute rate (editable, remembered), food, other → one Field Trip expense."""
 
     def __init__(self, parent, db, base_dir, school_year, program_type="band", on_done=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.base_dir = base_dir
         self.school_year = school_year
@@ -904,7 +904,7 @@ class _FieldTripDialog(ttk.Toplevel):
 
 class _CategoryDialog(ttk.Toplevel):
     def __init__(self, parent, db, on_done=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.on_done = on_done
         self.title("Budget Categories")
@@ -967,7 +967,7 @@ class _CategoryDialog(ttk.Toplevel):
 
 class _FeesDialog(ttk.Toplevel):
     def __init__(self, parent, db, program_type, school_year):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.program_type = program_type
         self.base_dir = getattr(parent, "base_dir", "")
@@ -1273,7 +1273,7 @@ class _FeesDialog(ttk.Toplevel):
         except Exception:
             pass
 
-        win = ttk.Toplevel(self)
+        win = ttk.Toplevel(master=self)
         win.title(f"Email — Unpaid: {fee}")
         win.grab_set()
         only_out = tk.BooleanVar(value=False)
@@ -1357,7 +1357,7 @@ class _FeesDialog(ttk.Toplevel):
         fit_window(win, 640, 580)
 
     def _manage_types(self):
-        win = ttk.Toplevel(self)
+        win = ttk.Toplevel(master=self)
         win.title("Fee Types")
         win.grab_set()
         ttk.Label(win, text="Fee Types", font=("Segoe UI", 12, "bold"),
@@ -1487,7 +1487,7 @@ class _StudentPickerDialog(ttk.Toplevel):
     it is a handful.  Whole classes have their own button.
     """
     def __init__(self, parent, db, program_type, school_year, fee=""):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.base_dir = getattr(parent, "base_dir", "")
         self.program_type = program_type

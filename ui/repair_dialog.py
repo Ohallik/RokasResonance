@@ -46,7 +46,7 @@ def confirm_and_clear_needs_repair(parent, db, instrument_id):
 class RepairDialog(ttk.Toplevel):
     def __init__(self, parent, db, instrument_id: int, repair_id=None,
                  prefill_data: dict = None, title_suffix: str = ""):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.instrument_id = instrument_id
         self.repair_id = repair_id

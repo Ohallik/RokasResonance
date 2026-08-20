@@ -1,13 +1,14 @@
-﻿Charms Office Assistant - Inventory - Medina Orchestra
+﻿Charms Office Assistant - Inventory - Medina Band
 Printed 08/20/2026
 
 Category,Description,Brand,Model,Serial #,Barcode,District No.,Case #,Cond,Quantity,Date Purch,Year Purch,Amt Paid,Cur Value,PO Num,Last Service,Locker,Lock #,Combo,Accessories,Vendor,Comments,Assigned To F,Assigned To L,Date Assigned
-Strings,Violin 1/2,Eastman,VL80,EVL80-33104,BSD066201,BSD066201,,Good,1,08/26/2021,2021,265.00,195.00,PO-135220,,Cabinet A,,,"Case, bow, rosin, shoulder rest",Hammond Ashley Violins,,,,
-Strings,Violin 3/4,Eastman,VL80,EVL80-33119,BSD066202,BSD066202,,Good,1,08/26/2021,2021,279.00,205.00,PO-135220,,Cabinet A,,,"Case, bow, rosin, shoulder rest",Hammond Ashley Violins,,,,
-Strings,Violin 3/4,Knilling,110VN,KN110-44027,BSD066203,BSD066203,,Fair,1,09/14/2016,2016,245.00,120.00,,07/22/2024,Cabinet A,,,"Case, bow",Kennelly Keys Music,Bow rehaired summer 2024,,,
-Strings,Viola 13 inch,Eastman,VA80,EVA80-20551,BSD066210,BSD066210,,Good,1,08/26/2021,2021,345.00,250.00,PO-135220,,Cabinet A,,,"Case, bow, rosin, shoulder rest",Hammond Ashley Violins,,,,
-Strings,Viola 14 inch,Eastman,VA80,EVA80-20563,BSD066211,BSD066211,,Excellent,1,02/09/2024,2024,365.00,340.00,PO-143901,,Cabinet A,,,"Case, bow, rosin, shoulder rest",Hammond Ashley Violins,,,,
-Strings,Cello 1/4,Cremona,SC-100,CR100-61180,BSD066220,BSD066220,,Good,1,09/14/2016,2016,699.00,400.00,,,Cello rack,,,"Soft case, bow, rosin, endpin stop",Music and Arts,,,,
-Strings,Cello 1/2,Eastman,VC80,EVC80-41220,BSD066221,BSD066221,,Needs Repair,1,08/26/2021,2021,725.00,430.00,PO-135220,,Repair shelf,,,"Soft case, bow",Hammond Ashley Violins,"Peg slips, will not hold a tuning",,,
-Strings,Cello 3/4,Eastman,VC100,EVC100-28844,BSD066222,BSD066222,,Excellent,1,02/09/2024,2024,835.00,790.00,PO-143901,,Cello rack,,,"Padded case, bow, rosin, endpin stop",Hammond Ashley Violins,,,,
-Strings,String Bass 1/4,Palatino,VB-004,PAL004-9931,BSD066230,BSD066230,,Good,1,09/14/2016,2016,1395.00,820.00,,08/15/2023,Bass corner,,,"Padded cover, French bow, rosin",Hammond Ashley Violins,"Stays at school, too large to send home",,,
+Woodwind,Flute,Yamaha,YFL-222,YF222-50318,BSD066301,BSD066301,,Good,1,08/22/2019,2019,459.00,330.00,PO-129610,,Cabinet A,,,"Case, cleaning rod",Kennelly Keys Music,,,,
+Woodwind,"Clarinet, Bb",Yamaha,YCL-255,YC255-51427,BSD066310,BSD066310,,Good,1,08/21/2019,2019,419.00,290.00,PO-129610,06/22/2025,Cabinet A,,,"Case, mouthpiece, ligature, swab",Kennelly Keys Music,,,,
+Woodwind,"Clarinet, Bb",Buffet Crampon,Prodige,B560112,BSD066311,BSD066311,,Excellent,1,08/22/2023,2023,649.00,580.00,PO-141415,,Cabinet A,,,"Case, mouthpiece, ligature, swab",Ted Brown Music,,,,
+Woodwind,Alto Saxophone,Yamaha,YAS-26,YA26-53019,BSD066320,BSD066320,,Good,1,08/21/2019,2019,1150.00,850.00,PO-129610,,Cabinet B,,,"Case, mouthpiece, ligature, neck strap",Music and Arts,,,,
+Brass,"Trumpet, Bb",Bach,TR300H2,TR300-54326,BSD066330,BSD066330,,Fair,1,08/21/2013,2013,589.00,230.00,,,Cabinet B,,,"Case, 7C mouthpiece",Kennelly Keys Music,"Finish worn, valves good",,,
+Brass,"Trumpet, Bb",Yamaha,YTR-2330,YT2330-55810,BSD066331,BSD066331,,Excellent,1,08/22/2023,2023,1099.00,990.00,PO-141415,,Cabinet B,,,"Case, mouthpiece",Ted Brown Music,,,,
+Brass,Trombone,Yamaha,YSL-354,YS354-56924,BSD066340,BSD066340,,Good,1,08/21/2019,2019,1150.00,790.00,PO-129610,,Cabinet C,,,"Case, mouthpiece",Kennelly Keys Music,,,,
+Brass,French Horn,Holton,H602,H602-58133,BSD066350,BSD066350,,Needs Repair,1,08/21/2016,2016,1749.00,800.00,,09/02/2025,Repair shelf,,,"Case, mouthpiece",Kennelly Keys Music,"Water key spring gone, part on order",,,
+Percussion,Snare Drum Kit,Pearl,PL-900C,PL900-59240,BSD066360,BSD066360,,Good,1,08/21/2019,2019,349.00,220.00,PO-129610,,Percussion closet,,,"Stand, sticks, practice pad, rolling case",Music and Arts,,,,
+Percussion,Bell Kit,Musser,M645,MU645-60415,BSD066361,BSD066361,,Good,1,08/22/2019,2019,398.00,260.00,PO-129610,,Percussion closet,,,"Stand, mallets",Music and Arts,,,,

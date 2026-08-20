@@ -40,7 +40,7 @@ class CheckoutDialog(ttk.Toplevel):
         mode: 'checkout' or 'checkin'
         checkout_data: dict of the active checkout record (for checkin mode)
         """
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.instrument_id = instrument_id
         self.mode = mode
@@ -376,7 +376,7 @@ class LoanDialog(ttk.Toplevel):
     instrument is marked 'On Loan' and is unavailable for local checkout."""
 
     def __init__(self, parent, db, instrument_id: int):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.instrument_id = instrument_id
         self.saved = False
@@ -471,7 +471,7 @@ class ItemCheckoutDialog(ttk.Toplevel):
     name (a para, another teacher)."""
 
     def __init__(self, parent, db):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self._selected_student_id = None
         self._ac_selecting = False

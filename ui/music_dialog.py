@@ -64,7 +64,7 @@ ACCOMPANIMENT_OPTIONS = [
 class MusicDialog(ttk.Toplevel):
     def __init__(self, parent, db, base_dir: str, music_id=None, prefill_data=None, mode: str = "band",
                  site_id=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.site_id = site_id   # the school whose library this window is
         self.base_dir = base_dir

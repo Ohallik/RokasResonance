@@ -929,7 +929,7 @@ class _MalletEquipmentDialog(ttk.Toplevel):
     section's rotation."""
 
     def __init__(self, parent, db, initial=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self._initial = initial
         self.saved = False
@@ -1066,7 +1066,7 @@ class _StationsDialog(ttk.Toplevel):
     """
 
     def __init__(self, parent, section_name, class_type, current=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.saved = False
         self.stations = None
         self._class_type = class_type
@@ -1213,7 +1213,7 @@ class _FromStudentsDialog(ttk.Toplevel):
     """
 
     def __init__(self, parent, main_db, base_dir, school_year, existing_names):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.main_db = main_db
         self.base_dir = base_dir
         self.names = []
@@ -1418,7 +1418,7 @@ class _GroupDialog(ttk.Toplevel):
 
     def __init__(self, parent, db, school_year, group=None,
                  main_db=None, base_dir=None, student_year=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.main_db = main_db
         self.base_dir = base_dir
@@ -1593,7 +1593,7 @@ class _GroupDialog(ttk.Toplevel):
 
 class _AddPlayersDialog(ttk.Toplevel):
     def __init__(self, parent, is_entry):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.names = []
         self.start_full = False
         self.title("Add Players")
@@ -1640,7 +1640,7 @@ class _AddPlayersDialog(ttk.Toplevel):
 
 class _SpecialDayDialog(ttk.Toplevel):
     def __init__(self, parent, day, existing):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.result = None
         self.title(f"Special Day — Rotation Day {day}")
         self.resizable(False, False)
@@ -1708,7 +1708,7 @@ class _LimitStationsDialog(ttk.Toplevel):
 
     def __init__(self, parent, name, class_type, mallet_instruments, current,
                  stations=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.saved = False
         self.allowed = None
         self._name = name
@@ -1799,7 +1799,7 @@ class _LimitStationsDialog(ttk.Toplevel):
 class _FullGridDialog(ttk.Toplevel):
     def __init__(self, parent, group, payload, start_day, inventory=None,
                  stations=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.title(f"Full Rotation Grid — {group['name']}")
         self.grab_set()
         self.lift()
@@ -1852,7 +1852,7 @@ class _FullGridDialog(ttk.Toplevel):
 
 def _prompt_text(parent, title, label, initial=""):
     """Tiny modal single-line text prompt returning the string or None."""
-    dlg = ttk.Toplevel(parent)
+    dlg = ttk.Toplevel(master=parent)
     dlg.title(title)
     dlg.resizable(False, False)
     dlg.grab_set()

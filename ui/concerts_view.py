@@ -127,7 +127,7 @@ class ConcertsView(ttk.Frame):
         if not due_list:
             return
 
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title("Concert Reminders Due")
         win.lift()
         win.attributes("-topmost", True)
@@ -276,6 +276,11 @@ class ConcertsView(ttk.Frame):
                                         "template.",
                       font=("Segoe UI", fs(10)), foreground=muted_fg()
                       ).pack(anchor=W, padx=8, pady=14)
+        # First open of the tab: every existing concert starts folded, and
+        # the teacher opens the one being worked on.  Anything created after
+        # that appears open, because it is the one being worked on.
+        if getattr(self, "_folded", None) is None:
+            self._folded = {c["id"] for c in upcoming}
         for c in upcoming:
             self._concert_card(c)
         self._restore_scroll(was_at)
@@ -714,7 +719,7 @@ class ConcertsView(ttk.Frame):
     def _program_options(self, prefill):
         """The Program Builder: format choice plus every fillable text block
         that prints on the program, pre-filled and editable in one place."""
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title("Build Program")
         win.resizable(True, True)
         win.grab_set()
@@ -829,7 +834,7 @@ class ConcertsView(ttk.Frame):
         """Run a Publisher COM job in a worker thread with a small progress
         window (Publisher takes a few seconds to start).  open_style: print
         style to pre-select when the user opens the result (booklet fold)."""
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title("Working…")
         win.grab_set()
         ttk.Label(win, text=message, font=("Segoe UI", 10)).pack(padx=24, pady=(18, 8))
@@ -966,7 +971,7 @@ class _LinkTripDialog(ttk.Toplevel):
     """Off-site concert: join an existing field trip, or start one."""
 
     def __init__(self, parent, concert, trips):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.choice = None          # None | "create" | trip id
         self.title("Off-site concert")
         self.resizable(False, False)
@@ -1414,7 +1419,7 @@ class _RepertoireDialog(ttk.Toplevel):
             return
 
         # master= on purpose: ttkbootstrap's Toplevel takes the TITLE as its
-        # first positional argument, so ttk.Toplevel(self) silently parents the
+        # first positional argument, so ttk.Toplevel(master=self) silently parents the
         # window to the root and names it after the widget.
         dlg = ttk.Toplevel(master=self)
         dlg.title("Link to sheet music")
@@ -1798,7 +1803,7 @@ class _RemindersDialog(ttk.Toplevel):
     def _show_email(self, stage):
         """Preview + edit the reminder email before it goes out."""
         subject, body = self._family_email(stage)
-        win = ttk.Toplevel(self)
+        win = ttk.Toplevel(master=self)
         win.title(f"Email Template — {stage} reminder")
         win.grab_set()
         ttk.Label(win, text=f"✉  Email Template — {stage} reminder",
@@ -1891,7 +1896,7 @@ class _RemindersDialog(ttk.Toplevel):
 
     def _show_staff_email(self):
         subject, _auto = ct.staff_email(self.concert, self.school)
-        win = ttk.Toplevel(self)
+        win = ttk.Toplevel(master=self)
         win.title("Email Template — office / custodians / PE / admin")
         win.grab_set()
         ttk.Label(win, text="✉  Staff & facilities email",

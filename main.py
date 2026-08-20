@@ -238,7 +238,7 @@ class ProfileSelector:
     def __init__(self, parent):
         self.selected = None
 
-        self.dialog = ttk.Toplevel(parent)
+        self.dialog = ttk.Toplevel(master=parent)
         self.dialog.title("Select Teacher Profile — Roka's Resonance")
         self.dialog.resizable(False, False)
         self.dialog.grab_set()
@@ -384,7 +384,7 @@ def run_first_import(db: Database, parent_window, import_flag: str):
     import threading
     from importer import run_full_import
 
-    dialog = ttk.Toplevel(parent_window)
+    dialog = ttk.Toplevel(master=parent_window)
     dialog.title("First Run — Importing Inventory Data")
     dialog.resizable(False, False)
     dialog.grab_set()
@@ -664,6 +664,21 @@ def main():
         resizable=(True, True),
     )
     _log_line("CHECKPOINT: after ttk.Window")
+    # The Roka icon on every window.  ttkbootstrap stamps its own feather on
+    # any window that never gets an icon, and no window ever got one -- the
+    # .ico on the exe only covers Explorer and the taskbar.  default=True
+    # makes this the icon for every Toplevel the app ever opens.
+    try:
+        import sys as _sys
+        _here = getattr(_sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+        _logo = os.path.join(_here, "assets", "banner_logo.png")
+        if os.path.exists(_logo):
+            app._roka_icon = tk.PhotoImage(file=_logo)   # keep a reference
+            # The raw Tcl form: wm_iconphoto's Python signature moved between
+            # versions, and this one is the same everywhere.
+            app.tk.call("wm", "iconphoto", app._w, "-default", app._roka_icon)
+    except Exception:
+        pass
     app.minsize({"normal": 580, "large": 640, "extra_large": 720}.get(startup_font_size, 580), 650)
     app.withdraw()
 

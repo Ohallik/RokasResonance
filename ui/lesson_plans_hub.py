@@ -511,7 +511,7 @@ class _ManageClassesDialog(ttk.Toplevel):
     """
 
     def __init__(self, parent, classes, program_type, main_db=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         import class_registry as cr
         self._cr = cr
         self.result = None

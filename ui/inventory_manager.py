@@ -943,7 +943,7 @@ class InventoryManager(ttk.Frame):
 
     def _pick_active_checkout(self, active, verb):
         """Choose one of several active checkouts. Returns a checkout dict or None."""
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title(f"Which checkout to {verb}?")
         win.grab_set()
         ttk.Label(win, text=f"This instrument is checked out to {len(active)} people.\n"
@@ -1016,7 +1016,7 @@ class InventoryManager(ttk.Frame):
 
     def _open_scan_chooser(self, mode):
         is_out = mode == "checkout"
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title("Check Out" if is_out else "Check In")
         win.resizable(False, False)
         win.grab_set()
@@ -1359,7 +1359,7 @@ class InventoryManager(ttk.Frame):
         selected_ids = {int(iid) for iid in self.tree.selection()}
         n_sel = len(selected_ids)
 
-        dlg = ttk.Toplevel(self.winfo_toplevel())
+        dlg = ttk.Toplevel(master=self.winfo_toplevel())
         dlg.title("Export Repairs")
         dlg.resizable(False, False)
         dlg.grab_set()

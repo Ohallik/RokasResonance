@@ -413,7 +413,7 @@ class ResourceLibrary(ttk.Frame):
 class ResourceDialog(ttk.Toplevel):
     def __init__(self, parent, db, resource_id=None, default_type=None,
                  default_path=None, default_name=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.resource_id = resource_id
         self.default_type = default_type

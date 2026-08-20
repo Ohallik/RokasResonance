@@ -660,7 +660,7 @@ class _SeatsDialog(ttk.Toplevel):
     """Edit the seats in play, each with a capacity (players at once)."""
 
     def __init__(self, parent, pairs):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.saved = False
         self.seats = []
         self.title("Seats in Play")
@@ -760,7 +760,7 @@ class _PartLimitsDialog(ttk.Toplevel):
     and Guitar.  Each limit caps the TOTAL players over the seats you check."""
 
     def __init__(self, parent, seat_names, pools):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.saved = False
         self.pools = []
         self._seat_names = list(seat_names)
@@ -857,7 +857,7 @@ class _PartLimitsDialog(ttk.Toplevel):
 
 class _AddPlayersDialog(ttk.Toplevel):
     def __init__(self, parent):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.names = []
         self.title("Add Players")
         self.resizable(False, False)
@@ -898,7 +898,7 @@ class _PlayerPartsDialog(ttk.Toplevel):
     """Tick the seats one player can cover."""
 
     def __init__(self, parent, name, seats, current):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.saved = False
         self.parts = list(current)
         self.title(f"Instruments — {name}")
@@ -950,7 +950,7 @@ class _SongLineupDialog(ttk.Toplevel):
     ROTATE = "— (rotate)"
 
     def __init__(self, parent, title, pairs, players, current):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.saved = False
         self.title_text = title
         self.title(f"Lineup — {title}")
@@ -1028,7 +1028,7 @@ class _SongLineupDialog(ttk.Toplevel):
 
 
 def _prompt_text(parent, title, label, initial=""):
-    dlg = ttk.Toplevel(parent)
+    dlg = ttk.Toplevel(master=parent)
     dlg.title(title)
     dlg.resizable(False, False)
     dlg.grab_set()

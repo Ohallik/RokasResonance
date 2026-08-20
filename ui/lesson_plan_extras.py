@@ -340,7 +340,7 @@ class SubstitutePlanDialog(ttk.Toplevel):
     """Dialog for generating simplified substitute teacher lesson plans."""
 
     def __init__(self, parent, db, class_id, date_str, base_dir):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.class_id = class_id
         self.date_str = date_str
@@ -504,7 +504,7 @@ class PrintExportDialog(ttk.Toplevel):
     """Export and print dialog for lesson plans and curriculum."""
 
     def __init__(self, parent, db, class_id=None, date_str=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.class_id = class_id
         self.date_str = date_str

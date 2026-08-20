@@ -19,7 +19,7 @@ def _default_return_date() -> dt_date:
 
 class BulkCheckoutDialog(ttk.Toplevel):
     def __init__(self, parent, db, base_dir: str, refresh_callback=None, initial_tab=None):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.base_dir = base_dir
         self._instrument = None          # currently loaded instrument row

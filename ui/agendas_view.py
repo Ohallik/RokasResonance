@@ -1963,7 +1963,7 @@ class _PresentWindow(ttk.Toplevel):
     """
 
     def __init__(self, parent, view):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.view = view
         self.title("Agenda — Present")
         self._img_refs = []

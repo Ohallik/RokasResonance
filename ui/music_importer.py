@@ -1001,7 +1001,7 @@ class BatchImportDialog(ttk.Toplevel):
 
     def __init__(self, parent, paths: list[str], base_dir: str,
                  existing_titles: set[str] | None = None, mode: str = "band"):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.paths          = paths
         self.base_dir       = base_dir
         self._mode          = mode

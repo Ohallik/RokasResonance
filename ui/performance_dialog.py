@@ -13,7 +13,7 @@ from ui.ensembles import ensembles_for
 
 class PerformanceDialog(ttk.Toplevel):
     def __init__(self, parent, db, music_id: int, performance_id=None, mode="band"):
-        super().__init__(parent)
+        super().__init__(master=parent)
         self.db = db
         self.music_id = music_id
         self.performance_id = performance_id

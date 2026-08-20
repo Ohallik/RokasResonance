@@ -593,6 +593,14 @@ class MainMenu(ttk.Frame):
 
         grid = ttk.Frame(btn_area)
         grid.grid(row=1, column=0, columnspan=2, sticky="ew", pady=2)
+        if sites:
+            # ONE button.  The 5th grade window already holds a tab per
+            # school, so a hub button per school opened the same window six
+            # ways and implied six separate places that do not exist.
+            self._nav_button(
+                grid, f"  🎺  5th Grade  ({len(sites)} school"
+                      f"{'s' if len(sites) != 1 else ''})",
+                self._open_fifth_grade, "rose").pack(fill=X, ipady=btn_pad)
         if not sites:
             # Setup can be finished without naming a school.  Say so and offer
             # the way in, rather than showing a heading over an empty space.
@@ -607,20 +615,7 @@ class MainMenu(ttk.Frame):
                                                                ipady=btn_pad)
         # Three across at most.  Six schools in one row would be six slivers,
         # and the name is the whole content of the button.
-        cols = min(3, max(1, len(sites)))
-        for c in range(cols):
-            grid.columnconfigure(c, weight=1)
-        for i, site in enumerate(sites):
-            self._nav_button(
-                grid, f"  🎺  {_short(site['name'])}",
-                lambda s=site: self._open_fifth_grade(s["id"]),
-                self._SCHOOL_HUES[i % len(self._SCHOOL_HUES)],
-            ).grid(row=i // cols, column=i % cols, sticky="ew",
-                   padx=(0 if i % cols == 0 else 3,
-                         0 if i % cols == cols - 1 else 3),
-                   pady=2, ipady=btn_pad)
-
-        row = (len(sites) + cols - 1) // cols + 1
+        row = 2
         ttk.Label(
             btn_area, text="Teacher Prep",
             font=("Segoe UI", fs(9), "bold"), foreground=muted_fg(),
@@ -806,7 +801,7 @@ class MainMenu(ttk.Frame):
         from updater import download_and_install
         import subprocess
 
-        dlg = ttk.Toplevel(self.winfo_toplevel())
+        dlg = ttk.Toplevel(master=self.winfo_toplevel())
         dlg.title(f"Installing {tag}")
         dlg.resizable(False, False)
         dlg.grab_set()
@@ -911,7 +906,7 @@ class MainMenu(ttk.Frame):
         if self._raise_or_open(key):
             return
         from ui.inventory_manager import InventoryManager
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title(("Manage Equipment Inventory — Roka's Resonance" if not site
                    else f"Equipment — {site['name']}"))
         win.state("zoomed")
@@ -931,7 +926,7 @@ class MainMenu(ttk.Frame):
         if self._raise_or_open(key):
             return
         from ui.uniform_manager import UniformManager
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title("Uniforms & Attire — Roka's Resonance" if not site
                   else f"Uniforms — {site['name']}")
         win.state("zoomed")
@@ -1011,7 +1006,7 @@ class MainMenu(ttk.Frame):
         if self._raise_or_open(key):
             return
         from ui.budget_manager import BudgetManager
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title("Budget — Roka's Resonance" if not site
                   else f"Budget — {site['name']}")
         win.state("zoomed")
@@ -1033,7 +1028,7 @@ class MainMenu(ttk.Frame):
         from ui.student_manager import StudentManager
         from ui.settings_dialog import load_settings
         program_type = (load_settings(self.base_dir).get("teacher") or {}).get("program_type", "band")
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title(("Student Manager — Roka's Resonance" if not site
                    else f"Students — {site['name']}"))
         win.resizable(True, True)
@@ -1171,7 +1166,7 @@ class MainMenu(ttk.Frame):
         if site:
             title = f"Sheet Music — {site['name']}"
 
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title(title)
         win.state("zoomed")
         if site:
@@ -1186,7 +1181,7 @@ class MainMenu(ttk.Frame):
         if self._raise_or_open("lesson_plans"):
             return
         from ui.lesson_plans_hub import LessonPlansHub
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title("Teacher Tools — Roka's Resonance")
         win.state("zoomed")
         hub = LessonPlansHub(win, self.db)
@@ -1205,7 +1200,7 @@ class MainMenu(ttk.Frame):
         self._show_active_checkouts_window()
 
     def _show_active_checkouts_window(self):
-        win = ttk.Toplevel(self.winfo_toplevel())
+        win = ttk.Toplevel(master=self.winfo_toplevel())
         win.title("Active Checkouts — Roka's Resonance")
         win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("checkouts"))
         self._windows["checkouts"] = win
