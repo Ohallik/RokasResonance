@@ -101,7 +101,7 @@ class OnboardingWizard(ttk.Toplevel):
         self._build_classes(body)
         self._build_import(body)
         self._build_sharing(body)
-        fit_window(self, 700, 700)
+        fit_window(self, 800, 700)   # an inch wider: the Add button lives here
 
     # ── 1. About ──
     def _build_about(self, parent, profile_name):
@@ -205,15 +205,20 @@ class OnboardingWizard(ttk.Toplevel):
         add = ttk.Frame(self._elem_box)
         add.pack(fill=X)
         self._elem_name = tk.StringVar()
+        self._elem_program = tk.StringVar(value="band")
+        # Add and the two program buttons are packed from the RIGHT, and the
+        # school box takes whatever is left.  Packed left to right, a long
+        # school name pushed Add off the edge of the window, which is how an
+        # itinerant reached the end of setup with no schools added.
+        ttk.Button(add, text="Add", bootstyle=SUCCESS,
+                   command=self._add_elem_school).pack(side=RIGHT, padx=(10, 0))
+        for lbl, val in (("Orchestra", "orchestra"), ("Band", "band")):
+            ttk.Radiobutton(add, text=lbl, value=val,
+                            variable=self._elem_program).pack(side=RIGHT,
+                                                              padx=(8, 0))
         ttk.Combobox(add, textvariable=self._elem_name,
                      values=[x for x in BSD_SCHOOLS if "Elementary" in x],
-                     width=32).pack(side=LEFT)
-        self._elem_program = tk.StringVar(value="band")
-        for lbl, val in (("Band", "band"), ("Orchestra", "orchestra")):
-            ttk.Radiobutton(add, text=lbl, value=val,
-                            variable=self._elem_program).pack(side=LEFT, padx=(8, 0))
-        ttk.Button(add, text="Add", bootstyle=SUCCESS,
-                   command=self._add_elem_school).pack(side=LEFT, padx=(10, 0))
+                     width=28).pack(side=LEFT, fill=X, expand=True)
 
         self._elem_list = tk.Listbox(self._elem_box, height=5,
                                      font=("Segoe UI", 9))

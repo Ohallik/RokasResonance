@@ -19,7 +19,7 @@ from ttkbootstrap.dialogs import Messagebox
 from tkinter import filedialog
 from datetime import datetime
 
-from ui.theme import fs, muted_fg, subtle_fg, fit_window
+from ui.theme import fs, muted_fg, subtle_fg, fit_window, scroll_body
 import concert_tools as ct
 
 
@@ -1043,14 +1043,18 @@ class _ConcertDialog(ttk.Toplevel):
 
         nb = ttk.Notebook(self, bootstyle=PRIMARY)
         nb.pack(fill=BOTH, expand=True, padx=12, pady=6)
-        basics = ttk.Frame(nb, padding=10)
-        family = ttk.Frame(nb, padding=10)
-        program = ttk.Frame(nb, padding=10)
-        checklist = ttk.Frame(nb, padding=10)
-        nb.add(basics, text="  Basics  ")
-        nb.add(family, text="  Family Details  ")
-        nb.add(program, text="  Program Extras  ")
-        nb.add(checklist, text="  Checklist  ")
+        # Each tab scrolls.  Basics alone runs past the bottom of a laptop
+        # screen once a concert has a location, times, ensembles and attire,
+        # and a field you cannot reach is a field you cannot fill in.
+        def tab(title):
+            holder = ttk.Frame(nb)
+            nb.add(holder, text=title)
+            return scroll_body(holder, padx=10, pady=6)
+
+        basics = tab("  Basics  ")
+        family = tab("  Family Details  ")
+        program = tab("  Program Extras  ")
+        checklist = tab("  Checklist  ")
 
         self._vars = {}
 
