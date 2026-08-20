@@ -69,8 +69,13 @@ GROUP_CONFIG = {
 }
 
 # Section-header chip.
-HDR_BG = "#3b7dc4"
+HDR_BG = "#3b7dc4"          # agenda sections: the steps of the lesson
 HDR_FG = "#ffffff"
+# The banner is about the day, not part of it.  Amber against the sections'
+# blue, so the two read as different kinds of thing from across the room.
+BAN_BG = "#B26A0F"
+BAN_FG = "#ffffff"
+DIVIDER = "#B26A0F"
 # Assessment-line highlight (the light-blue emphasis she uses for test lines).
 ASSESS_BG = "#dbeafe"
 ASSESS_FG = "#0b3d6b"
@@ -367,12 +372,15 @@ class AgendasView(ttk.Frame):
                    command=self._reset_day).pack(side=RIGHT, padx=2, pady=6)
         ttk.Button(bar, text="⧉ Copy Previous Day", bootstyle=(PRIMARY, OUTLINE),
                    command=self._copy_previous_day).pack(side=RIGHT, padx=2, pady=6)
-        ttk.Label(bar, text="Screen bg:", font=("Segoe UI", fs(9))).pack(
-            side=RIGHT, padx=(10, 2))
+        # Packed combo-first on purpose: with side=RIGHT the first widget
+        # packed sits furthest right, so packing the label first put it on the
+        # wrong side of the box it labels.
         self._bg_var = tk.StringVar(value=self._present_bg_name())
         bg_combo = ttk.Combobox(bar, textvariable=self._bg_var, state="readonly",
                                 width=11, values=[n for n, _ in PRESENT_BGS])
-        bg_combo.pack(side=RIGHT, pady=6)
+        bg_combo.pack(side=RIGHT, pady=6, padx=(2, 0))
+        ttk.Label(bar, text="Screen bg:", font=("Segoe UI", fs(9))).pack(
+            side=RIGHT, padx=(10, 2))
         bg_combo.bind("<<ComboboxSelected>>", self._on_bg_change)
 
         nav = ttk.Frame(self)
@@ -557,13 +565,52 @@ class AgendasView(ttk.Frame):
         return None
 
     def _concerts(self):
+        """The concerts THIS class is performing in, soonest first.
+
+        Filtered, because everything downstream reads as a statement about
+        this class: the cycle level, the rehearsal context, and the next
+        performance countdown.  Handing it the whole year's calendar is how
+        Intermediate Band came to be told it was rehearsing for a Veterans Day
+        assembly that only Advanced Band plays.
+        """
         out = []
         for c in self.db.get_concerts(self._year()):
             d = _parse_date(c["concert_date"])
-            if d:
-                out.append({"date": d, "title": c["title"],
-                            "pieces": self._pieces(c)})
+            if not d or not self._is_mine(c):
+                continue
+            out.append({"date": d, "title": c["title"],
+                        "pieces": self._pieces(c)})
+        out.sort(key=lambda c: c["date"])
         return out
+
+    def _is_mine(self, concert):
+        """Whether this class is on a concert.
+
+        Two ways it can be: the Concert Planner names the class in the
+        concert's ensemble list, or a piece on the program is assigned to it.
+        Either counts, so a concert built by adding repertoire still lands even
+        if the ensemble list was never filled in.
+        """
+        import class_registry as cr
+        kw = self._cfg["ensemble"]
+        label = self._cfg["label"]
+        listed = (concert["ensembles"]
+                  if "ensembles" in concert.keys() else "") or ""
+        for name in [x.strip() for x in listed.split(",") if x.strip()]:
+            if kw in name.lower() or cr.same_class(name, label):
+                return True
+        try:
+            return bool(self._pieces(concert))
+        except Exception:
+            return False
+
+    def _next_performance(self):
+        """(days away, concert) for the next one this class plays, or None."""
+        upcoming = [c for c in self._concerts() if c["date"] >= self._date]
+        if not upcoming:
+            return None
+        c = upcoming[0]
+        return (c["date"] - self._date).days, c
 
     def _pieces(self, concert):
         rows = self.db.get_concert_pieces(concert["id"])
@@ -762,6 +809,7 @@ class AgendasView(ttk.Frame):
         for w in self._inner.winfo_children():
             w.destroy()
         self._render_banner(self._inner)
+        self._render_divider(self._inner)
         for si, section in enumerate(self._day.get("sections", [])):
             self._render_section(self._inner, si, section)
         addbar = ttk.Frame(self._inner)
@@ -787,14 +835,11 @@ class AgendasView(ttk.Frame):
         # Concert-cycle chip for Entry/Intermediate only.  Advanced has a short
         # cycle with many events (Chinook Night, Veterans Day, winter, festival,
         # June concert), so the cycle index isn't meaningful — just the school day.
-        if self._template in ("band_entry", "band_intermediate"):
-            concert = spine._concert_for_level(level, concerts)
-            if concert and concert.get("title"):
-                cd = concert["date"]
-                rel = "after" if self._date > cd else "rehearsing for"
-                parts.append(f"{rel} {concert['title']} ({cd.strftime('%b %d')})")
-            elif not cds and self._template == "band_entry":
-                parts.append("level set by month — add concerts to anchor the cycle")
+        # The "rehearsing for X" chip used to live here.  It is now a
+        # countdown in the banner, where a teacher glancing at the top of the
+        # screen actually sees it.
+        if (self._template == "band_entry" and not cds):
+            parts.append("level set by month, add concerts to anchor the cycle")
         cal = self._calendar()
         if cal:
             parts.append(f"school day {scal.school_day_index(cal, self._date)}")
@@ -819,9 +864,15 @@ class AgendasView(ttk.Frame):
                        width=8, command=lambda dd=d: self._jump_to(dd)
                        ).pack(side=LEFT, padx=2)
 
-    def _hdr_label(self, parent, text, size):
-        return _tk(tk.Label, parent, text=text, bg=HDR_BG, fg=HDR_FG, anchor="w",
+    def _hdr_label(self, parent, text, size, bg=HDR_BG, fg=HDR_FG):
+        return _tk(tk.Label, parent, text=text, bg=bg, fg=fg, anchor="w",
                    font=("Segoe UI", fs(size), "bold"), padx=8, pady=3)
+
+    def _render_divider(self, parent):
+        """The line between what the day is about and what the day IS."""
+        rule = _tk(tk.Frame, parent, bg=DIVIDER, height=2)
+        rule.pack(fill=X, pady=(2, 10))
+        rule.pack_propagate(False)
 
     # ── banner: Reminders · Announcements · Percussion (grid, no clipping) ──
 
@@ -837,7 +888,8 @@ class AgendasView(ttk.Frame):
         if show_third:
             row.columnconfigure(2, weight=0, minsize=fs(24) * 12)
         self._banner_text(row, "Reminders", "reminders", 0)
-        self._banner_text(row, "Announcements", "announcements", 1)
+        self._banner_text(row, "Announcements", "announcements", 1,
+                          trailer=self._performance_line())
         # The rotation pane is the most intricate part of the banner and it sits
         # BEFORE the agenda body in the render order.  If it ever throws, the
         # teacher loses the whole day's agenda rather than one panel, so it is
@@ -850,15 +902,40 @@ class AgendasView(ttk.Frame):
         except Exception as e:
             fallback = ttk.Frame(row)
             fallback.grid(row=0, column=2, sticky="nsew")
-            self._hdr_label(fallback, "Percussion", 11).pack(fill=X)
+            self._hdr_label(fallback, "Percussion", 11,
+                            bg=BAN_BG, fg=BAN_FG).pack(fill=X)
             ttk.Label(fallback, text=f"Couldn't draw the rotation:\n{e}",
                       wraplength=fs(24) * 11, font=("Segoe UI", fs(8)),
                       foreground=muted_fg(), justify=LEFT).pack(anchor=W)
 
-    def _banner_text(self, parent, title, key, col):
+    def _performance_line(self):
+        """How long until this class next performs, for the banner header.
+
+        Named for the class's own next concert, so it is true for the class
+        reading it.  Blank when there is nothing on the calendar for them,
+        rather than borrowing somebody else's date.
+        """
+        nxt = self._next_performance()
+        if not nxt:
+            return ""
+        days, c = nxt
+        if days == 0:
+            return f"{c['title']} is TODAY"
+        if days == 1:
+            return f"{c['title']} is TOMORROW"
+        return f"Next performance in {days} days: {c['title']}"
+
+    def _banner_text(self, parent, title, key, col, trailer=""):
         wrap = ttk.Frame(parent)
         wrap.grid(row=0, column=col, sticky="nsew", padx=(0, 6))
-        self._hdr_label(wrap, title, 11).pack(fill=X)
+        head = ttk.Frame(wrap)
+        head.pack(fill=X)
+        self._hdr_label(head, title, 11, bg=BAN_BG,
+                        fg=BAN_FG).pack(side=LEFT, fill=X, expand=True)
+        if trailer:
+            _tk(tk.Label, head, text=trailer, bg=BAN_BG, fg=BAN_FG,
+                font=("Segoe UI", fs(9), "bold"), padx=8,
+                pady=3).pack(side=RIGHT, fill=Y)
         txt = tk.Text(wrap, height=5, wrap="word", relief="solid", bd=1,
                       font=("Segoe UI", fs(10)))
         txt.pack(fill=BOTH, expand=True)
@@ -875,7 +952,7 @@ class AgendasView(ttk.Frame):
     def _banner_percussion(self, parent, col):
         wrap = ttk.Frame(parent)
         wrap.grid(row=0, column=col, sticky="nsew")
-        self._hdr_label(wrap, "Percussion", 11).pack(fill=X)
+        self._hdr_label(wrap, "Percussion", 11, bg=BAN_BG, fg=BAN_FG).pack(fill=X)
         body = ttk.Frame(wrap, relief="solid", borderwidth=1, padding=4)
         body.pack(fill=BOTH, expand=True)
 
@@ -936,7 +1013,8 @@ class AgendasView(ttk.Frame):
         import jazz_icons
         wrap = ttk.Frame(parent)
         wrap.grid(row=0, column=col, sticky="nsew")
-        self._hdr_label(wrap, "Rhythm Section", 11).pack(fill=X)
+        self._hdr_label(wrap, "Rhythm Section", 11,
+                        bg=BAN_BG, fg=BAN_FG).pack(fill=X)
         body = ttk.Frame(wrap, relief="solid", borderwidth=1, padding=4)
         body.pack(fill=BOTH, expand=True)
         e = self._jazz_ensemble()

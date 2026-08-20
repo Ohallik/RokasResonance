@@ -822,7 +822,11 @@ class SeatingChartView(ttk.Frame):
             data = {
                 "school_year": self._year(),
                 "name": name,
-                "chart_type": self._cfg["chart_type"],
+                # Kept for the column's sake, but derived rather than fixed:
+                # a chart drawn in arcs is a concert chart, one in rows is a
+                # classroom chart.  It used to be the constant "concert".
+                "chart_type": ("concert"
+                               if self._cfg.get("view") == "arcs" else "class"),
                 "config_json": json.dumps(self._cfg),
                 "layout_json": json.dumps(self._layout_ids()),
             }
@@ -1660,6 +1664,48 @@ class _SectionOrderDialog(ttk.Toplevel):
         self.destroy()
 
 
+_SORT_WORDS = {
+    "alphabetical_first": "alpha by first name",
+    "alphabetical": "alpha by last name",
+    "small_groups": "small groups",
+    "sections": "by section",
+}
+
+
+def _chart_label(c):
+    """One line describing a saved chart: what it is for, how it was sorted,
+    and when it was saved."""
+    name = (c["name"] or "Untitled Chart").strip()
+    bits = []
+    try:
+        cfg = json.loads(c["config_json"] or "{}")
+    except Exception:
+        cfg = {}
+    try:
+        import class_registry as cr
+        groups = cfg.get("groups") or []
+        classes = []
+        for g in groups:
+            lab = cr.short_class_label(g.get("ensemble") or "")
+            per = g.get("period", "all")
+            if per not in ("all", "", None):
+                lab += f" P{per}"
+            if lab and lab not in classes:
+                classes.append(lab)
+        if classes:
+            bits.append(", ".join(classes))
+    except Exception:
+        pass
+    word = _SORT_WORDS.get(cfg.get("sort_mode") or "")
+    if word:
+        bits.append(word)
+    when = (c["updated_at"] or c["created_at"] or "")[:10] if (
+        "updated_at" in c.keys() or "created_at" in c.keys()) else ""
+    if when:
+        bits.append(when)
+    return f"{name}   ({' · '.join(bits)})" if bits else name
+
+
 class _LoadDialog(ttk.Toplevel):
     def __init__(self, parent, charts):
         super().__init__(parent)
@@ -1674,7 +1720,7 @@ class _LoadDialog(ttk.Toplevel):
         self._list = tk.Listbox(self, height=10, width=40, font=("Segoe UI", 10))
         self._list.pack(fill=BOTH, expand=True, padx=16)
         for c in charts:
-            self._list.insert(END, f"{c['name']}   ({c['chart_type']})")
+            self._list.insert(END, _chart_label(c))
         self._list.bind("<Double-1>", lambda e: self._do("load"))
         btn = ttk.Frame(self)
         btn.pack(fill=X, padx=16, pady=12)
