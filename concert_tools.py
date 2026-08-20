@@ -81,9 +81,24 @@ def _order_index(section: str, jazz: bool) -> int:
 
 def _member_of(student, ensemble: str) -> bool:
     """Class membership by IDENTITY, not spelling — an old trip saved with
-    "Entry Band" still matches students imported as "MS Band (Entry)"."""
+    "Entry Band" still matches students imported as "MS Band (Entry)".
+
+    A class bound to a school in Manage Classes only contains that school's
+    students: Interlake's Concert Band cannot pull a Tillicum child onto a
+    concert roster or a permission slip, whatever the labels say.  Students
+    with no school recorded still match, for the same reason unstamped rows
+    show everywhere -- invisible reads as data loss."""
     from class_registry import csv_has_class
-    return csv_has_class(student.get("ensembles"), ensemble)
+    if not csv_has_class(student.get("ensembles"), ensemble):
+        return False
+    try:
+        from ui.ensembles import class_school
+        site = class_school(ensemble)
+    except Exception:
+        site = None
+    if site and student.get("site_id") and student.get("site_id") != site:
+        return False
+    return True
 
 
 def _display_name(student) -> str:

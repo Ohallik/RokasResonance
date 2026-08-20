@@ -28,6 +28,50 @@ def set_current_profile(base_dir):
     _current_base_dir = base_dir
 
 
+_class_site_cache = {}          # (base_dir, mtime) -> {identity: site_id}
+
+
+def class_school(label, base_dir=None, program_type=None):
+    """The school the current profile binds this class to, or None.
+
+    Called per student per group when building rosters, so it caches the
+    registry keyed by settings.json's mtime -- saving Manage Classes changes
+    the mtime and the next call reloads.
+    """
+    import os as _os
+    bd = base_dir or _current_base_dir
+    if not bd:
+        return None
+    try:
+        mtime = _os.path.getmtime(_os.path.join(bd, "settings.json"))
+    except OSError:
+        return None
+    import class_registry as cr
+    key = (bd, mtime)
+    cached = _class_site_cache.get(key)
+    if cached is None:
+        try:
+            from ui.settings_dialog import load_settings
+            pt = program_type or (load_settings(bd).get("teacher")
+                                  or {}).get("program_type", "band")
+            classes = cr.load_classes(bd, pt)
+        except Exception:
+            classes = []
+        cached = {}
+        for k in classes:
+            ident = cr.class_identity(k.get("label") or "")
+            if not ident:
+                continue
+            # Ambiguity (same identity, two schools) resolves to None.
+            if ident in cached and cached[ident] != k.get("site_id"):
+                cached[ident] = None
+            else:
+                cached[ident] = k.get("site_id")
+        _class_site_cache.clear()          # one profile at a time
+        _class_site_cache[key] = cached
+    return cached.get(cr.class_identity(label))
+
+
 def _configured_labels(program_type, base_dir):
     """The teacher's own class labels from their setup, or None if unavailable."""
     if not base_dir:

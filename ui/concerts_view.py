@@ -108,6 +108,7 @@ class ConcertsView(ttk.Frame):
             canvas.yview_scroll(-1 * (e.delta // 120), "units")
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        inner._canvas = canvas          # so refresh() can keep the scroll spot
         return inner
 
     def _notify_due(self):
@@ -237,6 +238,12 @@ class ConcertsView(ttk.Frame):
         # a tab that no longer exists is a crash.
         if not (self.winfo_exists() and self._cards.winfo_exists()):
             return
+        # Where the list was scrolled to, so saving an edit does not jump the
+        # teacher back to the top of a season's worth of concerts.
+        try:
+            was_at = self._cards._canvas.yview()[0]
+        except Exception:
+            was_at = None
         for w in self._cards.winfo_children():
             w.destroy()
         for w in self._done_rows.winfo_children():
@@ -271,6 +278,7 @@ class ConcertsView(ttk.Frame):
                       ).pack(anchor=W, padx=8, pady=14)
         for c in upcoming:
             self._concert_card(c)
+        self._restore_scroll(was_at)
 
         # Past: this year's finished concerts, then previous years
         def done_row(label, opener):
@@ -297,14 +305,65 @@ class ConcertsView(ttk.Frame):
                       font=("Segoe UI", fs(9)), foreground=muted_fg()
                       ).pack(anchor=W, padx=6, pady=6)
 
+    def _restore_scroll(self, was_at):
+        if was_at is None:
+            return
+        # After the new cards are laid out, not before: the scroll region
+        # does not exist yet at destroy time.
+        def _restore(pos=was_at):
+            try:
+                self._cards._canvas.yview_moveto(pos)
+            except Exception:
+                pass
+        self.after_idle(_restore)
+
+    def _collapsed(self, concert_id):
+        return concert_id in getattr(self, "_folded", set())
+
+    def _toggle_collapsed(self, concert_id):
+        """Fold a concert away while working on another.  Not saved: it is a
+        way of clearing the desk, not a property of the concert."""
+        folded = getattr(self, "_folded", None)
+        if folded is None:
+            folded = self._folded = set()
+        folded.symmetric_difference_update({concert_id})
+        self.refresh()
+
     def _concert_card(self, c):
         days = ct.days_until(c.get("concert_date"))
         when = (ct.fmt_date(c.get("concert_date"))
                 if c.get("concert_date") else "no date yet")
-        card = tk.LabelFrame(self._cards, text=f" {when}: {c['title']} ",
+        collapsed = self._collapsed(c["id"])
+        # The same Word-style fold the field trip cards have: the chevron sits
+        # on the heading line, immediately left of the title, and both fold.
+        card = tk.LabelFrame(self._cards, padx=10, pady=6, bd=2,
+                             relief="groove")
+        head = ttk.Frame(card)
+        _BLUE, _BLUE_HOVER = "#4582EC", "#1B4FC4"
+        fold = ttk.Label(head, text="\u25ba" if collapsed else "\u25bc",
+                         font=("Segoe UI", fs(12), "bold"),
+                         foreground=_BLUE, cursor="hand2")
+        fold.pack(side=LEFT, padx=(0, 6))
+        head_lbl = ttk.Label(head, text=f"{when}: {c['title']}",
                              font=("Segoe UI", fs(11), "bold"),
-                             padx=10, pady=6, bd=2, relief="groove")
+                             cursor="hand2")
+        head_lbl.pack(side=LEFT)
+        card.configure(labelwidget=head)
         card.pack(fill=X, padx=6, pady=6)
+
+        def _toggle(_e=None, i=c["id"]):
+            self._toggle_collapsed(i)
+
+        def _hover(_e=None, on=True):
+            try:
+                fold.config(foreground=_BLUE_HOVER if on else _BLUE)
+            except tk.TclError:
+                pass
+
+        for w in (fold, head_lbl):
+            w.bind("<Button-1>", _toggle)
+            w.bind("<Enter>", lambda e: _hover(on=True))
+            w.bind("<Leave>", lambda e: _hover(on=False))
 
         # ── Info line + countdown ──
         top = ttk.Frame(card)
@@ -334,6 +393,10 @@ class ConcertsView(ttk.Frame):
             badge, style = f"in {days} days", SUCCESS
         ttk.Label(top, text=badge, font=("Segoe UI", fs(10), "bold"),
                   bootstyle=style).pack(side=RIGHT)
+
+        if collapsed:
+            # Folded: heading, one-line summary and countdown, nothing else.
+            return
 
         # ── Checklist: left-click cycles, right-click marks N/A ──
         grid = ttk.Frame(card)

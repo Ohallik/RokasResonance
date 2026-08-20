@@ -265,7 +265,8 @@ class LessonPlansHub(ttk.Frame):
     def _open_manage_classes(self):
         classes = self._classes()
         dlg = _ManageClassesDialog(self.winfo_toplevel(), classes,
-                                   self._program_type())
+                                   self._program_type(),
+                                   main_db=self.main_db)
         self.wait_window(dlg)
         if dlg.result is None:
             return
@@ -509,12 +510,23 @@ class _ManageClassesDialog(ttk.Toplevel):
     id (so saved agendas stay attached); new ones get an id from their name.
     """
 
-    def __init__(self, parent, classes, program_type):
+    def __init__(self, parent, classes, program_type, main_db=None):
         super().__init__(parent)
         import class_registry as cr
         self._cr = cr
         self.result = None
         self._program_type = program_type
+        # The secondary schools a class can belong to.  With fewer than two
+        # there is nothing to choose, and the column stays out of the way.
+        self._schools = []
+        try:
+            self._schools = [dict(x) for x in main_db.get_sites()
+                             if dict(x).get("level") != "elementary"]
+        except Exception:
+            pass
+        self._multi_school = len(self._schools) >= 2
+        self._school_by_name = {x["name"]: x["id"] for x in self._schools}
+        self._school_by_id = {x["id"]: x["name"] for x in self._schools}
         self.title("Manage Classes")
         self.resizable(False, True)
         self.grab_set()
@@ -572,6 +584,8 @@ class _ManageClassesDialog(ttk.Toplevel):
             "template": tk.StringVar(value=_TMPL_DISPLAY[tmpl]),
             "periods": tk.StringVar(
                 value=", ".join((klass or {}).get("periods") or [])),
+            "school": tk.StringVar(value=self._school_by_id.get(
+                (klass or {}).get("site_id"), "")),
         }
         self._rows.append(rec)
         self._render_rows()
@@ -582,7 +596,9 @@ class _ManageClassesDialog(ttk.Toplevel):
         f = self._rows_frame
         for w in f.winfo_children():
             w.destroy()
-        heads = ("Class name", "Kind of class", "Periods (e.g. 1, 2)")
+        heads = ["Class name", "Kind of class", "Periods (e.g. 1, 2)"]
+        if self._multi_school:
+            heads.append("School")
         for c, text in enumerate(heads):
             ttk.Label(f, text=text, font=("Segoe UI", 9, "bold")).grid(
                 row=0, column=c, sticky=W, padx=(0 if c == 0 else 6, 0),
@@ -596,15 +612,22 @@ class _ManageClassesDialog(ttk.Toplevel):
                 row=r, column=1, sticky="ew", padx=(6, 0), pady=2)
             ttk.Entry(f, textvariable=rec["periods"], width=12).grid(
                 row=r, column=2, sticky="ew", padx=(6, 0), pady=2)
+            col = 3
+            if self._multi_school:
+                ttk.Combobox(f, textvariable=rec["school"], state="readonly",
+                             width=16, values=[""] + [x["name"] for x in
+                                                      self._schools]).grid(
+                    row=r, column=3, sticky="ew", padx=(6, 0), pady=2)
+                col = 4
             ttk.Button(f, text="▲", width=2, bootstyle=(SECONDARY, OUTLINE, LINK),
                        command=lambda ix=i: self._move(ix, -1)).grid(
-                row=r, column=3, padx=(8, 0))
+                row=r, column=col, padx=(8, 0))
             ttk.Button(f, text="▼", width=2, bootstyle=(SECONDARY, OUTLINE, LINK),
                        command=lambda ix=i: self._move(ix, 1)).grid(
-                row=r, column=4)
+                row=r, column=col + 1)
             ttk.Button(f, text="✕", width=2, bootstyle=(DANGER, OUTLINE, LINK),
                        command=lambda rc=rec: self._remove(rc)).grid(
-                row=r, column=5)
+                row=r, column=col + 2)
 
     def _remove(self, rec):
         self._rows.remove(rec)
@@ -629,10 +652,12 @@ class _ManageClassesDialog(ttk.Toplevel):
             tmpl = self._display_to_tmpl.get(rec["template"].get(), "generic")
             ti = cr.TEMPLATES[tmpl]
             orig = rec["orig"]
+            site = self._school_by_name.get(rec["school"].get().strip())
             if orig:
                 k = dict(orig)
                 k["label"] = label
                 k["periods"] = cr._clean_periods(rec["periods"].get())
+                k["site_id"] = site
                 if k.get("template") != tmpl:      # kind changed → reset derived
                     k["template"] = tmpl
                     k["book"] = ti["book"]
@@ -645,10 +670,27 @@ class _ManageClassesDialog(ttk.Toplevel):
                                "ensemble": cid, "book": ti["book"],
                                "percussion": ti["percussion"],
                                "periods": cr._clean_periods(
-                                   rec["periods"].get())})
+                                   rec["periods"].get()),
+                               "site_id": site})
         if not result:
             Messagebox.show_warning("Keep at least one class.",
                                     title="No classes", parent=self)
             return
+        # Two classes that read as the SAME class bound to DIFFERENT schools
+        # cannot be told apart by name anywhere rosters are matched, so the
+        # binding would silently stop working.  Name them apart instead.
+        if self._multi_school:
+            seen = {}
+            for k in result:
+                ident = cr.class_identity(k["label"])
+                if ident in seen and seen[ident] != k.get("site_id"):
+                    Messagebox.show_warning(
+                        f"Two classes named like \u201c{k['label']}\u201d are bound "
+                        "to different schools. Give them names that tell them "
+                        "apart (for example, add the school), or the school "
+                        "binding cannot work.",
+                        title="Same name, two schools", parent=self)
+                    return
+                seen[ident] = k.get("site_id")
         self.result = result
         self.destroy()

@@ -2565,6 +2565,18 @@ class Database:
                     f"UPDATE students SET {field}=? WHERE id=?", (value, sid)
                 )
 
+    def _class_site(self, label):
+        """The school this profile's Manage Classes binds a label to, or None.
+        Lives in ui.ensembles (with its cache); this wrapper only finds the
+        profile folder the way _school_from_settings already does."""
+        try:
+            import os as _os
+            from ui.ensembles import class_school
+            return class_school(label,
+                                base_dir=_os.path.dirname(self.db_path))
+        except Exception:
+            return None
+
     def get_students_for_email(self, school_year=None, ensemble=None, period=None,
                                instrument=None, include_inactive=False,
                                site_id=None, level="secondary"):
@@ -2588,6 +2600,17 @@ class Database:
         if school_year:
             sql += " AND school_year=?"
             params.append(school_year)
+        # A class bound to a school in Manage Classes pulls that school's
+        # roster.  Seating charts, percussion rotations and the ensemble
+        # helpers all fetch per-class through here, so this one clause is what
+        # keeps Interlake's Concert Band from seating Tillicum's children.
+        # OR IS NULL, as everywhere: an unstamped student shows rather than
+        # silently vanishing from a chart.
+        if ensemble and not site_id:
+            class_site = self._class_site(ensemble)
+            if class_site:
+                sql += " AND (students.site_id = ? OR students.site_id IS NULL)"
+                params.append(class_site)
         scope, sp = self._site_scope("students", site_id, level)
         sql += scope
         params += sp

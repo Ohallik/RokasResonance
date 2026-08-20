@@ -202,6 +202,9 @@ def _sanitize(classes):
             "book": k.get("book") if k.get("book") in (1, 2) else None,
             "percussion": bool(k.get("percussion", TEMPLATES[tmpl]["percussion"])),
             "periods": _clean_periods(k.get("periods")),
+            "site_id": (int(k["site_id"])
+                        if str(k.get("site_id") or "").strip().isdigit()
+                        else None),
         })
     return out
 
@@ -226,6 +229,24 @@ def _clean_periods(raw):
             seen.add(v.lower())
             out.append(v)
     return out[:6]
+
+
+def site_of_class(label, classes):
+    """The school a class label is bound to, or None.
+
+    Matched by class IDENTITY, the same rule every filter uses, so a roster's
+    "Entry Band" finds the registry's "MS Band (Entry)".  Two classes sharing
+    an identity but bound to different schools is ambiguous -- the label alone
+    cannot say which room is meant -- so it resolves to None (unscoped) rather
+    than guessing a school and silently halving a roster.
+    """
+    want = class_identity(label)
+    if not want:
+        return None
+    hits = {k.get("site_id") for k in classes
+            if class_identity(k.get("label") or "") == want}
+    hits.discard(None)
+    return hits.pop() if len(hits) == 1 else None
 
 
 def new_class_id(existing, label):
@@ -414,4 +435,5 @@ def class_config(klass):
         "percussion": bool(klass.get("percussion", ti.get("percussion", False))),
         "is_jazz": t == "jazz",
         "periods": _clean_periods(klass.get("periods")),
+        "site_id": klass.get("site_id"),
     }
