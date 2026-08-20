@@ -201,8 +201,31 @@ def _sanitize(classes):
             "ensemble": str(k.get("ensemble") or cid).strip().lower(),
             "book": k.get("book") if k.get("book") in (1, 2) else None,
             "percussion": bool(k.get("percussion", TEMPLATES[tmpl]["percussion"])),
+            "periods": _clean_periods(k.get("periods")),
         })
     return out
+
+
+def _clean_periods(raw):
+    """The class periods a class meets, as a list of short strings.
+
+    One entry per SECTION of the class: ["1", "2"] is two sections, P1 and
+    P2.  Empty means one section with no period label, which is most classes.
+    Accepts a list or a comma-separated string (what the Manage Classes entry
+    holds), keeps order, drops blanks and repeats, and caps at six because a
+    class meeting seven times a day is a typo.
+    """
+    if isinstance(raw, str):
+        raw = raw.replace(";", ",").split(",")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out, seen = [], set()
+    for x in raw:
+        v = str(x).strip().lstrip("pP").strip()
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            out.append(v)
+    return out[:6]
 
 
 def new_class_id(existing, label):
@@ -390,4 +413,5 @@ def class_config(klass):
         "class_type": ti.get("class_type"),        # "entry" | "int_adv" | None
         "percussion": bool(klass.get("percussion", ti.get("percussion", False))),
         "is_jazz": t == "jazz",
+        "periods": _clean_periods(klass.get("periods")),
     }

@@ -937,9 +937,12 @@ class _ConcertDialog(ttk.Toplevel):
         # Offer the classes the roster really uses: this list is matched back
         # against student records to build the performing roster.
         from ui.ensembles import selectable_ensembles
-        # A class with no students can't attend anything, so only real
-        # ones are offered; anything unusual goes in "Other groups".
-        std = selectable_ensembles(main_db, student_year, program_type)
+        # include_empty: a class set up in Manage Classes appears here even
+        # before its roster is imported.  Concerts and trips are planned ahead
+        # of the year; a picker that hides a class until students exist reads
+        # as Manage Classes not being connected to anything.
+        std = selectable_ensembles(main_db, student_year, program_type,
+                                   include_empty=True)
         chosen = set(ct.ensembles_list(seed))
         self._ens_vars = {}
         grid = ttk.Frame(basics); grid.pack(anchor=W)

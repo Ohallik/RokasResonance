@@ -543,12 +543,21 @@ class _ManageClassesDialog(ttk.Toplevel):
                              "or reorder freely. Itinerant teachers can add as "
                              "many — or as few — as they run.",
                   font=("Segoe UI", 9), wraplength=560, justify=LEFT).pack(anchor=W)
+        ttk.Label(body, text="Periods: one per section of the class. Typing "
+                             "\u201c1, 2\u201d means two sections, and the agenda gets a "
+                             "P1 / P2 toggle. Leave it blank for a class with "
+                             "one section.",
+                  font=("Segoe UI", 9), foreground=muted_fg(),
+                  wraplength=560, justify=LEFT).pack(anchor=W, pady=(4, 0))
 
         cols = ttk.Frame(body)
         cols.pack(fill=X, pady=(8, 2))
         ttk.Label(cols, text="Class name", font=("Segoe UI", 9, "bold"),
                   width=22).pack(side=LEFT)
-        ttk.Label(cols, text="Kind of class", font=("Segoe UI", 9, "bold")).pack(side=LEFT)
+        ttk.Label(cols, text="Kind of class", font=("Segoe UI", 9, "bold"),
+                  width=36).pack(side=LEFT, padx=(6, 0))
+        ttk.Label(cols, text="Periods", font=("Segoe UI", 9, "bold")).pack(
+            side=LEFT, padx=(6, 0))
 
         self._rows_frame = ttk.Frame(body)
         self._rows_frame.pack(fill=BOTH, expand=True)
@@ -570,6 +579,8 @@ class _ManageClassesDialog(ttk.Toplevel):
             "orig": klass,
             "label": tk.StringVar(value=(klass or {}).get("label", "")),
             "template": tk.StringVar(value=_TMPL_DISPLAY[tmpl]),
+            "periods": tk.StringVar(
+                value=", ".join((klass or {}).get("periods") or [])),
         }
         self._rows.append(rec)
         self._render_rows()
@@ -582,7 +593,9 @@ class _ManageClassesDialog(ttk.Toplevel):
             row.pack(fill=X, pady=2)
             ttk.Entry(row, textvariable=rec["label"], width=22).pack(side=LEFT)
             ttk.Combobox(row, textvariable=rec["template"], state="readonly",
-                         values=self._tmpl_options, width=44).pack(side=LEFT, padx=(6, 0))
+                         values=self._tmpl_options, width=34).pack(side=LEFT, padx=(6, 0))
+            ttk.Entry(row, textvariable=rec["periods"], width=8).pack(
+                side=LEFT, padx=(6, 0))
             ttk.Button(row, text="✕", width=2, bootstyle=(DANGER, OUTLINE, LINK),
                        command=lambda r=rec: self._remove(r)).pack(side=RIGHT)
             ttk.Button(row, text="▼", width=2, bootstyle=(SECONDARY, OUTLINE, LINK),
@@ -616,6 +629,7 @@ class _ManageClassesDialog(ttk.Toplevel):
             if orig:
                 k = dict(orig)
                 k["label"] = label
+                k["periods"] = cr._clean_periods(rec["periods"].get())
                 if k.get("template") != tmpl:      # kind changed → reset derived
                     k["template"] = tmpl
                     k["book"] = ti["book"]
@@ -626,7 +640,9 @@ class _ManageClassesDialog(ttk.Toplevel):
                 taken.add(cid)
                 result.append({"id": cid, "label": label, "template": tmpl,
                                "ensemble": cid, "book": ti["book"],
-                               "percussion": ti["percussion"]})
+                               "percussion": ti["percussion"],
+                               "periods": cr._clean_periods(
+                                   rec["periods"].get())})
         if not result:
             Messagebox.show_warning("Keep at least one class.",
                                     title="No classes", parent=self)

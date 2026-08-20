@@ -201,7 +201,8 @@ class AgendasView(ttk.Frame):
         class_type = pr.ENTRY if ct == "entry" else (pr.INT_ADV if ct == "int_adv"
                                                      else None)
         self._cfg = {"label": cfg["label"], "ensemble": cfg["ensemble"],
-                     "book": cfg["book"], "class_type": class_type}
+                     "book": cfg["book"], "class_type": class_type,
+                     "periods": cfg.get("periods") or []}
         self._store_id = cfg["id"]
         self._jazz_eid = self._first_jazz_eid() if self._is_jazz else None
         self._group = self._jazz_store_key() if self._is_jazz else self._store_id
@@ -964,7 +965,18 @@ class AgendasView(ttk.Frame):
                       font=("Segoe UI", fs(8)), foreground=muted_fg(),
                       justify=LEFT).pack(anchor=W)
             return
-        group = self._section_group() or groups[0]
+        group = self._section_group()
+        if group is None:
+            # This period has no rotation of its own.  Showing another
+            # period's rotation here would be worse than showing none: a kid
+            # reads the screen and sits at the wrong drum.
+            ttk.Label(body,
+                      text="No percussion rotation for this period yet. Add "
+                           "one on the 🥁 Percussion tab, with the "
+                           "period set, and it will show here.",
+                      wraplength=fs(24) * 11, font=("Segoe UI", fs(8)),
+                      foreground=muted_fg(), justify=LEFT).pack(anchor=W)
+            return
         # Section name (the toolbar P1/P2 toggle switches this when there are 2+).
         ttk.Label(body, text=group["name"],
                   font=("Segoe UI", fs(9), "bold")).pack(anchor=W)
@@ -1121,6 +1133,8 @@ class AgendasView(ttk.Frame):
         for item in section.get("items", []):
             if kind == "rhythms" and not item.get("image"):
                 continue                       # Rhythms is images only
+            if not self._item_visible(item):
+                continue                       # another section's item
             if item.get("kind") == "assessment":
                 last_ref = self._assess_ref(item.get("text", ""))
             self._render_item(body, section, item,
@@ -1142,6 +1156,76 @@ class AgendasView(ttk.Frame):
                        command=lambda: self._add_item(section)).pack(side=LEFT)
         ttk.Button(tools, text="📷 Paste Image", bootstyle=(INFO, OUTLINE, LINK),
                    command=lambda: self._paste_image(section)).pack(side=LEFT, padx=8)
+
+    def _taggable_periods(self):
+        """The periods an item can be limited to -- only real, named ones,
+        and only when there are at least two to choose between."""
+        secs = self._class_sections()
+        pers = [sec["period"] for sec in secs if sec["period"]]
+        return pers if len(pers) >= 2 else []
+
+    def _item_visible(self, item):
+        """Whether this item belongs on the section the toggle is showing.
+
+        Untagged items always show.  Tags only bite while the class actually
+        has sections to switch between; a tag left on after the periods were
+        removed must not hide the item forever.
+        """
+        tag = str(item.get("section") or "").strip()
+        if not tag or not self._taggable_periods():
+            return True
+        return tag == self._active_period()
+
+    def _move_item(self, section, item, delta):
+        """Move an item up or down its section's list."""
+        items = section.get("items", [])
+        try:
+            i = items.index(item)
+        except ValueError:
+            return
+        j = i + delta
+        if 0 <= j < len(items):
+            items[i], items[j] = items[j], items[i]
+            self._save_day()
+            self._render()
+
+    def _move_buttons(self, row, section, item):
+        """The ▲▼ pair, identical on text and image rows."""
+        box = ttk.Frame(row)
+        ttk.Button(box, text="▲", width=2, bootstyle=(SECONDARY, OUTLINE, LINK),
+                   command=lambda: self._move_item(section, item, -1)
+                   ).pack(side=TOP)
+        ttk.Button(box, text="▼", width=2, bootstyle=(SECONDARY, OUTLINE, LINK),
+                   command=lambda: self._move_item(section, item, 1)
+                   ).pack(side=TOP)
+        return box
+
+    def _section_tag_menu(self, parent, item):
+        """A small P1/P2/All chooser for one item.
+
+        Shows the tag it holds, so a P2-only line is visibly P2 while you are
+        editing P2.  Only offered when the class has sections to choose from.
+        """
+        tag = str(item.get("section") or "").strip()
+        mb = tk.Menubutton(parent, text=(f"P{tag}" if tag else "All"),
+                           relief="flat", cursor="hand2",
+                           font=("Segoe UI", fs(8)))
+        menu = tk.Menu(mb, tearoff=0)
+
+        def set_tag(val):
+            if val:
+                item["section"] = val
+            else:
+                item.pop("section", None)
+            self._save_day()
+            self._render()
+
+        menu.add_command(label="All sections", command=lambda: set_tag(""))
+        for per in self._taggable_periods():
+            menu.add_command(label=f"P{per} only",
+                             command=lambda v=per: set_tag(v))
+        mb.config(menu=menu)
+        return mb
 
     def _render_item(self, parent, section, item, missing_ref=None):
         if item.get("image"):
@@ -1200,7 +1284,11 @@ class AgendasView(ttk.Frame):
                 self._save_day()
         te.bind("<FocusOut>", commit)
         te.bind("<Return>", commit)
+        if kind != "missing" and self._taggable_periods():
+            self._section_tag_menu(row, item).pack(side=LEFT, padx=(0, 2))
         self._color_menu(row, item).pack(side=LEFT, padx=(0, 2))
+        if kind != "missing":
+            self._move_buttons(row, section, item).pack(side=LEFT, padx=(0, 2))
         ttk.Button(row, text="✕", width=2, bootstyle=(DANGER, OUTLINE, LINK),
                    command=lambda: self._remove_item(section, item)).pack(side=LEFT)
 
@@ -1237,6 +1325,9 @@ class AgendasView(ttk.Frame):
                    command=lambda: self._zoom_image(item, -1)).pack(pady=1)
         ttk.Button(zoom, text="＋", width=2, bootstyle=(SECONDARY, OUTLINE),
                    command=lambda: self._zoom_image(item, 1)).pack(pady=1)
+        self._move_buttons(zoom, section, item).pack(pady=1)
+        if self._taggable_periods():
+            self._section_tag_menu(zoom, item).pack(pady=1)
         ttk.Button(zoom, text="✕", width=2, bootstyle=(DANGER, OUTLINE),
                    command=lambda: self._remove_item(section, item)).pack(pady=(6, 1))
 
@@ -1494,26 +1585,75 @@ class AgendasView(ttk.Frame):
             return (0, int(p), "") if p.isdigit() else (1, 0, p or (g["name"] or ""))
         return sorted(groups, key=key)
 
-    # ── P1/P2 (or P6/P7) section: a section IS its percussion group.  The toolbar
-    #    toggle picks which section's rotation + Missing lists to show; the
-    #    lesson plan itself is SHARED across sections (planned once). ──
+    # ── P1/P2 (or P6/P7) sections.  A section is a class period, declared in
+    #    Manage Classes; its percussion group (when one matches the period)
+    #    rides along.  The toolbar toggle picks which section's rotation,
+    #    Missing lists and section-only items to show; the lesson plan itself
+    #    is SHARED across sections (planned once).  A class with no declared
+    #    periods falls back to the old rule -- a section per percussion group
+    #    -- so nothing set up before this changes. ──
 
     def _section_setting_key(self):
         return f"agenda_{self._group}_section"
 
-    def _section_group(self):
-        """The active section (a percussion group) from the toolbar toggle;
-        falls back to the first section (and, for Entry, the legacy setting)."""
+    def _class_sections(self):
+        """One record per section: {sid, period, group, label}.
+
+        The sid doubles as the storage key for that section's Missing lists,
+        so wherever a percussion group matches, the sid IS the group id --
+        exactly what it was before periods existed -- and nothing stored under
+        it is orphaned.  A period with no group gets "p<period>".
+        """
+        if self._is_jazz:
+            return []          # the band toggle is jazz's section switch
+        periods = [str(x) for x in (self._cfg.get("periods") or [])]
         groups = self._perc_groups()
-        if not groups:
+        if not periods:
+            # Nothing declared: sections are the percussion groups, as before.
+            return [{"sid": str(g["id"]),
+                     "period": str(g["period"] or "").strip(),
+                     "group": g, "label": self._section_button_label(g)}
+                    for g in groups]
+        out, used = [], set()
+        for per in periods:
+            g = next((x for x in groups
+                      if str(x["period"] or "").strip() == per
+                      and x["id"] not in used), None)
+            if g is not None:
+                used.add(g["id"])
+            out.append({"sid": str(g["id"]) if g is not None else f"p{per}",
+                        "period": per, "group": g, "label": f"P{per}"})
+        # A rotation group that never named its period still belongs to
+        # somebody: hand the spares to the sections that got none, in order.
+        spares = [x for x in groups if x["id"] not in used
+                  and not str(x["period"] or "").strip()]
+        for sec in out:
+            if sec["group"] is None and spares:
+                g = spares.pop(0)
+                sec["group"], sec["sid"] = g, str(g["id"])
+        return out
+
+    def _section_record(self):
+        """The active section from the toolbar toggle, or the first."""
+        secs = self._class_sections()
+        if not secs:
             return None
         want = self.db.get_program_setting(self._section_setting_key())
         if not want and self._template == "band_entry":
             want = self.db.get_program_setting("agenda_entry_perc")  # legacy
-        for g in groups:
-            if str(g["id"]) == str(want):
-                return g
-        return groups[0]
+        for sec in secs:
+            if sec["sid"] == str(want):
+                return sec
+        return secs[0]
+
+    def _active_period(self):
+        sec = self._section_record()
+        return sec["period"] if sec else ""
+
+    def _section_group(self):
+        """The active section's percussion group, or None."""
+        sec = self._section_record()
+        return sec["group"] if sec else None
 
     def _apply_section(self, group_id):
         self.db.set_program_setting(self._section_setting_key(), str(group_id))
@@ -1536,8 +1676,8 @@ class AgendasView(ttk.Frame):
             pass
 
     def _section_id(self):
-        g = self._section_group()
-        return g["id"] if g else None
+        sec = self._section_record()
+        return sec["sid"] if sec else None
 
     # Banner + present call this; a section == its percussion group.
     def _linked_perc_group(self):
@@ -1559,23 +1699,24 @@ class AgendasView(ttk.Frame):
         the percussion rotation and the Missing lists."""
         for w in self._section_bar.winfo_children():
             w.destroy()
-        groups = self._perc_groups()
-        if len(groups) < 2:
+        secs = self._class_sections()
+        if len(secs) < 2:
             return                       # one section (or none) — nothing to toggle
         ttk.Label(self._section_bar, text="Section:",
                   font=("Segoe UI", fs(9))).pack(side=LEFT, padx=(14, 4))
-        active = self._section_group()
+        active = self._section_record()
         self._section_var = tk.StringVar(
-            value=str(active["id"]) if active else "")
-        for g in groups:
-            ttk.Radiobutton(self._section_bar,
-                            text=self._section_button_label(g),
-                            value=str(g["id"]), variable=self._section_var,
+            value=active["sid"] if active else "")
+        for sec in secs:
+            ttk.Radiobutton(self._section_bar, text=sec["label"],
+                            value=sec["sid"], variable=self._section_var,
                             bootstyle=(INFO, "toolbutton"),
-                            command=lambda gid=g["id"]: self._set_section(gid)
+                            command=lambda sid=sec["sid"]:
+                            self._set_section(sid)
                             ).pack(side=LEFT, padx=1)
         ttk.Label(self._section_bar,
-                  text="(same plan, each period's own rotation)",
+                  text="(same plan; each period keeps its own rotation, "
+                       "Missing lists and section-only items)",
                   font=("Segoe UI", fs(8)),
                   foreground=muted_fg()).pack(side=LEFT, padx=(6, 0))
 
@@ -1887,17 +2028,18 @@ class _PresentWindow(ttk.Toplevel):
     def _present_section_toggle(self, hdr):
         """P1/P2 toggle in the present header — switch section without leaving
         the projection (the two periods run back-to-back)."""
-        groups = self.view._perc_groups()
-        if len(groups) < 2:
+        secs = self.view._class_sections()
+        if len(secs) < 2:
             return
-        active = self.view._section_group()
-        self._sect_var = tk.StringVar(value=str(active["id"]) if active else "")
+        active = self.view._section_record()
+        self._sect_var = tk.StringVar(value=active["sid"] if active else "")
         box = ttk.Frame(hdr)
         box.pack(side=LEFT, padx=(24, 6))
-        for g in groups:
-            ttk.Radiobutton(box, text=g["name"], value=str(g["id"]),
+        for sec in secs:
+            ttk.Radiobutton(box, text=sec["label"], value=sec["sid"],
                             variable=self._sect_var, bootstyle=(INFO, "toolbutton"),
-                            command=lambda gid=g["id"]: self._switch_section(gid)
+                            command=lambda sid=sec["sid"]:
+                            self._switch_section(sid)
                             ).pack(side=LEFT, padx=1)
 
     def _switch_section(self, gid):
@@ -2123,6 +2265,8 @@ class _PresentWindow(ttk.Toplevel):
         last_ref = None
         rows = []                               # (item, per-section missing text)
         for it in section.get("items", []):
+            if not self.view._item_visible(it):
+                continue                        # another section's item
             if it.get("kind") == "assessment":
                 last_ref = self.view._assess_ref(it.get("text", ""))
             mtext = None
