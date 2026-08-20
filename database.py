@@ -2304,15 +2304,34 @@ class Database:
                 list(updates.values()) + [student_id])
             return len(updates)
 
-    def get_current_roster(self):
+    def get_current_roster(self, site_id=None, level=None):
         """Current, active members only — for every dropdown/autocomplete in the
         app.  Uses the most recent enrolled school year (so students who left or
         aged out, i.e. are only on prior-year rosters, are excluded), keeps only
         active students, and de-duplicates by name (preferring the record that
-        has a district student_id)."""
+        has a district student_id).
+
+        ``site_id`` narrows to one school and ``level`` to one level, the same
+        two controls get_students_for_email has.  Both default to off, because
+        several callers legitimately want everybody -- but a picker that is
+        about one school or one level must say so, or it offers a 5th grader a
+        marching jacket."""
         years = self.get_school_years()
         year = years[0] if years else self.current_school_year()
         rows = self.get_all_students(school_year=year, include_inactive=False)
+        if site_id or level:
+            keep = []
+            for r in rows:
+                rs = r["site_id"] if "site_id" in r.keys() else None
+                if site_id:
+                    if rs is not None and rs != site_id:
+                        continue
+                elif level:
+                    site = self.get_site(rs) if rs else None
+                    if site is not None and dict(site).get("level") != level:
+                        continue
+                keep.append(r)
+            rows = keep
         seen = {}
         for s in rows:
             has_sid = bool((s["student_id"] or "").strip())

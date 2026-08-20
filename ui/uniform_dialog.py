@@ -29,14 +29,20 @@ class StudentPicker(ttk.Frame):
     ``on_pick`` (optional) is called with the selected student dict when a name
     is chosen from the list."""
 
-    def __init__(self, parent, db, on_pick=None, width=42):
+    def __init__(self, parent, db, on_pick=None, width=42, site_id=None,
+                 level="secondary"):
         super().__init__(parent)
         self.db = db
         self._on_pick = on_pick
         self.student_id = None
 
         self._selecting = False
-        roster = db.get_current_roster()
+        # Uniforms are a secondary idea: an itinerant has no uniform
+        # closet and a 5th grader has no marching jacket.  Scoped to
+        # the garment's own school when it has one, secondary
+        # otherwise, so this cannot offer somebody who could never
+        # wear it.
+        roster = db.get_current_roster(site_id=site_id, level=level)
         seen = {}
         for s in roster:
             d = dict(s)
@@ -379,7 +385,10 @@ class UniformCheckoutDialog(ttk.Toplevel):
         form.pack(fill=BOTH, expand=True, pady=(0, 8))
 
         ttk.Label(form, text="Student:", font=("Segoe UI", fs(9), "bold")).pack(anchor=W)
-        self._picker = StudentPicker(form, self.db, on_pick=self._on_student_pick)
+        u = self.db.get_uniform(self.uniform_id)
+        self._picker = StudentPicker(
+            form, self.db, on_pick=self._on_student_pick,
+            site_id=(dict(u).get("site_id") if u else None))
         self._picker.pack(fill=X, pady=(2, 0))
         self._picker.focus_set()
 

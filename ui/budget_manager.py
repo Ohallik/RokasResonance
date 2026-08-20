@@ -390,7 +390,8 @@ class BudgetManager(ttk.Frame):
         _CategoryDialog(self.winfo_toplevel(), self.db, on_done=self.refresh)
 
     def _open_fees(self):
-        _FeesDialog(self.winfo_toplevel(), self.db, self.program_type, self._year_var.get())
+        _FeesDialog(self.winfo_toplevel(), self.db, self.program_type,
+                    self._year_var.get(), site_id=self.site_id)
 
     def _export(self):
         try:
@@ -966,10 +967,15 @@ class _CategoryDialog(ttk.Toplevel):
 # ── Student fees ────────────────────────────────────────────────────────────────
 
 class _FeesDialog(ttk.Toplevel):
-    def __init__(self, parent, db, program_type, school_year):
+    def __init__(self, parent, db, program_type, school_year, site_id=None):
         super().__init__(master=parent)
         self.db = db
         self.program_type = program_type
+        # A school's budget charges that school's classes.  Unscoped, a
+        # Chinook budget offered to bill "Clyde Hill Section 1" -- an
+        # elementary class, whose loans are free, so the charge would have
+        # been silently refused after the teacher had gone to the trouble.
+        self.site_id = site_id
         self.base_dir = getattr(parent, "base_dir", "")
         # Fees attach to the STUDENT roster year (academic), which may differ
         # from the budget's fiscal year — default to a year that has students.
@@ -1250,6 +1256,17 @@ class _FeesDialog(ttk.Toplevel):
         (a placeholder naming no school) and a teacher who taught both lost
         whichever half their program type was not.
         """
+        if self.site_id:
+            # This budget belongs to one school, so it charges that school's
+            # classes.  Unscoped (one school, or none recorded) the full list
+            # is right: a teacher with both levels must be able to bill either
+            # from the one budget they have.
+            from ui.ensembles import selectable_ensembles
+            return selectable_ensembles(self.db, self.school_year,
+                                        self.program_type,
+                                        base_dir=self.base_dir,
+                                        include_empty=True,
+                                        site_id=self.site_id)
         return all_class_options(self.db, self.base_dir, self.program_type,
                                  self.school_year)
 
