@@ -667,7 +667,8 @@ def _find_student_by_name(conn, name):
     return None
 
 
-def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
+def generate_form_for_checkout(db, checkout_id: int, base_dir: str,
+                               out_dir: str = None) -> str:
     """
     Look up checkout + instrument data and generate the PDF.
     Returns the path to the generated PDF.
@@ -748,7 +749,9 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str) -> str:
     ).strip().replace(" ", "_")
     date_str  = datetime.today().strftime("%Y%m%d")
     filename  = f"{safe_name}_{date_str}.pdf"
-    out_dir   = os.path.join(base_dir, "checkout_forms")
+    # A caller printing a stack of contracts at once (carry-over) passes the
+    # folder it asked the teacher for; everyone else gets the profile's own.
+    out_dir   = out_dir or os.path.join(base_dir, "checkout_forms")
     out_path  = os.path.join(out_dir, filename)
 
     return generate_loan_form(dict(checkout), dict(instrument), out_path,

@@ -681,6 +681,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
 
         # Two students on one instrument is real but rare — usually with their
         # own mouthpieces — so it is confirmed rather than blocked.
+        made = []          # (checkout id, student) for the contracts
         seen = {}
         doubled = []
         for row, opt in picks:
@@ -726,17 +727,22 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                     # the loan is already open.  Run it on into this year and
                     # bill the new year's fee, rather than opening a second
                     # loan on an instrument that never came back to the shelf.
+                    cid = opt["mine"].get("checkout_id")
                     self.db.carry_checkout_into_year(
-                        opt["mine"].get("checkout_id"), self.school_year, due)
+                        cid, self.school_year, due)
                     if charge and sid:
                         self.db.add_rental_fee(sid, today, "school_year",
                                                per_instrument=True)
+                    if cid:
+                        made.append((cid, sname))
                     kept += 1
                     continue
-                self.db.checkout_instrument(
+                cid = self.db.checkout_instrument(
                     opt["id"], sid, sname, today,
                     notes=f"Carried over from {self.prior_year}",
                     due_date=due, charge_fee=charge, fee_per_instrument=True)
+                if cid:
+                    made.append((cid, sname))
                 done += 1
             except Exception as e:
                 failed.append(f"  • {row.get('student_name')}: {e}")
@@ -751,7 +757,46 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         if failed:
             msg += "\n\nCouldn't assign:\n" + "\n".join(failed[:8])
         Messagebox.show_info(msg, title="Assignments Made", parent=self)
+        if made:
+            self._offer_contracts(made)
         self.destroy()
+
+    def _offer_contracts(self, made):
+        """One instrument contract per student, in a folder of your choosing.
+
+        Separate files rather than one long PDF: each one is going to a
+        different family, and splitting a stack afterwards is the job nobody
+        wants.  Named for the student so the right attachment is obvious.
+        """
+        if Messagebox.yesno(
+                f"Print an instrument contract for each of these "
+                f"{len(made)} student(s)?\n\nOne PDF each, named for the "
+                f"student, ready to email home.",
+                title="Contracts?", parent=self) != "Yes":
+            return
+        from tkinter import filedialog
+        folder = filedialog.askdirectory(
+            parent=self, title="Where should the contracts go?",
+            mustexist=False)
+        if not folder:
+            return
+        import os
+        from pdf_generator import generate_form_for_checkout
+        made_paths, failed = [], []
+        for cid, name in made:
+            try:
+                made_paths.append(generate_form_for_checkout(
+                    self.db, cid, self.base_dir or ".", out_dir=folder))
+            except Exception as e:
+                failed.append(f"  \u2022 {name}: {e}")
+        note = f"{len(made_paths)} contract(s) saved to:\n{folder}"
+        if failed:
+            note += "\n\nCouldn't print:\n" + "\n".join(failed[:6])
+        Messagebox.show_info(note, title="Contracts Printed", parent=self)
+        try:
+            os.startfile(folder)          # Windows: show her the stack
+        except Exception:
+            pass
 
     def _open_year_wizard(self):
         """Open the global New School Year wizard and refresh matches on return."""
