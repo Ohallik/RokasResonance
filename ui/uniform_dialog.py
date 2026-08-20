@@ -137,9 +137,10 @@ class StudentPicker(ttk.Frame):
 # ─────────────────────────────────────────────────────── Add / Edit dialog ────
 class UniformDialog(ttk.Toplevel):
     def __init__(self, parent, db, uniform_id=None, garment_types=None,
-                 default_type=None):
+                 default_type=None, site_id=None):
         super().__init__(parent)
         self.db = db
+        self.site_id = site_id   # the school whose closet this garment joins
         self.uniform_id = uniform_id
         self._result = None
         self._garment_types = garment_types or db.get_garment_types()
@@ -287,6 +288,7 @@ class UniformDialog(ttk.Toplevel):
         if self.uniform_id:
             self.db.update_uniform(self.uniform_id, data)
         else:
+            data["site_id"] = getattr(self, "site_id", None)
             self.db.add_uniform(data)
         self._result = "saved"
         self.destroy()
@@ -295,6 +297,7 @@ class UniformDialog(ttk.Toplevel):
         data = self._collect()
         data.pop("is_active", None)
         data["barcode"] = ""
+        data["site_id"] = getattr(self, "site_id", None)
         new_id = self.db.add_uniform(data)
         Messagebox.show_info(f"Garment duplicated (now editing the copy).",
                              title="Duplicated", parent=self)

@@ -62,11 +62,16 @@ def funding_class(src, recorded=None):
 
 
 class BudgetManager(ttk.Frame):
-    def __init__(self, parent, db, base_dir, program_type="band"):
+    def __init__(self, parent, db, base_dir, program_type="band",
+                 site_id=None):
         super().__init__(parent)
         self.db = db
         self.base_dir = base_dir
         self.program_type = program_type
+        # One school's money, when the profile has more than one school.
+        # Fee TYPES stay shared (they are vocabulary); the charges, payments
+        # and transactions are the school's own.
+        self.site_id = site_id
         self._year_var = tk.StringVar()
         self._src_var = tk.StringVar(value="All")
         self._kind_var = tk.StringVar(value="All")
@@ -184,7 +189,9 @@ class BudgetManager(ttk.Frame):
             self._year_var.set(self.db.get_budget_default_year())
 
     def refresh(self):
-        self._all = self.db.get_budget_transactions(self._year_var.get() or
+        self._all = self.db.get_budget_transactions(
+            site_id=self.site_id,
+            school_year=self._year_var.get() or
                                                      self.db.current_school_year())
         self._apply()
         self._populate_years()
@@ -610,6 +617,7 @@ class _TxnDialog(ttk.Toplevel):
         if self.txn and self.txn.get("id"):
             self.db.update_budget_transaction(self.txn["id"], data)
         else:
+            data["site_id"] = self.site_id
             self.db.add_budget_transaction(data)
         if self.on_done:
             self.on_done()
@@ -854,6 +862,7 @@ class _FieldTripDialog(ttk.Toplevel):
         if tagged:
             parts.append("Ensembles: " + ", ".join(tagged))
         self.db.add_budget_transaction({
+            "site_id": self.site_id,
             "txn_date": self._date.get().strip(),
             # The Category column beside it already says Field Trip.
             "description": self._trip.get().strip(),

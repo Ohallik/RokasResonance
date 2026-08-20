@@ -221,12 +221,17 @@ class _WorksCatalogAdapter:
 
 
 class MusicManager(ttk.Frame):
-    def __init__(self, parent, db, base_dir: str, mode: str = "band"):
+    def __init__(self, parent, db, base_dir: str, mode: str = "band",
+                 site_id=None):
         super().__init__(parent)
         self.db = db
         self._main_db = db   # always the profile's own DB
         self.base_dir = base_dir
         self.mode = mode  # "band", "orchestra", or "choir"
+        # Interlake's library is not Tillicum's.  Set, this window shows one
+        # school's music and stamps new pieces with it; unset, the single
+        # program library, as it has always been.
+        self.site_id = site_id
         # Orchestra shares the band (instrumental) layout and external-source feature.
         if mode in ("band", "orchestra"):
             self._show_external_var = tk.BooleanVar(value=False)
@@ -909,6 +914,7 @@ class MusicManager(ttk.Frame):
                 offset=self._page * self._page_size,
             )
 
+        query_kwargs["site_id"] = self.site_id
         rows, total = self.db.search_sheet_music(**query_kwargs)
 
         self._total_count = total
@@ -1455,6 +1461,7 @@ class MusicManager(ttk.Frame):
     def _add_music(self):
         from ui.music_dialog import MusicDialog
         dlg = MusicDialog(self.winfo_toplevel(), self.db,
+                          site_id=self.site_id,
                           base_dir=self.base_dir, music_id=None, mode=self.mode)
         self.wait_window(dlg)
         self.refresh()
@@ -1486,7 +1493,7 @@ class MusicManager(ttk.Frame):
         from ui.music_importer import BatchImportDialog, _norm_title
 
         # Build set of existing titles for duplicate detection
-        existing = self.db.get_all_sheet_music()
+        existing = self.db.get_all_sheet_music(site_id=self.site_id)
         existing_titles = {_norm_title(r["title"]) for r in existing if r["title"]}
 
         dlg = BatchImportDialog(
@@ -1502,6 +1509,7 @@ class MusicManager(ttk.Frame):
         for prefill in results:
             # Strip internal-only keys before saving
             prefill.pop("_duplicate", None)
+            prefill["site_id"] = self.site_id
             self.db.add_sheet_music(prefill)
 
         self.refresh()
@@ -1517,6 +1525,7 @@ class MusicManager(ttk.Frame):
             return
         from ui.music_dialog import MusicDialog
         dlg = MusicDialog(self.winfo_toplevel(), self.db,
+                          site_id=self.site_id,
                           base_dir=self.base_dir, music_id=iid, mode=self.mode)
         self.wait_window(dlg)
         self.refresh()
@@ -2353,7 +2362,8 @@ class _LLMValidateDialog(ttk.Toplevel):
         anthropic_key = llm_client._get_anthropic_key(self.base_dir)
 
         # Build full-DB title set for "missing" filtering
-        all_db_rows = [dict(r) for r in self.db.get_all_sheet_music()]
+        all_db_rows = [dict(r) for r in self.db.get_all_sheet_music(
+            site_id=getattr(self, "site_id", None))]
         db_titles_norm = {self._norm(r["title"]) for r in all_db_rows if r["title"]}
 
         # Tracks pieces whose identity (title/composer/arranger) was corrected by

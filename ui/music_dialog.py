@@ -62,9 +62,11 @@ ACCOMPANIMENT_OPTIONS = [
 
 
 class MusicDialog(ttk.Toplevel):
-    def __init__(self, parent, db, base_dir: str, music_id=None, prefill_data=None, mode: str = "band"):
+    def __init__(self, parent, db, base_dir: str, music_id=None, prefill_data=None, mode: str = "band",
+                 site_id=None):
         super().__init__(parent)
         self.db = db
+        self.site_id = site_id   # the school whose library this window is
         self.base_dir = base_dir
         self._mode = mode
         self.music_id = music_id
@@ -358,6 +360,7 @@ class MusicDialog(ttk.Toplevel):
             # Create new
             data["file_path"] = ""
             data["source_file"] = os.path.basename(self._source_file) if self._source_file else ""
+            data["site_id"] = getattr(self, "site_id", None)
             self.db.add_sheet_music(data)
 
         self._result = "saved"

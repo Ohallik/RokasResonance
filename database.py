@@ -843,7 +843,12 @@ class Database:
                 conn.commit()
             except Exception:
                 pass
-            for _t in ("instruments", "students"):
+            # Everything that physically lives at ONE school carries its
+            # school.  Sheet music, uniforms and budget lines joined the list
+            # when the first two-secondary-school profile arrived: Interlake's
+            # library is not Tillicum's.
+            for _t in ("instruments", "students", "sheet_music", "uniforms",
+                       "budget_transactions"):
                 try:
                     conn.execute(f"ALTER TABLE {_t} ADD COLUMN site_id INTEGER")
                     conn.commit()
@@ -878,7 +883,8 @@ class Database:
                     "SELECT id FROM sites WHERE is_active = 1").fetchall()
                 if len(sites) == 1:
                     only = sites[0]["id"]
-                    for _t in ("instruments", "students"):
+                    for _t in ("instruments", "students", "sheet_music",
+                               "uniforms", "budget_transactions"):
                         conn.execute(
                             f"UPDATE {_t} SET site_id = ? WHERE site_id IS NULL",
                             (only,))
@@ -1644,16 +1650,19 @@ class Database:
             conn.execute("UPDATE garment_types SET is_active=0 WHERE LOWER(name)=LOWER(?)",
                          ((name or "").strip(),))
 
-    def get_all_uniforms(self, include_inactive=False):
+    def get_all_uniforms(self, include_inactive=False, site_id=None):
+        where, params = [], []
+        if not include_inactive:
+            where.append("is_active=1")
+        if site_id:
+            where.append("(site_id = ? OR site_id IS NULL)")
+            params.append(site_id)
+        sql = "SELECT * FROM uniforms"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY garment_type, item_number"
         with self._connect() as conn:
-            if include_inactive:
-                return conn.execute(
-                    "SELECT * FROM uniforms ORDER BY garment_type, item_number"
-                ).fetchall()
-            return conn.execute(
-                "SELECT * FROM uniforms WHERE is_active=1 "
-                "ORDER BY garment_type, item_number"
-            ).fetchall()
+            return conn.execute(sql, params).fetchall()
 
     def get_uniform(self, uniform_id: int):
         with self._connect() as conn:
@@ -1671,7 +1680,9 @@ class Database:
             ).fetchone()
 
     def add_uniform(self, data: dict) -> int:
-        cols = self._UNIFORM_COLS
+        # site_id is add-only: updates never touch it, so an edit through a
+        # dialog that knows nothing of schools cannot unstamp a garment.
+        cols = self._UNIFORM_COLS + ["site_id"]
         values = [data.get(c) for c in cols]
         placeholders = ",".join(["?"] * len(cols))
         with self._connect() as conn:
@@ -1692,11 +1703,13 @@ class Database:
         with self._connect() as conn:
             conn.execute("UPDATE uniforms SET is_active=0 WHERE id=?", (uniform_id,))
 
-    def get_uniforms_with_status(self, include_inactive=False):
+    def get_uniforms_with_status(self, include_inactive=False, site_id=None):
         """Uniform rows with computed 'Available'/'Checked Out' status and the
         current holder's name.  One open checkout max per piece, so no counting
         gymnastics are needed."""
         active_filter = "" if include_inactive else "AND u.is_active=1"
+        site_filter = ("AND (u.site_id = :site OR u.site_id IS NULL)"
+                       if site_id else "")
         sql = f"""
             SELECT
                 u.*,
@@ -1707,11 +1720,12 @@ class Database:
                     WHERE c.uniform_id = u.id AND c.date_returned IS NULL
                     ORDER BY c.id DESC LIMIT 1) AS checkout_date
             FROM uniforms u
-            WHERE 1=1 {active_filter}
+            WHERE 1=1 {active_filter} {site_filter}
             ORDER BY u.garment_type, CAST(u.item_number AS INTEGER), u.item_number
         """
         with self._connect() as conn:
-            rows = conn.execute(sql).fetchall()
+            rows = conn.execute(sql, {"site": site_id} if site_id else {}
+                                ).fetchall()
         out = []
         for r in rows:
             d = dict(r)
@@ -3116,7 +3130,7 @@ class Database:
     def add_budget_transaction(self, data: dict) -> int:
         cols = ["txn_date", "description", "category", "kind", "amount",
                 "funding_source", "use_type", "student_id", "invoice_no",
-                "vendor", "notes"]
+                "vendor", "notes", "site_id"]
         vals = [data.get(c) for c in cols]
         with self._connect() as conn:
             cur = conn.execute(
@@ -3137,17 +3151,24 @@ class Database:
         with self._connect() as conn:
             conn.execute("DELETE FROM budget_transactions WHERE id=?", (txn_id,))
 
-    def get_budget_transactions(self, school_year: str):
+    def get_budget_transactions(self, school_year: str, site_id=None):
         """Manual transactions within a school year, plus auto-linked instrument
-        repair costs for that year (as read-only synthetic rows)."""
+        repair costs for that year (as read-only synthetic rows).
+
+        ``site_id`` narrows both halves to one school: manual rows by their
+        own stamp, repair rows by the school of the instrument repaired."""
         lo, hi = self.school_year_bounds(school_year)
+        site_sql = "AND (t.site_id = :site OR t.site_id IS NULL)" if site_id else ""
+        args = {"lo": lo, "hi": hi}
+        if site_id:
+            args["site"] = site_id
         with self._connect() as conn:
             rows = [dict(r) for r in conn.execute(
-                """SELECT t.*, (s.first_name || ' ' || s.last_name) AS student_name
+                f"""SELECT t.*, (s.first_name || ' ' || s.last_name) AS student_name
                    FROM budget_transactions t
                    LEFT JOIN students s ON s.id = t.student_id
-                   WHERE t.txn_date >= ? AND t.txn_date <= ?
-                   ORDER BY t.txn_date DESC""", (lo, hi)).fetchall()]
+                   WHERE t.txn_date >= :lo AND t.txn_date <= :hi {site_sql}
+                   ORDER BY t.txn_date DESC""", args).fetchall()]
             for r in rows:
                 r["source"] = "manual"
             # Auto-linked repair expenses (actual costs) in the same window
@@ -3157,9 +3178,12 @@ class Database:
                    FROM repairs r LEFT JOIN instruments i ON i.id = r.instrument_id
                    WHERE COALESCE(NULLIF(r.act_cost,0),0) > 0
                      AND COALESCE(r.exclude_from_budget,0)=0
-                     AND COALESCE(NULLIF(r.date_repaired,''), r.date_added) >= ?
-                     AND COALESCE(NULLIF(r.date_repaired,''), r.date_added) <= ?""",
-                (lo, hi)).fetchall()
+                     AND COALESCE(NULLIF(r.date_repaired,''), r.date_added) >= :lo
+                     AND COALESCE(NULLIF(r.date_repaired,''), r.date_added) <= :hi"""
+                + ("  AND (i.site_id = :site OR i.site_id IS NULL)"
+                   if site_id else ""),
+                {"lo": lo, "hi": hi, "site": site_id} if site_id
+                else {"lo": lo, "hi": hi}).fetchall()
             # Collected student fees (status 'paid') for this year → income, as
             # read-only synthetic rows (managed in Budget ▸ Student Fees, same
             # pattern as auto-linked repair expenses).  Matched on the fee's
@@ -3169,8 +3193,11 @@ class Database:
                           (s.first_name || ' ' || s.last_name) AS student_name
                    FROM student_fees sf
                    LEFT JOIN students s ON s.id = sf.student_id
-                   WHERE sf.status='paid' AND sf.school_year=?""",
-                (school_year,)).fetchall()
+                   WHERE sf.status='paid' AND sf.school_year=:yr"""
+                + ("  AND (s.site_id = :site OR s.site_id IS NULL)"
+                   if site_id else ""),
+                {"yr": school_year, "site": site_id} if site_id
+                else {"yr": school_year}).fetchall()
         for rp in reps:
             rows.append({
                 "id": None, "source": "repair", "repair_id": rp["id"],
@@ -3625,15 +3652,19 @@ class Database:
 
     # ─── Sheet Music CRUD ─────────────────────────────────────────────────────
 
-    def get_all_sheet_music(self, include_inactive=False):
+    def get_all_sheet_music(self, include_inactive=False, site_id=None):
+        where, params = [], []
+        if not include_inactive:
+            where.append("is_active=1")
+        if site_id:
+            where.append("(site_id = ? OR site_id IS NULL)")
+            params.append(site_id)
+        sql = "SELECT * FROM sheet_music"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY title"
         with self._connect() as conn:
-            if include_inactive:
-                return conn.execute(
-                    "SELECT * FROM sheet_music ORDER BY title"
-                ).fetchall()
-            return conn.execute(
-                "SELECT * FROM sheet_music WHERE is_active=1 ORDER BY title"
-            ).fetchall()
+            return conn.execute(sql, params).fetchall()
 
     def search_sheet_music(
         self,
@@ -3645,6 +3676,7 @@ class Database:
         order_asc: bool = True,
         limit: int = 200,
         offset: int = 0,
+        site_id=None,
     ):
         """Search sheet music with DB-side filtering and pagination.
 
@@ -3653,6 +3685,9 @@ class Database:
         """
         params = []
         where_parts = ["sm.is_active=1"]
+        if site_id:
+            where_parts.append("(sm.site_id = ? OR sm.site_id IS NULL)")
+            params.append(site_id)
 
         if search:
             tok = f"%{search}%"
@@ -3772,7 +3807,7 @@ class Database:
             "title", "composer", "arranger", "genre", "ensemble_type",
             "difficulty", "file_path", "file_type", "num_pages", "notes",
             "key_signature", "time_signature", "location", "publisher", "source_file",
-            "voicing", "language", "accompaniment",
+            "voicing", "language", "accompaniment", "site_id",
         ]
         values = [data.get(c) for c in cols]
         placeholders = ",".join(["?"] * len(cols))

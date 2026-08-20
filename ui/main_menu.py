@@ -355,8 +355,8 @@ class MainMenu(ttk.Frame):
             sw.pack_propagate(False)
             ttk.Label(
                 btn_area,
-                text="Equipment and Manage Students open for this school. "
-                     "Sheet music, uniforms and money are shared.",
+                text="Everything below opens for this school. Teacher Tools "
+                     "is shared for now.",
                 font=("Segoe UI", fs(8)), foreground=muted_fg(),
             ).grid(row=cur_row + 1, column=0, columnspan=2, sticky=W)
             cur_row += 2
@@ -381,11 +381,17 @@ class MainMenu(ttk.Frame):
             inv_row, equip_label, self._open_inventory,
             "red" if active_site is None else self._site_hue(active_site)
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
+        music_label = ("  🎼  Sheet Music" if active_site is None
+                       else f"  🎼  Sheet Music · {_short_school(active_site['name'])}")
         self._nav_button(
-            inv_row, "  🎼  Sheet Music", self._open_music_manager, "orange"
+            inv_row, music_label, self._open_music_manager,
+            "orange" if active_site is None else self._site_hue(active_site)
         ).grid(row=0, column=1, sticky="ew", padx=3, ipady=btn_pad)
+        uni_label = ("  👕  Uniforms" if active_site is None
+                     else f"  👕  Uniforms · {_short_school(active_site['name'])}")
         self._nav_button(
-            inv_row, "  👕  Uniforms", self._open_uniforms, "amber"
+            inv_row, uni_label, self._open_uniforms,
+            "amber" if active_site is None else self._site_hue(active_site)
         ).grid(row=0, column=2, sticky="ew", padx=(3, 0), ipady=btn_pad)
         cur_row += 1
 
@@ -451,8 +457,11 @@ class MainMenu(ttk.Frame):
         prep_row.grid(row=cur_row, column=0, columnspan=2, sticky="ew", pady=2)
         for _c in (0, 1):
             prep_row.columnconfigure(_c, weight=1)
+        budget_label = ("  💵  Budget" if active_site is None
+                        else f"  💵  Budget · {_short_school(active_site['name'])}")
         self._nav_button(
-            prep_row, "  💵  Budget", self._open_budget, "teal"
+            prep_row, budget_label, self._open_budget,
+            "teal" if active_site is None else self._site_hue(active_site)
         ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=btn_pad)
         self._nav_button(
             prep_row, "  🧰  Teacher Tools", self._open_lesson_plans, "blue"
@@ -895,19 +904,25 @@ class MainMenu(ttk.Frame):
         self._windows[key] = win
 
     def _open_uniforms(self):
-        if self._raise_or_open("uniforms"):
+        site = self._active_site()
+        key = f"uniforms_{site['id']}" if site else "uniforms"
+        if self._raise_or_open(key):
             return
         from ui.uniform_manager import UniformManager
         win = ttk.Toplevel(self.winfo_toplevel())
-        win.title("Uniforms & Attire — Roka's Resonance")
+        win.title("Uniforms & Attire — Roka's Resonance" if not site
+                  else f"Uniforms — {site['name']}")
         win.state("zoomed")
+        if site:
+            self._school_banner(win, site)
         manager = UniformManager(win, self.db, self.base_dir,
                                  on_checkouts=self._open_active_checkouts,
                                  helper_mode=self._helper_mode,
-                                 on_helper_mode=self._enter_helper_mode)
+                                 on_helper_mode=self._enter_helper_mode,
+                                 site_id=site["id"] if site else None)
         manager.pack(fill=BOTH, expand=True)
-        win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("uniforms"))
-        self._windows["uniforms"] = win
+        win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close(key))
+        self._windows[key] = win
 
     # ── Helper Mode (restricted parent-volunteer access) ──────────────────────
     def _helper_pin(self) -> str:
@@ -969,17 +984,24 @@ class MainMenu(ttk.Frame):
         self._build_nav_buttons()
 
     def _open_budget(self):
-        if self._raise_or_open("budget"):
+        site = self._active_site()
+        key = f"budget_{site['id']}" if site else "budget"
+        if self._raise_or_open(key):
             return
         from ui.budget_manager import BudgetManager
         win = ttk.Toplevel(self.winfo_toplevel())
-        win.title("Budget — Roka's Resonance")
+        win.title("Budget — Roka's Resonance" if not site
+                  else f"Budget — {site['name']}")
         win.state("zoomed")
         program_type = self._program_type
-        manager = BudgetManager(win, self.db, self.base_dir, program_type=program_type)
+        if site:
+            self._school_banner(win, site)
+        manager = BudgetManager(win, self.db, self.base_dir,
+                                program_type=program_type,
+                                site_id=site["id"] if site else None)
         manager.pack(fill=BOTH, expand=True)
-        win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("budget"))
-        self._windows["budget"] = win
+        win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close(key))
+        self._windows[key] = win
 
     def _open_students(self):
         site = self._active_site()
@@ -1109,7 +1131,9 @@ class MainMenu(ttk.Frame):
         self._refresh_stats()
 
     def _open_music_manager(self):
-        if self._raise_or_open("music"):
+        site = self._active_site()
+        key = f"music_{site['id']}" if site else "music"
+        if self._raise_or_open(key):
             return
         from ui.music_manager import MusicManager
         from ui.settings_dialog import load_settings
@@ -1122,14 +1146,19 @@ class MainMenu(ttk.Frame):
             "choir":     "Choir Music Manager — Roka's Resonance",
             "orchestra": "Orchestra Music Manager — Roka's Resonance",
         }.get(program_type, "Music Manager — Roka's Resonance")
+        if site:
+            title = f"Sheet Music — {site['name']}"
 
         win = ttk.Toplevel(self.winfo_toplevel())
         win.title(title)
         win.state("zoomed")
-        manager = MusicManager(win, music_db, self.base_dir, mode=program_type)
+        if site:
+            self._school_banner(win, site)
+        manager = MusicManager(win, music_db, self.base_dir, mode=program_type,
+                               site_id=site["id"] if site else None)
         manager.pack(fill=BOTH, expand=True)
-        win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close("music"))
-        self._windows["music"] = win
+        win.protocol("WM_DELETE_WINDOW", lambda: self._on_child_close(key))
+        self._windows[key] = win
 
     def _open_lesson_plans(self):
         if self._raise_or_open("lesson_plans"):

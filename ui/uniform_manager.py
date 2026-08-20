@@ -33,10 +33,12 @@ WIDTHS = {
 
 class UniformManager(ttk.Frame):
     def __init__(self, parent, db, base_dir: str, on_checkouts=None,
-                 helper_mode: bool = False, on_helper_mode=None):
+                 helper_mode: bool = False, on_helper_mode=None, site_id=None):
         super().__init__(parent)
         self.db = db
         self.base_dir = base_dir
+        # One school's closet, when the profile has more than one school.
+        self.site_id = site_id
         self.on_checkouts = on_checkouts
         self.helper_mode = helper_mode
         # Handing the laptop to a parent volunteer is something you do to THIS
@@ -153,7 +155,8 @@ class UniformManager(ttk.Frame):
 
     # ─────────────────────────────────────────────────────────── data ─────────
     def refresh(self):
-        self._rows = [dict(r) for r in self.db.get_uniforms_with_status()]
+        self._rows = [dict(r) for r in self.db.get_uniforms_with_status(
+            site_id=self.site_id)]
         types = ["All"] + self.db.get_garment_types()
         self._type_combo.config(values=types)
         if self._type_filter.get() not in types:
@@ -249,6 +252,7 @@ class UniformManager(ttk.Frame):
     # ─────────────────────────────────────────────────────── actions ──────────
     def _add(self):
         dlg = UniformDialog(self.winfo_toplevel(), self.db,
+                            site_id=self.site_id,
                             garment_types=self.db.get_garment_types(),
                             default_type=None if self._type_filter.get() == "All"
                             else self._type_filter.get())
