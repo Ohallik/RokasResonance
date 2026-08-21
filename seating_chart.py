@@ -440,8 +440,11 @@ def jazz_seating(players, parts, rhythm_side="left", high_rows=1):
     the side, not a chair in a row, and drawing the drummer amongst the
     trombones read as the drummer being a trombone.  They come back as their
     own list, in part order, for the renderer to stand beside the band on
-    whichever side the teacher picked (``rhythm_side`` is the caller's to pass
-    to the renderer; the rows themselves read the same either way).
+    whichever side the teacher picked.
+
+    ``rhythm_side`` also mirrors the rows: the winds pack toward the rhythm
+    section, so any empty chairs land on the far side, not between the band
+    and its rhythm players.
     """
     high_rows = max(1, int(high_rows or 1))
     by_part = {}
@@ -485,6 +488,8 @@ def jazz_seating(players, parts, rhythm_side="left", high_rows=1):
     width = max((len(r) for r in rows), default=4)
     width = max(width, 4)
     rows = [r + [None] * (width - len(r)) for r in rows]
+    if rhythm_side == "right":
+        rows = [list(reversed(r)) for r in rows]
     return rows, [width] * len(rows), rhythm
 
 

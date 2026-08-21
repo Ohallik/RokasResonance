@@ -457,7 +457,8 @@ class PercussionRotationView(ttk.Frame):
         self._earn_hint.config(text=(
             "Check “Full Rotation” once a player passes 5 assessments."
             if is_entry else
-            "All players are in the full rotation."))
+            "Everyone is assumed full rotation — click a player’s "
+            "Rotation column to make an exception."))
         self._day_var.set(str(g["current_day"] or 1))
         self._render()
 
@@ -469,10 +470,9 @@ class PercussionRotationView(ttk.Frame):
     def _students_payload(self, g):
         """Ordered list of dicts for the rotation engine + the raw rows."""
         rows = self.db.get_percussion_students(g["id"])
-        is_entry = g["class_type"] == pr.ENTRY
         payload = []
         for r in rows:
-            mallets_only = is_entry and not r["full_rotation"]
+            mallets_only = not r["full_rotation"]
             payload.append({"name": r["name"], "mallets_only": mallets_only,
                             "allowed_stations": self._parse_allowed(r)})
         return payload, rows
@@ -520,15 +520,17 @@ class PercussionRotationView(ttk.Frame):
 
         # Composition summary
         stations = self._stations(g)
+        is_entry = g["class_type"] == pr.ENTRY
+        earning = ", earning their rotation" if is_entry else ""
         if n_full:
             comp = pr.station_summary(n_full, g["class_type"], stations)
             parts = [f"{c}× {label}" for label, c in comp]
             summary = f"{n_full} in full rotation → " + ",  ".join(parts) + " each day."
             if n_mallet_only:
-                summary += f"   ({n_mallet_only} on mallets-only, earning their rotation.)"
+                summary += f"   ({n_mallet_only} on mallets-only{earning}.)"
             mallet_load = dict(comp).get(pr.MALLETS, 0) + n_mallet_only
         elif non_lim:
-            summary = f"All {len(non_lim)} players on mallets-only (earning their rotation)."
+            summary = f"All {len(non_lim)} players on mallets-only{earning}."
             mallet_load = len(non_lim)
         elif limited:
             summary = "Every player is on an individual (limited) rotation."
@@ -578,10 +580,11 @@ class PercussionRotationView(ttk.Frame):
             allowed = self._parse_allowed(r)
             if allowed:
                 rot = "🔒 Only: " + ", ".join(allowed)
-            elif is_entry:
-                rot = "✔  Full rotation" if r["full_rotation"] else "○  Mallets only (earning)"
-            else:
+            elif r["full_rotation"]:
                 rot = "✔  Full rotation"
+            else:
+                rot = ("○  Mallets only (earning)" if is_entry
+                       else "○  Mallets only")
             self._roster.insert("", "end", iid=str(r["id"]), values=(r["name"], rot))
 
     # ───────────────────────────────────────────────────────── day controls ───
@@ -789,11 +792,10 @@ class PercussionRotationView(ttk.Frame):
         if self._parse_allowed(r):
             self._limit_selected(int(row))
             return
-        if g["class_type"] == pr.ENTRY:
-            self.db.update_percussion_student(
-                int(row), {"full_rotation": 0 if r["full_rotation"] else 1})
-            self._render()
-            self._roster.selection_set(row)
+        self.db.update_percussion_student(
+            int(row), {"full_rotation": 0 if r["full_rotation"] else 1})
+        self._render()
+        self._roster.selection_set(row)
 
     # ───────────────────────────────────────────────── per-student limits ──────
 

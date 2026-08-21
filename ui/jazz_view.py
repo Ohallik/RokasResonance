@@ -63,48 +63,38 @@ class JazzView(ttk.Frame):
     # ─────────────────────────────────────────────────────────────── build ────
 
     def _build(self):
-        toolbar = ttk.Frame(self, bootstyle=LIGHT)
-        toolbar.pack(fill=X)
-        ttk.Button(toolbar, text="➕ New Jazz Band", bootstyle=SUCCESS,
-                   command=self._add_ensemble).pack(side=LEFT, padx=6, pady=6)
-        ttk.Button(toolbar, text="✏️ Rename", bootstyle=PRIMARY,
-                   command=self._rename_ensemble).pack(side=LEFT, padx=2, pady=6)
-        ttk.Button(toolbar, text="🗑️ Delete", bootstyle=DANGER,
-                   command=self._delete_ensemble).pack(side=LEFT, padx=2, pady=6)
-        ttk.Button(toolbar, text="🔄 Refresh", bootstyle=(SECONDARY, OUTLINE),
-                   command=self.refresh).pack(side=LEFT, padx=6, pady=6)
-        # The WHOLE band's parts -- trumpets, bones and saxes included -- are
-        # assigned here, beside the rhythm section, because this is the jazz
-        # page and the seating chart was a strange place to be asked who plays
-        # lead trumpet.  The rotation below still cycles only the rhythm
-        # players; a horn part is a chair, not a warm-up rotation.
-        if self.main_db is not None:
-            ttk.Button(toolbar, text="🎺 Band Parts…", bootstyle=INFO,
-                       command=self._edit_band_parts).pack(side=LEFT, padx=6,
-                                                           pady=6)
-        ttk.Label(toolbar,
-                  text="Set up each jazz band's rhythm section → warm-up rotation + per-song lineups",
-                  font=("Segoe UI", fs(9)), foreground=muted_fg()).pack(side=LEFT, padx=10)
+        # One toolbutton per band, like the Agendas tab's class picker -- the
+        # old band list was a half-window table for what is usually one and
+        # rarely three names.
+        bar = ttk.Frame(self, bootstyle=LIGHT)
+        bar.pack(fill=X)
+        self._band_bar = ttk.Frame(bar, bootstyle=LIGHT)
+        self._band_bar.pack(side=LEFT, padx=(6, 0))
+        self._band_var = tk.StringVar(value="")
+        ttk.Button(bar, text="➕ New Jazz Band", bootstyle=SUCCESS,
+                   command=self._add_ensemble).pack(side=LEFT, padx=(12, 2),
+                                                    pady=6)
+        ttk.Button(bar, text="✏️ Rename", bootstyle=(PRIMARY, OUTLINE),
+                   command=self._rename_ensemble).pack(side=LEFT, padx=2,
+                                                       pady=6)
+        ttk.Button(bar, text="🗑️ Delete", bootstyle=(DANGER, OUTLINE),
+                   command=self._delete_ensemble).pack(side=LEFT, padx=2,
+                                                       pady=6)
+        ttk.Button(bar, text="🔄 Refresh", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.refresh).pack(side=LEFT, padx=2, pady=6)
 
-        paned = ttk.Panedwindow(self, orient=HORIZONTAL)
-        paned.pack(fill=BOTH, expand=True, padx=6, pady=6)
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True)
 
-        left = ttk.Frame(paned)
-        paned.add(left, weight=1)
-        ttk.Label(left, text="Jazz Bands", font=("Segoe UI", fs(10), "bold")).pack(
-            anchor=W, pady=(2, 4))
-        cols = ("Band", "Players", "Songs")
-        self._tree = ttk.Treeview(left, columns=cols, show="headings",
-                                  selectmode="browse", bootstyle=PRIMARY, height=8)
-        for c, w in zip(cols, (150, 60, 60)):
-            self._tree.heading(c, text=c, anchor=W)
-            self._tree.column(c, width=w, anchor=W, stretch=(c == "Band"))
-        self._tree.pack(fill=BOTH, expand=True)
-        self._tree.bind("<<TreeviewSelect>>", lambda e: self._on_selected())
-        self._tree.bind("<Double-1>", lambda e: self._rename_ensemble())
+        # Winds on the left, rhythm on the right: the whole band's parts are
+        # assigned in plain sight instead of behind a Band Parts button nobody
+        # noticed.  The rotation still cycles only the rhythm players; a horn
+        # part is a chair, not a warm-up rotation.
+        self._winds = _WindsPanel(body, self.main_db, self.base_dir)
+        self._winds.pack(side=LEFT, fill=Y, padx=(6, 0), pady=6)
 
-        right = ttk.Frame(paned)
-        paned.add(right, weight=3)
+        right = ttk.Labelframe(body, text=" 🥁 Rhythm Section ", padding=6)
+        right.pack(side=LEFT, fill=BOTH, expand=True, padx=6, pady=6)
         self._build_right(right)
 
     def _build_right(self, parent):
@@ -256,21 +246,27 @@ class JazzView(ttk.Frame):
 
     def refresh(self):
         prev = self._selected_id
-        self._tree.delete(*self._tree.get_children())
+        for w in self._band_bar.winfo_children():
+            w.destroy()
         ensembles = self.db.get_jazz_ensembles(self._year())
         for e in ensembles:
-            self._tree.insert("", "end", iid=str(e["id"]),
-                              values=(e["name"],
-                                      len(self.db.get_jazz_players(e["id"])),
-                                      len(self.db.get_jazz_songs(e["id"]))))
+            ttk.Radiobutton(self._band_bar, text=e["name"],
+                            value=str(e["id"]), variable=self._band_var,
+                            bootstyle=(PRIMARY, "toolbutton"),
+                            command=self._on_selected).pack(side=LEFT, padx=2,
+                                                            pady=4)
         ids = [e["id"] for e in ensembles]
         if prev in ids:
-            self._tree.selection_set(str(prev))
+            self._band_var.set(str(prev))
         elif ids:
-            self._tree.selection_set(str(ids[0]))
+            self._band_var.set(str(ids[0]))
         else:
+            self._band_var.set("")
             self._selected_id = None
             self._show_placeholder(True)
+            self._winds.refresh(None)
+            return
+        self._on_selected()
 
     def _year(self):
         base = os.path.basename(self.db.db_path)
@@ -287,15 +283,16 @@ class JazzView(ttk.Frame):
             self._content_outer.pack(fill=BOTH, expand=True)
 
     def _on_selected(self):
-        sel = self._tree.selection()
-        if not sel:
+        val = self._band_var.get()
+        if not val:
             return
-        self._selected_id = int(sel[0])
+        self._selected_id = int(val)
         e = self.db.get_jazz_ensemble(self._selected_id)
         if not e:
             return
         self._show_placeholder(False)
         self._day_var.set(str(e["current_day"] or 1))
+        self._winds.refresh(e["name"])
         self._render()
 
     def _ensemble(self):
@@ -547,11 +544,6 @@ class JazzView(ttk.Frame):
             self.db.add_jazz_player(e["id"], name, _dumps([]))
         self.refresh()
         self._render()
-
-    def _edit_band_parts(self):
-        dlg = _BandPartsDialog(self.winfo_toplevel(), self.main_db,
-                               self.base_dir)
-        self.wait_window(dlg)
 
     def _selected_player_id(self):
         sel = self._roster.selection()
@@ -871,63 +863,58 @@ class _PartLimitsDialog(ttk.Toplevel):
         self.destroy()
 
 
-class _BandPartsDialog(ttk.Toplevel):
-    """Who covers which part, for a whole jazz class -- saxes, bones, trumpets
-    and rhythm alike.
+class _WindsPanel(ttk.Labelframe):
+    """The wind players and who covers which part, in plain sight.
 
-    One page, as Meagan asked: the horn parts get assigned next to the rhythm
-    section, not off in the seating chart.  Parts are saved on the STUDENT
-    (students.jazz_part), which is the same store the jazz seating chart
-    reads, so a chair set here is already set there.  More than one player on
-    a part is fine -- middle school doubles written parts all the time.
+    Parts save on the STUDENT (students.jazz_part) the moment one is picked --
+    the same store the jazz seating chart reads, so a chair set here is
+    already set there.  More than one player on a part is fine; middle school
+    doubles written parts all the time.  Rhythm players are not listed here:
+    picking a rhythm part (Piano, Bass, Drums...) moves a player to the
+    rhythm side of the seating chart, and their day-to-day world is the
+    rotation panel to the right.
     """
 
+    _GUESS_NOTE = ("Blank parts are guessed from instruments and saved as "
+                   "they appear -- pick a different part any time.  Doubling "
+                   "a written part is normal at middle school.")
+
     def __init__(self, parent, main_db, base_dir):
-        super().__init__(master=parent)
+        super().__init__(parent, text=" 🎺 Winds ", padding=6)
         self.main_db = main_db
         self.base_dir = base_dir
-        self.title("Band Parts")
-        self.grab_set()
-        self.lift()
-
         import seating_chart as sc
         self._sc = sc
+        self._band_name = None
+        self._class_touched = False
+        self._vars = {}
+        self._roster = []
 
-        hdr = ttk.Frame(self, bootstyle=INFO)
-        hdr.pack(fill=X)
-        ttk.Label(hdr, text="🎺  Who covers which part",
-                  font=("Segoe UI", 12, "bold"),
-                  bootstyle=(INVERSE, INFO)).pack(pady=10, padx=16, anchor=W)
-
-        btn = ttk.Frame(self)
-        btn.pack(side=BOTTOM, fill=X, padx=16, pady=12)
-        ttk.Button(btn, text="Close", bootstyle=(SECONDARY, OUTLINE),
-                   command=self.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(btn, text="Save", bootstyle=SUCCESS,
-                   command=self._save).pack(side=RIGHT, padx=4)
-        ttk.Button(btn, text="Guess again from instruments",
-                   bootstyle=(SECONDARY, OUTLINE),
-                   command=self._reguess).pack(side=LEFT, padx=4)
+        if main_db is None:
+            self._table = None
+            ttk.Label(self, text="Open Teacher Tools from the main menu to "
+                                 "assign band parts here.",
+                      font=("Segoe UI", fs(9)), foreground=muted_fg(),
+                      wraplength=220, justify=LEFT).pack(anchor=W, pady=8)
+            return
 
         top = ttk.Frame(self)
-        top.pack(fill=X, padx=16, pady=(8, 0))
-        ttk.Label(top, text="Class:",
-                  font=("Segoe UI", 9, "bold")).pack(side=LEFT)
         self._classes = self._jazz_classes()
         self._class_var = tk.StringVar(
             value=self._classes[0] if self._classes else "")
-        ttk.Combobox(top, textvariable=self._class_var, state="readonly",
-                     width=24, values=self._classes).pack(side=LEFT,
-                                                          padx=(6, 0))
-        self._class_var.trace_add("write", lambda *_: self._reload())
-        ttk.Label(top, text="Two players can share a part — doubling a "
-                            "written part is normal at middle school.",
-                  font=("Segoe UI", 8), foreground=muted_fg()).pack(
-            side=LEFT, padx=(12, 0))
+        if len(self._classes) > 1:
+            top.pack(fill=X, pady=(0, 4))
+            ttk.Label(top, text="Class:",
+                      font=("Segoe UI", fs(9), "bold")).pack(side=LEFT)
+            combo = ttk.Combobox(top, textvariable=self._class_var,
+                                 state="readonly", width=20,
+                                 values=self._classes)
+            combo.pack(side=LEFT, padx=(4, 0))
+            combo.bind("<<ComboboxSelected>>", self._class_picked)
 
         box = ttk.Frame(self)
-        box.pack(fill=BOTH, expand=True, padx=16, pady=(6, 0))
-        canvas = tk.Canvas(box, highlightthickness=0, width=430, height=340)
+        box.pack(fill=BOTH, expand=True)
+        canvas = tk.Canvas(box, highlightthickness=0, width=280)
         sb = ttk.Scrollbar(box, orient=VERTICAL, command=canvas.yview)
         canvas.configure(yscrollcommand=sb.set)
         sb.pack(side=RIGHT, fill=Y)
@@ -949,12 +936,12 @@ class _BandPartsDialog(ttk.Toplevel):
                     lambda e: canvas.bind_all("<MouseWheel>", _wheel))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
-        self._vars = {}
-        self._roster = []
-        self._reload()
+        self._note = ttk.Label(self, text="", font=("Segoe UI", fs(8)),
+                               foreground=muted_fg(), wraplength=260,
+                               justify=LEFT)
+        self._note.pack(anchor=W, pady=(4, 0))
 
-        from ui.theme import fit_window
-        fit_window(self, 560, 560)
+    # ── data ────────────────────────────────────────────────────────────────
 
     def _jazz_classes(self):
         """The jazz classes this profile runs, canonical labels first."""
@@ -965,11 +952,30 @@ class _BandPartsDialog(ttk.Toplevel):
             program = (load_settings(self.base_dir).get("teacher")
                        or {}).get("program_type", "band")
             for k in cr.load_classes(self.base_dir, program):
-                if k.get("template") in ("jazz", "jazz_choir")                         or "jazz" in (k.get("label") or "").lower():
+                if k.get("template") in ("jazz", "jazz_choir") \
+                        or "jazz" in (k.get("label") or "").lower():
                     out.append(k["label"])
         except Exception:
             pass
         return out or ["Jazz 1"]
+
+    def _class_picked(self, _event=None):
+        self._class_touched = True
+        self._reload()
+
+    def refresh(self, band_name):
+        """Follow the selected band: with several jazz classes, an untouched
+        class picker tracks the band whose name matches a class label."""
+        if self._table is None:
+            return
+        self._band_name = band_name
+        if (band_name and not self._class_touched
+                and len(self._classes) > 1):
+            match = next((c for c in self._classes
+                          if c.lower() == band_name.lower()), None)
+            if match:
+                self._class_var.set(match)
+        self._reload()
 
     def _students(self):
         try:
@@ -981,60 +987,90 @@ class _BandPartsDialog(ttk.Toplevel):
         except Exception:
             return []
 
+    # ── render ──────────────────────────────────────────────────────────────
+
     def _reload(self):
         for w in self._table.winfo_children():
             w.destroy()
         self._vars = {}
-        self._roster = self._students()
+        roster = self._students()
         options = [""] + self._sc.jazz_part_options()
-        if not self._roster:
+
+        # Blanks get a first guess, saved as shown, never overwriting a
+        # choice.  Saving the guess keeps this list, the seating chart and the
+        # student record telling one story.
+        blanks = [{"id": r["id"], "instrument":
+                   (r.get("jazz_instrument") or r.get("primary_instrument"))}
+                  for r in roster if not (r.get("jazz_part") or "").strip()]
+        if blanks:
+            taken = [(r.get("jazz_part") or "").strip() for r in roster
+                     if (r.get("jazz_part") or "").strip()]
+            guessed = self._sc.jazz_auto_parts(blanks, taken=taken)
+            if guessed:
+                try:
+                    self.main_db.set_jazz_parts(guessed)
+                except Exception:
+                    pass
+                for r in roster:
+                    if r["id"] in guessed:
+                        r["jazz_part"] = guessed[r["id"]]
+
+        rhythm_n = sum(1 for r in roster if self._sc.jazz_part_band(
+            (r.get("jazz_part") or "").strip()) == "rhythm")
+        self._roster = [r for r in roster if self._sc.jazz_part_band(
+            (r.get("jazz_part") or "").strip()) != "rhythm"]
+
+        if not roster:
             ttk.Label(self._table,
                       text="Nobody is in this class yet. Put students in it "
                            "with Manage Students and they appear here.",
-                      font=("Segoe UI", 9), foreground=muted_fg(),
-                      wraplength=380, justify=LEFT).pack(anchor=W, pady=8)
+                      font=("Segoe UI", fs(9)), foreground=muted_fg(),
+                      wraplength=250, justify=LEFT).pack(anchor=W, pady=8)
+            self._note.config(text="")
             return
+
         for r in self._roster:
             row = ttk.Frame(self._table)
             row.pack(fill=X, pady=1)
             name = (r.get("preferred_name") or r.get("first_name") or "")
-            ttk.Label(row, text=("%s %s" % (name, r.get("last_name") or ""))[:20],
-                      width=20, font=("Segoe UI", 9)).pack(side=LEFT)
+            full = ("%s %s" % (name, r.get("last_name") or "")).strip()
             inst = (r.get("jazz_instrument") or r.get("primary_instrument")
                     or "")
-            ttk.Label(row, text=inst[:14], width=14, font=("Segoe UI", 8),
+            ttk.Label(row, text=full[:18], width=16,
+                      font=("Segoe UI", fs(9))).pack(side=LEFT)
+            ttk.Label(row, text=inst[:11], width=10,
+                      font=("Segoe UI", fs(8)),
                       foreground=muted_fg()).pack(side=LEFT)
-            v = tk.StringVar(value=(r.get("jazz_part") or ""))
+            v = tk.StringVar(value=(r.get("jazz_part") or "").strip())
             self._vars[r["id"]] = v
-            ttk.Combobox(row, textvariable=v, values=options, width=8,
-                         state="readonly").pack(side=LEFT, padx=(4, 0))
-        # Fill the blanks with a first guess, never overwriting a choice.
-        blanks = [{"id": r["id"], "instrument":
-                   (r.get("jazz_instrument") or r.get("primary_instrument"))}
-                  for r in self._roster if not self._vars[r["id"]].get()]
-        if blanks:
-            taken = [v.get() for v in self._vars.values() if v.get()]
-            for sid, part in self._sc.jazz_auto_parts(blanks,
-                                                      taken=taken).items():
-                self._vars[sid].set(part)
+            cb = ttk.Combobox(row, textvariable=v, values=options, width=7,
+                              state="readonly")
+            cb.pack(side=LEFT, padx=(2, 0))
+            cb.bind("<<ComboboxSelected>>",
+                    lambda e, sid=r["id"]: self._picked(sid))
 
-    def _reguess(self):
-        players = [{"id": r["id"], "instrument":
-                    (r.get("jazz_instrument") or r.get("primary_instrument"))}
-                   for r in self._roster]
-        for sid, part in self._sc.jazz_auto_parts(players).items():
-            if sid in self._vars:
-                self._vars[sid].set(part)
+        note = self._GUESS_NOTE
+        if rhythm_n:
+            note += ("  %d rhythm player%s → the panel on the right."
+                     % (rhythm_n, "" if rhythm_n == 1 else "s"))
+        self._note.config(text=note)
 
-    def _save(self):
-        try:
-            self.main_db.set_jazz_parts(
-                {sid: v.get() for sid, v in self._vars.items()})
-        except Exception as e:
-            Messagebox.show_error("Could not save the parts:\n%s" % e,
-                                  title="Band Parts", parent=self)
+    def _picked(self, sid):
+        """A part was chosen: save it at once -- there is no Save button to
+        forget.  Choosing a rhythm part moves the player to the rhythm side,
+        so the list reloads to show them gone."""
+        v = self._vars.get(sid)
+        if v is None:
             return
-        self.destroy()
+        part = v.get()
+        try:
+            self.main_db.set_jazz_parts({sid: part})
+        except Exception as e:
+            Messagebox.show_error("Could not save the part:\n%s" % e,
+                                  title="Winds", parent=self)
+            return
+        if self._sc.jazz_part_band(part) == "rhythm":
+            self._reload()
 
 
 class _AddPlayersDialog(ttk.Toplevel):

@@ -1626,7 +1626,7 @@ class _JazzSetupDialog(ttk.Toplevel):
 
     Who covers which part is deliberately NOT here.  Assigning lead trumpet in
     a seating chart window read as confusing, so the parts live where the rest
-    of the jazz machinery does -- the Perc/Jazz tab's Band Parts button -- and
+    of the jazz machinery does -- the Winds list on the Jazz tab -- and
     this chart simply reads what is set there (guessing from instruments for
     anyone not yet assigned).
     """
@@ -1667,7 +1667,7 @@ class _JazzSetupDialog(ttk.Toplevel):
                        if (self._parts.get(str(s.get("id"))) or "").strip())
         ttk.Label(body,
                   text="%d of %d players have a part. Who covers which part "
-                       "is set on the Perc/Jazz tab — 🎺 Band Parts — and "
+                       "is set in the Winds list on the Jazz tab, and "
                        "anyone without one is seated by a guess from their "
                        "instrument." % (assigned, len(self._roster)),
                   font=("Segoe UI", 8), foreground=muted_fg(),

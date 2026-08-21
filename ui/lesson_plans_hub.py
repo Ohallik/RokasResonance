@@ -132,13 +132,14 @@ class LessonPlansHub(ttk.Frame):
         ).pack(side=LEFT, padx=(8, 8), pady=12)
 
         # ── Notebook ─────────────────────────────────────────────────────────
-        # Exactly five tabs, no matter how many classes the teacher runs.  A tab
-        # strip that grows a new entry per class becomes unreadable by the time
-        # someone teaches six sections, so Jazz is a toggle inside Percussion and
-        # every class's agenda lives behind one class picker inside Agendas.
+        # A fixed handful of tabs, no matter how many classes the teacher runs.
+        # A tab strip that grows a new entry per class becomes unreadable by the
+        # time someone teaches six sections, so every class's agenda lives
+        # behind one class picker inside Agendas.  Percussion and Jazz are two
+        # tabs (bands appear as toggles INSIDE the Jazz tab).
         self._notebook = ttk.Notebook(self, bootstyle=PRIMARY)
         self._notebook.pack(fill=BOTH, expand=True)
-        self._seating = self._percussion = self._concerts = None
+        self._seating = self._percussion = self._jazz = self._concerts = None
         self._field_trips = self._agendas = None
         self._populate_notebook()
         self._notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
@@ -190,27 +191,27 @@ class LessonPlansHub(ttk.Frame):
         self._notebook.add(self._seating, text="  🪑 Seating Charts  ")
 
         self._percussion = None
-        # Choir/orchestra never have percussion; otherwise show the tab if any
-        # class uses a percussion rotation OR the teacher runs a jazz band
-        # (whose rhythm-section rotation shares this tab).
-        has_jazz = any(k.get("template") == "jazz" for k in classes)
-        if program not in ("choir", "orchestra") and (
-                has_jazz or any(k.get("percussion") for k in classes)):
-            self._percussion = _RotationsTab(
-                self._notebook, self.db, self.main_db, self._base_dir,
-                show_concert=any(k.get("percussion") for k in classes),
-                show_jazz=has_jazz)
-            # Name the tab after what is actually in it.  The jazz
-            # rhythm-section rotation lives here as a toggle beside the
-            # concert-band one, and a tab called "Percussion" is where nobody
-            # looks for jazz -- she went hunting for a Jazz tab and concluded
-            # it had been taken away.
-            # "Rotations" told nobody that jazz lives here.  Meagan's words:
-            # call it exactly Perc/Jazz so both tools are findable by name.
-            _has_perc = any(k.get("percussion") for k in classes)
-            _label = ("  🥁 Percussion  " if not has_jazz else
-                      ("  🥁🎷 Perc/Jazz  " if _has_perc else "  🎷 Jazz  "))
-            self._notebook.add(self._percussion, text=_label)
+        self._jazz = None
+        # Percussion and Jazz are SEPARATE tabs: concert rotations and the jazz
+        # band are different rooms, and squeezing both behind one toggle left
+        # the jazz side cramped and hard to find.  Choir/orchestra never see
+        # either.
+        has_perc = program not in ("choir", "orchestra") and any(
+            k.get("percussion") for k in classes)
+        has_jazz = program not in ("choir", "orchestra") and any(
+            k.get("template") == "jazz" for k in classes)
+        if has_perc:
+            from ui.percussion_rotation_view import PercussionRotationView
+            self._percussion = PercussionRotationView(
+                self._notebook, self.db, main_db=self.main_db,
+                base_dir=self._base_dir)
+            self._notebook.add(self._percussion, text="  🥁 Percussion  ")
+        if has_jazz:
+            from ui.jazz_view import JazzView
+            self._jazz = JazzView(self._notebook, self.db,
+                                  main_db=self.main_db,
+                                  base_dir=self._base_dir)
+            self._notebook.add(self._jazz, text="  🎷 Jazz  ")
 
         # One tab, because a field trip is a performance with more paperwork
         # and the two were always read together: "what is coming up" used to be
@@ -296,8 +297,8 @@ class LessonPlansHub(ttk.Frame):
         return outer
 
     def _tabs(self):
-        core = [self._seating, self._percussion, self._performances,
-                self._agendas]
+        core = [self._seating, self._percussion, self._jazz,
+                self._performances, self._agendas]
         return [t for t in core if t is not None]
 
     def _on_tab_changed(self, event):
@@ -340,6 +341,10 @@ class LessonPlansHub(ttk.Frame):
         self.db = get_lesson_plan_db(self._base_dir, new_year)
         for tab in self._tabs():
             tab.db = self.db
+            # Views that cache per-year data (the mallet inventory) must drop
+            # it, or the new year renders with the old year's equipment list.
+            if hasattr(tab, "_inv_cache"):
+                del tab._inv_cache
             tab.refresh()
 
     def switch_to_year(self, year: str):
@@ -419,37 +424,6 @@ class _SwitcherTab(ttk.Frame):
                         bootstyle=(PRIMARY, "toolbutton"),
                         command=lambda k=key: self._show(k)
                         ).pack(side=LEFT, padx=2, pady=4)
-
-
-class _RotationsTab(_SwitcherTab):
-    """Percussion: the concert-band rotation and (if the teacher runs one) the
-    jazz rhythm-section rotation, behind one toggle instead of two tabs."""
-
-    def __init__(self, parent, db, main_db, base_dir,
-                 show_concert=True, show_jazz=False):
-        super().__init__(parent, db)
-        self.main_db = main_db
-        self.base_dir = base_dir
-        options = ([("concert", "🥁 Concert Band")] if show_concert else []) + \
-                  ([("jazz", "🎷 Jazz")] if show_jazz else [])
-        first = options[0][0] if options else None
-        self._var = tk.StringVar(value=first or "")
-        if len(options) > 1:
-            ttk.Label(self._bar, text="Rotation:", font=("Segoe UI", fs(9)),
-                      foreground=muted_fg()).pack(side=LEFT, padx=(8, 4))
-            for key, text in options:
-                self._toggle_button(key, text, self._var)
-        self._show(first)
-
-    def _make_view(self, key):
-        if key == "jazz":
-            from ui.jazz_view import JazzView
-            return JazzView(self._host, self._db, main_db=self.main_db,
-                            base_dir=self.base_dir)
-        from ui.percussion_rotation_view import PercussionRotationView
-        return PercussionRotationView(self._host, self._db,
-                                      main_db=self.main_db,
-                                      base_dir=self.base_dir)
 
 
 class _AgendasTab(_SwitcherTab):

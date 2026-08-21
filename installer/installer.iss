@@ -68,8 +68,12 @@ Source: "dist\RokasResonance\*"; DestDir: "{app}"; Flags: ignoreversion recurses
 ; Tasks page is shown, so there's nothing for the user to configure.
 ; {autoprograms}/{autodesktop} resolve to the system-wide location on admin
 ; installs and the per-user location otherwise.
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+; AppUserModelID here must match the one main.py stamps on the process
+; (SetCurrentProcessExplicitAppUserModelID).  Windows draws the taskbar
+; button icon from the shortcut that carries the same id; without this
+; the running app gets a blank spot on the taskbar.
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "RokasResonance.Roka.SeatingAndInventory.1"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "RokasResonance.Roka.SeatingAndInventory.1"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent

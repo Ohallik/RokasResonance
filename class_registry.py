@@ -113,9 +113,11 @@ TEMPLATES = {
         "desc": "Blank agendas, no percussion rotation.",
     },
     "hs_band_perc": {
-        "label": "HS Band (Percussion)", "book": None, "class_type": "entry",
+        "label": "HS Band (Percussion)", "book": None, "class_type": "int_adv",
         "percussion": True,
-        "desc": "Blank agendas with a fully customizable percussion rotation.",
+        "desc": "Blank agendas with a fully customizable percussion rotation. "
+                "Fits a percussion ensemble too -- everyone starts in the "
+                "full rotation.",
     },
     "jazz": {
         "label": "Jazz", "book": None, "class_type": None, "percussion": False,
