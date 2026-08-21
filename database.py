@@ -6,6 +6,8 @@ import sqlite3
 import shutil
 import os
 import re
+import hashlib
+import json
 import time
 from datetime import datetime
 
@@ -119,6 +121,12 @@ def _fee_description(fee_type: str) -> str:
             return name[name.index("(") + 1:name.rindex(")")].strip()
         return "Rental"
     return name
+
+
+def _safe_folder_name(name: str) -> str:
+    """A folder name Windows will accept, whatever the profile is called."""
+    out = "".join("-" if c in '<>:"/\\|?*' else c for c in (name or "").strip())
+    return out.rstrip(". ") or "Roka Archive"
 
 
 class Database:
@@ -1207,6 +1215,19 @@ class Database:
                 except OSError:
                     pass
 
+    @staticmethod
+    def _has_backup_of(dest_dir, name):
+        """Is there already a copy of this file in the folder?  Guards against
+        skipping a file whose only copy was rotated away."""
+        stem, ext = os.path.splitext(name)
+        try:
+            for f in os.listdir(dest_dir):
+                if f.startswith(stem + "_") and f.endswith(ext):
+                    return True
+        except OSError:
+            pass
+        return False
+
     def newest_backup_time(self):
         """When this session last backed up, or None if it has not yet.
 
@@ -1243,11 +1264,48 @@ class Database:
                 continue
         return False
 
+    _MANIFEST = ".roka_backup_manifest.json"
+
+    @staticmethod
+    def _file_fingerprint(path):
+        """A cheap, exact answer to "is this the same file as last time"."""
+        h = hashlib.sha1()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    def _load_manifest(self, dest_dir):
+        try:
+            with open(os.path.join(dest_dir, self._MANIFEST),
+                      "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _save_manifest(self, dest_dir, manifest):
+        try:
+            with open(os.path.join(dest_dir, self._MANIFEST),
+                      "w", encoding="utf-8") as f:
+                json.dump(manifest, f)
+        except OSError:
+            pass
+
     def _backup_all_to(self, dest_dir: str, max_backups: int) -> str:
         """Copy the main database plus all companion files (per-year Teacher
-        Tools DBs, settings.json) into dest_dir with a shared timestamp."""
+        Tools DBs, settings.json) into dest_dir with a shared timestamp.
+
+        A file that has not changed since the last backup is NOT copied again.
+        Last year's Teacher Tools database is finished the day the year rolls
+        over, and copying it afresh every couple of hours for the rest of the
+        teacher's career is how a backup folder quietly reaches a gigabyte.
+        Skipping them holds a long-serving teacher's folder near where a
+        first-year teacher's sits; the copy already taken stays where it is.
+        """
         os.makedirs(dest_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        manifest = self._load_manifest(dest_dir)
 
         # Flush WAL to main db before copying
         try:
@@ -1257,17 +1315,28 @@ class Database:
             pass
         backup_path = os.path.join(dest_dir, f"rokas_resonance_{timestamp}.db")
         shutil.copy2(self.db_path, backup_path)
+        try:
+            manifest["rokas_resonance.db"] = self._file_fingerprint(self.db_path)
+        except OSError:
+            pass
 
         for path in self._companion_files():
             try:
                 if path.endswith(".db"):
                     self._checkpoint_sqlite(path)
-                stem, ext = os.path.splitext(os.path.basename(path))
-                shutil.copy2(path, os.path.join(dest_dir,
-                                                f"{stem}_{timestamp}{ext}"))
+                name = os.path.basename(path)
+                stamp = self._file_fingerprint(path)
+                copy_to = os.path.join(dest_dir, "%s_%s%s"
+                                       % (os.path.splitext(name)[0], timestamp,
+                                          os.path.splitext(name)[1]))
+                if manifest.get(name) == stamp and self._has_backup_of(dest_dir, name):
+                    continue        # unchanged, and a copy is already here
+                shutil.copy2(path, copy_to)
+                manifest[name] = stamp
             except OSError:
                 pass    # one bad companion shouldn't sink the whole backup
 
+        self._save_manifest(dest_dir, manifest)
         self._rotate_backups(dest_dir, max_backups)
         # Stamped after the copying and checkpointing is finished, so nothing
         # the backup itself touched counts as a change made since.
@@ -1298,6 +1367,139 @@ class Database:
             raise FileNotFoundError(f"Database not found: {self.db_path}")
         dest_dir = os.path.join(external_dir, profile_name) if profile_name else external_dir
         return self._backup_all_to(dest_dir, max_backups)
+
+    # ─── Year-end archive ──────────────────────────────────────────────────────
+
+    ARCHIVE_README = """Roka's Resonance — archive of the {year} school year
+{underline}
+
+Taken on {taken} from the "{profile}" profile.
+
+WHAT IS IN HERE
+  rokas_resonance.db     Students, instruments, check-outs, repairs, the sheet
+                         music library (titles, composers, arrangers, publisher,
+                         location) and every performance ever recorded, uniforms,
+                         budget and fees.
+  {plans}
+  settings.json          Your schools, classes and preferences.
+{music_line}
+HOW TO OPEN IT AGAIN
+  This folder is laid out exactly like a Roka profile, so it can be opened as
+  one:
+
+    1. Copy this whole folder into
+         {profiles_dir}
+    2. Rename the copy to whatever you want the profile called,
+       for example "{profile} {year}".
+    3. Start Roka's Resonance and pick that profile from the list.
+
+  Nothing in here is linked to your live data — opening it changes only the
+  copy, so it is safe to look around in.
+
+KEEPING IT
+  This is the copy meant to outlive the laptop.  Put it somewhere that is not
+  the laptop: an external drive is the surest, since cloud folders are known
+  to clear out files that have not been touched for a long time.
+"""
+
+    def archive_year(self, dest_dir: str, school_year: str,
+                     profile_name: str = "", include_sheet_music: bool = False,
+                     progress=None) -> str:
+        """Write a keep-for-ever copy of one school year to ``dest_dir``.
+
+        Different job from the rolling backups, which are a safety net for the
+        last fortnight and are meant to be thrown away.  This is the copy that
+        outlives the laptop: taken once when a year is closed out, put wherever
+        the teacher keeps things permanently, and laid out as a profile folder
+        so it can simply be opened again years later rather than needing a
+        version of Roka that still understands an old export format.
+
+        Returns the folder it wrote.
+        """
+        if not os.path.exists(self.db_path):
+            raise FileNotFoundError(f"Database not found: {self.db_path}")
+        base = os.path.dirname(os.path.abspath(self.db_path))
+        label = " ".join(x for x in ("Roka", profile_name, school_year) if x)
+        out = os.path.join(dest_dir, _safe_folder_name(label))
+        os.makedirs(out, exist_ok=True)
+
+        def say(msg):
+            if progress:
+                try:
+                    progress(msg)
+                except Exception:
+                    pass
+
+        say("Copying the main database…")
+        try:
+            with self._connect() as conn:
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception:
+            pass
+        shutil.copy2(self.db_path, os.path.join(out, "rokas_resonance.db"))
+
+        # The year being closed AND any others still on disk: a teacher looking
+        # at this in five years wants the whole picture, and they are small.
+        plans = []
+        for path in self._companion_files():
+            name = os.path.basename(path)
+            say(f"Copying {name}…")
+            try:
+                if path.endswith(".db"):
+                    self._checkpoint_sqlite(path)
+                shutil.copy2(path, os.path.join(out, name))
+                if name.startswith("lesson_plans_"):
+                    plans.append(name)
+            except OSError:
+                pass
+
+        music_line = ""
+        src_music = os.path.join(base, "sheet_music")
+        if include_sheet_music and os.path.isdir(src_music):
+            say("Copying the sheet music files (this is the slow part)…")
+            try:
+                shutil.copytree(src_music, os.path.join(out, "sheet_music"),
+                                dirs_exist_ok=True)
+                music_line = ("  sheet_music/           The scanned music itself.\n")
+            except Exception:
+                music_line = ("  (The sheet music files could not be copied — the\n"
+                              "   library's titles and history are still in the database.)\n")
+        elif os.path.isdir(src_music):
+            music_line = ("  (The scanned sheet music FILES were not included in this\n"
+                          "   archive.  Everything about the library — titles, composers,\n"
+                          "   arrangers and the performance history — is in the database\n"
+                          "   above.)\n")
+
+        plans_line = ("\n  ".join(
+            "%-22s Agendas, seating charts, percussion rotations,"
+            % n for n in sorted(plans))
+            or "(no Teacher Tools files)")
+        if plans:
+            plans_line = "\n".join(
+                "  %-22s Agendas, seating charts, percussion rotations,\n"
+                "  %-22s concerts and field trips for %s."
+                % (n, "", n[len("lesson_plans_"):-3]) for n in sorted(plans))
+            plans_line = plans_line.lstrip()
+
+        say("Writing the read-me…")
+        try:
+            from datetime import datetime as _dt
+            readme = self.ARCHIVE_README.format(
+                year=school_year,
+                underline="=" * (len(school_year) + 40),
+                taken=_dt.now().strftime("%d %B %Y"),
+                profile=profile_name or "this",
+                plans=plans_line,
+                music_line=music_line,
+                profiles_dir=os.path.dirname(base),
+            )
+            with open(os.path.join(out, "READ ME FIRST.txt"), "w",
+                      encoding="utf-8") as f:
+                f.write(readme)
+        except Exception:
+            pass
+        say("Done.")
+        return out
 
     # ─── Instrument CRUD ───────────────────────────────────────────────────────
 

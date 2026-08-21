@@ -317,6 +317,34 @@ class NewSchoolYearWizard(ttk.Toplevel):
             self._n += 1
             step(self._n, title, hint)
 
+        # ── Step 2: the keep-for-ever copy ──
+        # The rolling backups are a fortnight's safety net and are meant to be
+        # thrown away.  This is the other kind: taken once, when a year is
+        # finished, and put somewhere that outlives the laptop.  Closing out
+        # the year is the one moment a teacher is certain to be thinking about
+        # the year as a whole, so it is asked for here.
+        nstep("Save a keep-for-ever copy of " + str(current_year),
+              "Students, the whole sheet music library with its performance "
+              "history, agendas, seating charts, concerts and field trips — "
+              "written as a folder you can open again years from now. Put it "
+              "on an external drive if you have one; cloud folders are known "
+              "to clear out files nobody has touched in a while.")
+        arow = ttk.Frame(body); arow.pack(anchor=W, pady=(4, 0))
+        ttk.Button(arow, text="💾  Save Archive Copy…", bootstyle=(INFO, OUTLINE),
+                   command=self._save_archive).pack(side=LEFT)
+        self._archive_music_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(arow, text="include the scanned music files (much bigger)",
+                        variable=self._archive_music_var,
+                        bootstyle=INFO).pack(side=LEFT, padx=(10, 0))
+        self._archive_log = ttk.Label(
+            body, text="Not saved yet. The library's titles, composers and "
+                       "performance history are in the copy either way — the "
+                       "tick box is only about the scans themselves.",
+            font=("Segoe UI", fs(8)), foreground=muted_fg(),
+            wraplength=560, justify=LEFT)
+        self._archive_log.pack(anchor=W, pady=(2, 0))
+        self._archived_to = None
+
         if self._has_secondary:
             nstep("Import this year's class lists (CSV)",
                   "One CSV per class. Returning students are rolled in "
@@ -510,6 +538,44 @@ class NewSchoolYearWizard(ttk.Toplevel):
         self._import_log.config(text="\n".join(self._imports),
                                 foreground="#1a7a1a")
 
+    def _save_archive(self):
+        """Write the year's keep-for-ever copy wherever they say."""
+        dest = filedialog.askdirectory(
+            parent=self,
+            title="Where should the %s archive go?" % self.current_year,
+            mustexist=True)
+        if not dest:
+            return
+        profile = os.path.basename(os.path.normpath(self.base_dir))
+        self._archive_log.config(text="Saving…", foreground=muted_fg())
+        self.update_idletasks()
+
+        def say(msg):
+            self._archive_log.config(text=msg)
+            self.update_idletasks()
+
+        try:
+            out = self.main_db.archive_year(
+                dest, self.current_year, profile,
+                include_sheet_music=bool(self._archive_music_var.get()),
+                progress=say)
+        except Exception as e:
+            self._archive_log.config(
+                text="Could not save the archive: %s" % e, foreground="#c0392b")
+            return
+        self._archived_to = out
+        size = 0
+        for root, _dirs, files in os.walk(out):
+            for f in files:
+                try:
+                    size += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass
+        self._archive_log.config(
+            text="Saved %.0f MB to %s  —  there is a READ ME FIRST inside "
+                 "explaining how to open it again." % (size / 1048576.0, out),
+            foreground="#1e7e34")
+
     def _finish(self):
         year = self._year_var.get().strip()
         if not year:
@@ -560,6 +626,14 @@ class NewSchoolYearWizard(ttk.Toplevel):
                          f"who didn't return.")
         if self._imports:
             parts.append(f"Imported {len(self._imports)} class list(s).")
+        if self._archived_to:
+            parts.append(f"A keep-for-ever copy of {self.current_year} is at "
+                         f"{self._archived_to}.")
+        else:
+            parts.append(f"You did not save a keep-for-ever copy of "
+                         f"{self.current_year}. The rolling backups only go "
+                         f"back a fortnight — you can still make one from "
+                         f"New School Year, or Settings \u2192 Backup.")
         parts.append("Teacher Tools is now on the new year — add your "
                      "concert dates in the Concerts tab, and switch the "
                      "Budget window's year selector when you're ready.")
