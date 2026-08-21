@@ -597,8 +597,11 @@ class SettingsDialog(ttk.Toplevel):
         ttk.Label(
             outer,
             text="Choose a folder on a network drive, OneDrive, or USB drive.\n"
-                 "A copy of your database is saved here automatically each time\n"
-                 "the app starts and when it closes. Up to 30 backups are kept per profile.",
+                 "A copy is saved here when the app starts, when it closes, and\n"
+                 "every couple of hours while it is open — so a laptop that never\n"
+                 "gets shut down is still backed up. Nothing is copied if nothing\n"
+                 "has changed. The most recent copies are kept, plus one a day\n"
+                 "going back a fortnight.",
             font=("Segoe UI", 9),
             foreground="#888",
             justify=LEFT,

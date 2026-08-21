@@ -6,6 +6,7 @@ import sqlite3
 import shutil
 import os
 import re
+import time
 from datetime import datetime
 
 
@@ -1163,27 +1164,84 @@ class Database:
         except Exception:
             pass
 
+    # Backups now also run WHILE the app is open, so a teacher who never
+    # closes their laptop is not one power cut away from losing a term.  That
+    # makes plain "keep the newest N" the wrong rule: at one copy every couple
+    # of hours, ten copies is less than a day of history and last week's is
+    # gone.  So: keep the newest N whatever their age, and then one per DAY
+    # going back keep_days.  Dense where you need it, sparse where you don't,
+    # and still a hard ceiling on the number of files.
+    BACKUP_KEEP_DAYS = 14
+
     @staticmethod
-    def _rotate_backups(dir_, max_backups):
-        """Keep the newest max_backups per file family — a family is the
-        name before the _YYYYMMDD_HHMMSS timestamp, so the main database,
-        each year's Teacher Tools file, and settings rotate independently."""
+    def _rotate_backups(dir_, max_backups, keep_days=BACKUP_KEEP_DAYS):
+        """Keep the newest max_backups per file family, plus the newest copy
+        from each of the last keep_days days.  A family is the name before the
+        _YYYYMMDD_HHMMSS timestamp, so the main database, each year's Teacher
+        Tools file, and settings rotate independently."""
         try:
             files = os.listdir(dir_)
         except OSError:
             return
         groups = {}
         for f in files:
-            m = re.match(r"(.+)_\d{8}_\d{6}(\.\w+)$", f)
+            m = re.match(r"(.+)_(\d{8})_(\d{6})(\.\w+)$", f)
             if not m:
                 continue
-            groups.setdefault(m.group(1) + m.group(2), []).append(f)
-        for fam_files in groups.values():
-            for old in sorted(fam_files, reverse=True)[max_backups:]:
+            groups.setdefault(m.group(1) + m.group(4), []).append(
+                (f, m.group(2)))
+        for fam in groups.values():
+            fam.sort(key=lambda t: t[0], reverse=True)      # newest first
+            keep = {f for f, _day in fam[:max_backups]}
+            days_kept = []
+            for f, day in fam:                              # newest per day
+                if day not in days_kept:
+                    if len(days_kept) < keep_days:
+                        days_kept.append(day)
+                        keep.add(f)
+            for f, _day in fam:
+                if f in keep:
+                    continue
                 try:
-                    os.remove(os.path.join(dir_, old))
+                    os.remove(os.path.join(dir_, f))
                 except OSError:
                     pass
+
+    def newest_backup_time(self):
+        """When this session last backed up, or None if it has not yet.
+
+        Deliberately NOT read from the backup folder's timestamps: the copies
+        are made with ``copy2``, which preserves the SOURCE file's time, so a
+        backup file's date is the date of the data in it and not the moment it
+        was taken.  Checkpointing during the backup also touches the -wal
+        files, which made every freshly-taken backup look out of date.
+        """
+        return getattr(self, "_last_backup_at", None)
+
+    def data_changed_since(self, when):
+        """Has anything a backup would copy been touched since ``when``?
+
+        An app left open for a fortnight over the holidays should not fill the
+        folder with identical copies of a database nobody has opened.
+        """
+        if when is None:
+            return True
+        paths = []
+        for path in [self.db_path] + self._companion_files():
+            paths.append(path)
+            if path.endswith(".db"):
+                # SQLite runs in WAL mode, so an edit lands in the -wal sidecar
+                # and the .db file's own timestamp does not move until a
+                # checkpoint.  Watching only the .db meant a teacher could work
+                # all afternoon and be told nothing had changed.
+                paths.append(path + "-wal")
+        for path in paths:
+            try:
+                if os.path.getmtime(path) > when:
+                    return True
+            except OSError:
+                continue
+        return False
 
     def _backup_all_to(self, dest_dir: str, max_backups: int) -> str:
         """Copy the main database plus all companion files (per-year Teacher
@@ -1211,6 +1269,9 @@ class Database:
                 pass    # one bad companion shouldn't sink the whole backup
 
         self._rotate_backups(dest_dir, max_backups)
+        # Stamped after the copying and checkpointing is finished, so nothing
+        # the backup itself touched counts as a change made since.
+        self._last_backup_at = time.time()
         return backup_path
 
     def backup(self, max_backups: int = 10) -> str | None:

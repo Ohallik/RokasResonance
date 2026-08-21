@@ -442,6 +442,40 @@ def run_first_import(db: Database, parent_window, import_flag: str):
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 
+def _roka_icon_paths():
+    """(png, ico) for the Roka artwork, wherever the app is running from."""
+    here = getattr(sys, "_MEIPASS",
+                   os.path.dirname(os.path.abspath(__file__)))
+    png = os.path.join(here, "assets", "banner_logo.png")
+    ico = os.path.join(here, "assets", "banner_logo.ico")
+    return (png if os.path.exists(png) else ""),\
+           (ico if os.path.exists(ico) else "")
+
+
+def _apply_roka_icon(app, png_path, ico_path):
+    """Put Roka on this window and every window opened after it.
+
+    Belt and braces, because the three places an icon shows up are fed by
+    different things: Tk's iconphoto covers the title bar cross-platform,
+    Windows would rather have a real .ico (it carries the 16 and 32 pixel
+    versions the taskbar and Alt-Tab actually draw), and the exe's own
+    embedded icon covers Explorer.
+    """
+    if png_path:
+        try:
+            app._roka_icon = tk.PhotoImage(file=png_path)   # keep a reference
+            # The raw Tcl form: wm_iconphoto's Python signature moved between
+            # versions, and this one is the same everywhere.
+            app.tk.call("wm", "iconphoto", app._w, "-default", app._roka_icon)
+        except Exception:
+            pass
+    if ico_path and sys.platform.startswith("win"):
+        try:
+            app.iconbitmap(default=ico_path)
+        except Exception:
+            pass
+
+
 def _run_backups(db, data_dir: str, profile_name: str):
     """Run local + external backup for the given profile. Non-fatal: errors print only."""
     try:
@@ -460,6 +494,54 @@ def _run_backups(db, data_dir: str, profile_name: str):
             traceback.print_exc()
 
 
+# How often to back up while the app is OPEN.  Backing up only at start and
+# close is fine for somebody who shuts their laptop at night; plenty of people
+# never close anything, and for them "on close" can be months away -- one flat
+# battery from losing a term's work.  Two hours is often enough to bound the
+# loss and rare enough that the folder does not fill with copies; a run where
+# nothing was touched is skipped entirely.
+AUTO_BACKUP_MINUTES = 120
+
+
+def _schedule_auto_backup(app, db, data_dir: str, profile_name: str):
+    """Back up periodically while the app is running.
+
+    Cancels any timer from a profile opened earlier, so switching profiles does
+    not leave two of these running against two databases.
+    """
+    old = getattr(app, "_auto_backup_job", None)
+    if old:
+        try:
+            app.after_cancel(old)
+        except Exception:
+            pass
+        app._auto_backup_job = None
+
+    interval_ms = max(1, int(AUTO_BACKUP_MINUTES)) * 60 * 1000
+
+    def tick():
+        # Only if it is still THIS profile's database on screen.
+        if getattr(app, "_current_db", None) is not db:
+            return
+        try:
+            if db.data_changed_since(db.newest_backup_time()):
+                threading.Thread(target=_run_backups,
+                                 args=(db, data_dir, profile_name),
+                                 daemon=True).start()
+        except Exception:
+            import traceback
+            traceback.print_exc()
+        try:
+            app._auto_backup_job = app.after(interval_ms, tick)
+        except Exception:
+            pass
+
+    try:
+        app._auto_backup_job = app.after(interval_ms, tick)
+    except Exception:
+        pass
+
+
 def _load_profile(app, profile_name: str):
     """Set up DB and menu for the given profile. Returns the menu widget."""
     # Save last-used
@@ -474,6 +556,7 @@ def _load_profile(app, profile_name: str):
 
     db = Database(db_path)
     _run_backups(db, data_dir, profile_name)
+    _schedule_auto_backup(app, db, data_dir, profile_name)
 
     # Point the shared class vocabulary at THIS profile's configured classes so
     # every picker (students, seating, field trips, budget, concerts …) offers
@@ -656,29 +739,32 @@ def main():
     win_w = {"normal": 620, "large": 700, "extra_large": 780}.get(startup_font_size, 620)
     win_h = {"normal": 580, "large": 640, "extra_large": 720}.get(startup_font_size, 580)
 
+    # Roka on the taskbar as well as the title bar.  Windows groups a window
+    # under an "application id"; without one set, a Python app inherits the
+    # interpreter's identity and the taskbar shows something that is not ours.
+    # This has to happen BEFORE the first window exists.
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "RokasResonance.Roka.SeatingAndInventory.1")
+    except Exception:
+        pass
+
+    _icon_png, _icon_ico = _roka_icon_paths()
+
     _log_line(f"CHECKPOINT: before ttk.Window (theme={startup_theme})")
     app = ttk.Window(
         title="Roka's Resonance",
         themename=startup_theme,
         size=(win_w, win_h),
         resizable=(True, True),
+        # Hand ttkbootstrap the icon up front.  Left to itself it stamps its own
+        # feather on the root and on every Toplevel after it, and replacing it
+        # afterwards was a race we kept losing.
+        iconphoto=_icon_png or '',
     )
     _log_line("CHECKPOINT: after ttk.Window")
-    # The Roka icon on every window.  ttkbootstrap stamps its own feather on
-    # any window that never gets an icon, and no window ever got one -- the
-    # .ico on the exe only covers Explorer and the taskbar.  default=True
-    # makes this the icon for every Toplevel the app ever opens.
-    try:
-        import sys as _sys
-        _here = getattr(_sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-        _logo = os.path.join(_here, "assets", "banner_logo.png")
-        if os.path.exists(_logo):
-            app._roka_icon = tk.PhotoImage(file=_logo)   # keep a reference
-            # The raw Tcl form: wm_iconphoto's Python signature moved between
-            # versions, and this one is the same everywhere.
-            app.tk.call("wm", "iconphoto", app._w, "-default", app._roka_icon)
-    except Exception:
-        pass
+    _apply_roka_icon(app, _icon_png, _icon_ico)
     app.minsize({"normal": 580, "large": 640, "extra_large": 720}.get(startup_font_size, 580), 650)
     app.withdraw()
 
