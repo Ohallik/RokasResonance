@@ -431,11 +431,17 @@ def _split_evenly(seq, n):
 def jazz_seating(players, parts, rhythm_side="left", high_rows=1):
     """Seat a jazz band by PART, as close to the ideal chart as the players allow.
 
-    Returns ``(rows_of_players, row_caps)``.  Row 0 is the front (audience)
-    side: front rhythm then the saxes.  Row 1 is the bass-clef row with the
-    other rhythm players standing at its end, and rows 2+ are the trumpet
-    parts.  The rows are offset so that part 1 of each numbered row lines up
-    behind the lead alto, which is the one alignment every jazz chart draws.
+    Returns ``(rows_of_players, row_caps, rhythm_players)``.  Row 0 is the
+    saxes, row 1 the trombone parts, rows 2+ the trumpet parts, each numbered
+    row offset so part 1 lines up behind the lead alto -- the one alignment
+    every jazz chart draws.
+
+    The rhythm section is NOT in the rows.  A piano is an instrument off to
+    the side, not a chair in a row, and drawing the drummer amongst the
+    trombones read as the drummer being a trombone.  They come back as their
+    own list, in part order, for the renderer to stand beside the band on
+    whichever side the teacher picked (``rhythm_side`` is the caller's to pass
+    to the renderer; the rows themselves read the same either way).
     """
     high_rows = max(1, int(high_rows or 1))
     by_part = {}
@@ -453,20 +459,16 @@ def jazz_seating(players, parts, rhythm_side="left", high_rows=1):
         return out
 
     rhythm = seats("rhythm")
-    front_rhythm = [p for p in rhythm
-                    if (parts or {}).get(p["id"]) in _RHYTHM_FRONT]
-    back_rhythm = [p for p in rhythm if p not in front_rhythm]
     sax, low, high = seats("sax"), seats("low"), seats("high")
     unplaced = [p for p in players
                 if not jazz_part_band((parts or {}).get(p["id"]))]
     high = high + unplaced          # never leave anybody off the chart
 
-    # Where each block starts, so the leads line up.
+    # Where the brass blocks start, so the leads line up behind the lead alto.
     sax_order = jazz_seating_order(band_parts("sax"), "sax")
     lead_at = sax_order.index("A1") if "A1" in sax_order else 0
-    lead_col = len(front_rhythm) + sum(
-        len(by_part[q]) for q in sax_order[:lead_at])
-    brass_start = max(lead_col - 1, len(back_rhythm))
+    lead_col = sum(len(by_part[q]) for q in sax_order[:lead_at])
+    brass_start = max(lead_col - 1, 0)
 
     # Splitting the trumpet row keeps the part order: the first chunk sits in
     # FRONT of the second, so the lead trumpet stays in the nearer row and
@@ -474,12 +476,7 @@ def jazz_seating(players, parts, rhythm_side="left", high_rows=1):
     # row (which is what a stride does) put trumpet 1 behind trumpet 2.
     high_split = _split_evenly(high, high_rows) if high else []
 
-    # The bass and drums stand at the END of the brass row, right up against
-    # it, not marooned at the wall with empty chairs between -- a drummer alone
-    # in the corner with a two-chair gap is not a jazz band.
-    lead_pad = max(0, brass_start - len(back_rhythm))
-    rows = [front_rhythm + sax,
-            [None] * lead_pad + back_rhythm + low]
+    rows = [sax, [None] * brass_start + low]
     for chunk in high_split:
         rows.append([None] * brass_start + chunk)
     if not high_split:
@@ -488,9 +485,7 @@ def jazz_seating(players, parts, rhythm_side="left", high_rows=1):
     width = max((len(r) for r in rows), default=4)
     width = max(width, 4)
     rows = [r + [None] * (width - len(r)) for r in rows]
-    if rhythm_side == "right":
-        rows = [list(reversed(r)) for r in rows]
-    return rows, [width] * len(rows)
+    return rows, [width] * len(rows), rhythm
 
 
 def _by_last(students):

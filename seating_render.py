@@ -48,9 +48,95 @@ def _inst_label(seat):
     return INSTRUMENT_ABBREV.get(inst, inst)
 
 
+def _rhythm_sidebar(players, font_pt=14):
+    """The rhythm section as its own column: an icon and a name per player.
+
+    A piano is an instrument off to the side, not a chair in a row -- drawing
+    the drummer amongst the trombones read as the drummer being a trombone.
+    Returns (image, [seat boxes]) at final scale; the caller pastes it on
+    whichever side the teacher picked.
+    """
+    from PIL import Image, ImageDraw
+    import jazz_icons
+
+    fs = int(font_pt * 96 / 72)
+    fs_i = int(fs * 0.75)
+    font = _calibri(fs)
+    font_i = _calibri(fs_i)
+    font_cap = _calibri(int(fs * 0.95), bold=True)
+    icon_px = int(fs * 2.6)
+    pad = 10
+
+    scratch = Image.new("RGB", (10, 10), "white")
+    d0 = ImageDraw.Draw(scratch)
+    names = [(p.get("name") or "") for p in players] + ["Rhythm Section"]
+    label_w = max(_text_size(d0, n, font)[0] for n in names)
+    entry_w = max(icon_px, label_w) + pad * 2
+    entry_h = icon_px + fs + fs_i + int(pad * 1.6)
+    cap_h = int(fs * 1.6)
+    width = entry_w
+    height = cap_h + entry_h * len(players) + pad * 2
+
+    img = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(img)
+    cw, _ = _text_size(draw, "Rhythm Section", font_cap)
+    draw.text(((width - cw) / 2, pad), "Rhythm Section", font=font_cap,
+              fill="#555555")
+    boxes = []
+    y = cap_h + pad
+    for pl in players:
+        seat = (pl.get("jazz_part") or pl.get("instrument") or "")
+        ic = jazz_icons.pil_icon(seat, icon_px)
+        x0, y0 = (width - entry_w) // 2, y
+        if ic is not None:
+            img.paste(ic, (int((width - ic.width) / 2), y), ic)
+        else:
+            draw.rounded_rectangle(
+                [width / 2 - icon_px / 2, y, width / 2 + icon_px / 2,
+                 y + icon_px], radius=8, outline="#8f8f8f", width=2)
+        nm = pl.get("name") or ""
+        tw, _ = _text_size(draw, nm, font)
+        draw.text(((width - tw) / 2, y + icon_px + 2), nm, font=font,
+                  fill="#000000")
+        part = (pl.get("jazz_part") or "").strip()
+        if part:
+            iw, _ = _text_size(draw, part, font_i)
+            draw.text(((width - iw) / 2, y + icon_px + fs + 3), part,
+                      font=font_i, fill="#555555")
+        boxes.append((x0, y0, x0 + entry_w, y0 + entry_h))
+        y += entry_h
+    return img, boxes
+
+
+def _attach_sidebar(img, seat_boxes, players, side, font_pt):
+    """Paste the rhythm column beside a finished chart and merge seat boxes."""
+    from PIL import Image
+    if not players:
+        return img, seat_boxes
+    bar, bar_boxes = _rhythm_sidebar(players, font_pt)
+    gap = 14
+    W = img.width + bar.width + gap
+    H = max(img.height, bar.height)
+    out = Image.new("RGB", (W, H), "white")
+    if side == "right":
+        band_x, bar_x = 0, img.width + gap
+    else:
+        band_x, bar_x = bar.width + gap, 0
+    bar_y = max(0, (H - bar.height) // 2)
+    out.paste(img, (band_x, 0))
+    out.paste(bar, (bar_x, bar_y))
+    merged = {}
+    for key, (x0, y0, x1, y1) in seat_boxes.items():
+        merged[key] = (x0 + band_x, y0, x1 + band_x, y1)
+    for i, (x0, y0, x1, y1) in enumerate(bar_boxes):
+        merged[("J", i)] = (x0 + bar_x, y0 + bar_y, x1 + bar_x, y1 + bar_y)
+    return out, merged
+
+
 def render_rows(rows, row_caps, palette_on=True, palette=None,
                 front_label="FRONT OF THE ROOM", flip=False, font_pt=14,
-                percussion=None, show_instrument=True, color_mode="row"):
+                percussion=None, show_instrument=True, color_mode="row",
+                jazz_rhythm=None, rhythm_side="left"):
     from PIL import Image, ImageDraw
 
     palette = palette or DEFAULT_PALETTE
@@ -201,12 +287,16 @@ def render_rows(rows, row_caps, palette_on=True, palette=None,
 
     if s != 1:
         img = img.resize((width // s, height // s), Image.LANCZOS)
+    if jazz_rhythm:
+        img, seat_boxes = _attach_sidebar(img, seat_boxes, jazz_rhythm,
+                                          rhythm_side, font_pt)
     return img, seat_boxes
 
 
 def render_arcs(rows, row_caps, palette_on=True, palette=None,
                 front_label="CONDUCTOR", flip=False, font_pt=14, percussion=None,
-                show_instrument=True, color_mode="row"):
+                show_instrument=True, color_mode="row",
+                jazz_rhythm=None, rhythm_side="left"):
     """Concentric arcs.  By default the front row is innermost (nearest the
     conductor at the bottom-center) and rows arc upward toward the back; ``flip``
     puts the conductor at the top with rows arcing downward.  Percussion, when
@@ -381,4 +471,7 @@ def render_arcs(rows, row_caps, palette_on=True, palette=None,
 
     if s != 1:
         img = img.resize((width // s, height // s), Image.LANCZOS)
+    if jazz_rhythm:
+        img, seat_boxes = _attach_sidebar(img, seat_boxes, jazz_rhythm,
+                                          rhythm_side, font_pt)
     return img, seat_boxes

@@ -111,6 +111,26 @@ def _draw(kind, px):
     return img.resize((px, px), Image.LANCZOS)
 
 
+def pil_icon(seat, px=20):
+    """The icon as a PIL image (RGBA), for renderers that draw pictures rather
+    than Tk widgets -- the seating chart's rhythm sidebar.  File artwork first,
+    then the built-in drawing."""
+    kind = icon_kind(seat)
+    if not kind:
+        return None
+    try:
+        from PIL import Image
+        path = os.path.join(_assets_dir(), kind + ".png")
+        if os.path.exists(path):
+            img = Image.open(path).convert("RGBA")
+        else:
+            img = _draw(kind, px)
+        img.thumbnail((px, px), Image.LANCZOS)
+        return img
+    except Exception:
+        return None
+
+
 def icon(widget, seat, px=20):
     """A cached PhotoImage for ``seat``'s instrument, or None if no kind matches
     or PIL/Tk is unavailable.  Prefers ``assets/jazz/<kind>.png``, else a drawing."""

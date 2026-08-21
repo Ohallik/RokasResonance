@@ -422,13 +422,14 @@ class SeatingChartView(ttk.Frame):
             self._rows, self._perc, self._unseated, self._unresolved = [], [], [], []
             self._render()
             return
-        rows, caps = sc.jazz_seating(
+        rows, caps, rhythm = sc.jazz_seating(
             roster, self._jazz_parts_map(roster),
             self._cfg.get("jazz_side", "left"),
             int(self._cfg.get("jazz_high_rows", 1)))
         self._cfg["row_caps"] = ",".join(str(c) for c in caps)
         self._caps = caps
         self._rows = rows
+        self._jazz_rhythm = rhythm
         self._perc = []
         self._unseated = []
         self._unresolved = []
@@ -898,6 +899,7 @@ class SeatingChartView(ttk.Frame):
         zones, side_zones, zone_cols, anchors = self._effective_placement(caps)
         self._unseated = []
 
+        self._jazz_rhythm = []
         if self._cfg.get("jazz_mode") and from_layout is None:
             # Rebuilt from the parts every time, not stamped once and hoped
             # for.  Applying it as a fixed layout meant anything that redrew
@@ -946,16 +948,20 @@ class SeatingChartView(ttk.Frame):
         show_inst = self._cfg.get("show_instrument", True)
         flip = self._cfg.get("flip", False)
         front = "FRONT OF THE ROOM"
+        rhythm = list(getattr(self, "_jazz_rhythm", None) or [])
+        side = self._cfg.get("jazz_side", "left")
         try:
             if self._cfg.get("view") == "arcs":
                 img, boxes = sr.render_arcs(
                     self._rows, self._caps, flip=flip, percussion=perc,
                     show_instrument=show_inst, color_mode=color_mode,
-                    front_label=front)
+                    front_label=front, jazz_rhythm=rhythm, rhythm_side=side)
             else:
                 img, boxes = sr.render_rows(
                     self._rows, self._caps, flip=flip, percussion=perc,
-                    front_label=front, show_instrument=show_inst, color_mode=color_mode)
+                    front_label=front, show_instrument=show_inst,
+                    color_mode=color_mode, jazz_rhythm=rhythm,
+                    rhythm_side=side)
         except Exception as e:
             self._status.config(text=f"Render error: {e}")
             return
@@ -970,7 +976,8 @@ class SeatingChartView(ttk.Frame):
 
     def _update_status(self):
         n = (sum(1 for row in self._rows for x in row if x and not x.get("reserved"))
-             + len([p for p in (self._perc or []) if p and not p.get("reserved")]))
+             + len([p for p in (self._perc or []) if p and not p.get("reserved")])
+             + len([p for p in (getattr(self, "_jazz_rhythm", None) or []) if p]))
         if n == 0 and not self._groups() and not (self._cfg.get("extra_students")):
             self._status.config(text="Choose a group to begin.")
         else:
@@ -994,6 +1001,9 @@ class SeatingChartView(ttk.Frame):
         r, c = key
         if r == "P":
             return self._perc[c] if c < len(self._perc) else None
+        if r == "J":
+            rh = getattr(self, "_jazz_rhythm", None) or []
+            return rh[c] if c < len(rh) else None
         return self._rows[r][c] if c < len(self._rows[r]) else None
 
     def _seat_set(self, key, val):
@@ -1002,6 +1012,10 @@ class SeatingChartView(ttk.Frame):
             while len(self._perc) <= c:
                 self._perc.append(None)
             self._perc[c] = val
+        elif r == "J":
+            rh = getattr(self, "_jazz_rhythm", None) or []
+            if c < len(rh):
+                rh[c] = val
         else:
             self._rows[r][c] = val
 
@@ -1582,6 +1596,9 @@ class SeatingChartView(ttk.Frame):
         for c, x in enumerate(self._perc or []):
             if x and x.get("name") == name:
                 return ("P", c)
+        for c, x in enumerate(getattr(self, "_jazz_rhythm", None) or []):
+            if x and x.get("name") == name:
+                return ("J", c)
         return None
 
     def _swap_by_name(self, a, b):
