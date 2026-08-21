@@ -337,6 +337,17 @@ class MainMenu(ttk.Frame):
             combo = ttk.Combobox(pick_row, textvariable=self._school_var,
                                  state="readonly", values=names,
                                  font=("Segoe UI", fs(10), "bold"))
+            # The swatch is packed BEFORE the combobox.  Packed after a
+            # widget that takes fill=X and expand=True, it is squeezed to
+            # nothing: still there, still clickable, never drawn -- which is
+            # exactly how it disappeared.
+            sw = tk.Frame(pick_row, width=fs(18), height=fs(18),
+                          bg=self._site_color(active_site), cursor="hand2",
+                          highlightthickness=1, highlightbackground="#8a8a8a")
+            sw.pack(side=RIGHT, padx=(6, 0))
+            sw.pack_propagate(False)
+            sw.bind("<Button-1>",
+                    lambda _e, s=active_site: self._pick_site_color(s))
             combo.pack(side=LEFT, fill=X, expand=True)
 
             def _picked(_e=None):
@@ -346,14 +357,6 @@ class MainMenu(ttk.Frame):
                         self._set_active_site(x["id"])
                         return
             combo.bind("<<ComboboxSelected>>", _picked)
-            # The school's own color, right beside its name, so the hub reads
-            # as "you are at the red school" before the word is read.
-            sw = tk.Frame(pick_row, width=fs(18), height=fs(18),
-                          bg=self._site_color(active_site), cursor="hand2")
-            sw.pack(side=LEFT, padx=(6, 0))
-            sw.pack_propagate(False)
-            sw.bind("<Button-1>",
-                    lambda _e, s=active_site: self._pick_site_color(s))
             ttk.Label(
                 btn_area,
                 text="Everything below opens for this school. Teacher Tools "

@@ -349,7 +349,7 @@ def jazz_seating_order(parts, band):
     return nums
 
 
-def jazz_auto_parts(players):
+def jazz_auto_parts(players, taken=None):
     """A first guess at who is covering what, from the instruments present.
 
     Only a guess -- the teacher fixes it in the Jazz Band Setup window, and
@@ -359,15 +359,28 @@ def jazz_auto_parts(players):
     from collections import defaultdict
     used = defaultdict(int)
     out = {}
+    # Parts the teacher has already given out.  Guessing straight past them put
+    # a second player on the lead trumpet part, and two players on one part
+    # seat in an order nobody chose.
+    spoken_for = {(t or "").strip() for t in (taken or ()) if (t or "").strip()}
 
     def take(prefix, key, first=None):
         """The next free part on a line, numbering past the end of the ideal
-        rather than sitting two players on the same part."""
-        i = used[key]
-        used[key] += 1
-        if first and i < len(first):
-            return first[i]
-        return "%s%d" % (prefix, i + 1)
+        rather than sitting two players on the same part -- and never one that
+        is already spoken for."""
+        for _ in range(64):
+            i = used[key]
+            used[key] += 1
+            if first and i < len(first):
+                part = first[i]
+            elif not prefix:
+                part = first[-1] if first else ""
+            else:
+                part = "%s%d" % (prefix, i + 1)
+            if part not in spoken_for:
+                spoken_for.add(part)
+                return part
+        return ""
 
     for p in players:
         inst = (p.get("instrument") or "").strip()
@@ -380,8 +393,13 @@ def jazz_auto_parts(players):
                 out[p["id"]] = "Guitar"
             elif "bass" in low and "clarinet" not in low and "sax" not in low:
                 out[p["id"]] = "Bass"
+            elif "vibe" in low or "mallet" in low:
+                out[p["id"]] = take("Aux", "aux", first=["Aux"])
             else:
-                out[p["id"]] = "Drums"
+                # Only one of them is on the kit.  A band with three
+                # percussionists had all three guessed as Drums, which is a
+                # guess nobody can use.
+                out[p["id"]] = take("", "kit", first=["Drums", "Aux", "Aux"])
         elif band == "sax":
             if "tenor" in low:
                 out[p["id"]] = take("T", "tenor")
@@ -456,8 +474,12 @@ def jazz_seating(players, parts, rhythm_side="left", high_rows=1):
     # row (which is what a stride does) put trumpet 1 behind trumpet 2.
     high_split = _split_evenly(high, high_rows) if high else []
 
+    # The bass and drums stand at the END of the brass row, right up against
+    # it, not marooned at the wall with empty chairs between -- a drummer alone
+    # in the corner with a two-chair gap is not a jazz band.
+    lead_pad = max(0, brass_start - len(back_rhythm))
     rows = [front_rhythm + sax,
-            back_rhythm + [None] * max(0, brass_start - len(back_rhythm)) + low]
+            [None] * lead_pad + back_rhythm + low]
     for chunk in high_split:
         rows.append([None] * brass_start + chunk)
     if not high_split:

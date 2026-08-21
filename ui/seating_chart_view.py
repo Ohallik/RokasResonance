@@ -65,6 +65,7 @@ def _default_config(chart_type="concert"):
         "bass_corner": True,                # orchestra: string basses in the back corner
         "bass_corner_side": "right",        # which corner (audience view)
         "numbered_parts": False,            # orchestra: offer Violin 1 / Violin 2 (MS/HS)
+        "jazz_mode": False,                 # seat by jazz PART, rebuilt every draw
         "piano": False,                     # orchestra: rare, so it is its own toggle
         "seed": 1,
     }
@@ -356,6 +357,14 @@ class SeatingChartView(ttk.Frame):
             Messagebox.show_info("Choose a group first.", title="No Students",
                                  parent=self)
             return
+        if self._cfg.get("jazz_mode"):
+            # A jazz chart already works its own room out from the parts, and
+            # the concert sizing pulled the band apart into rows of its own.
+            self._regenerate()
+            self._status.config(
+                text="%d seated by jazz part.  The rows fit the band already; "
+                     "change parts in Jazz Band Setup." % len(roster))
+            return
         seated = roster
         if self._cfg.get("separate_percussion", True):
             # Percussion has its own row (and wraps on its own), so it must not
@@ -393,6 +402,37 @@ class SeatingChartView(ttk.Frame):
             bits.append(f"⚠ {len(self._unseated)} still do not fit — "
                         f"the room is capped at {sc.MAX_ROWS} rows.")
         self._status.config(text="  ".join(bits))
+
+    def _jazz_parts_map(self, roster):
+        """{student id: part}, from the student records, guessed where blank."""
+        parts = {s["id"]: (s.get("jazz_part") or "") for s in roster}
+        missing = [s for s in roster if not parts.get(s["id"])]
+        if missing:
+            # The guess must not hand out a chair somebody already has.
+            guessed = sc.jazz_auto_parts(missing, taken=parts.values())
+            for sid, guess in guessed.items():
+                parts[sid] = guess
+        return parts
+
+    def _render_jazz(self):
+        """Lay the band out by part and draw it."""
+        roster = self._resolve_roster()
+        self._roster = {s["id"]: s for s in roster}
+        if not roster:
+            self._rows, self._perc, self._unseated, self._unresolved = [], [], [], []
+            self._render()
+            return
+        rows, caps = sc.jazz_seating(
+            roster, self._jazz_parts_map(roster),
+            self._cfg.get("jazz_side", "left"),
+            int(self._cfg.get("jazz_high_rows", 1)))
+        self._cfg["row_caps"] = ",".join(str(c) for c in caps)
+        self._caps = caps
+        self._rows = rows
+        self._perc = []
+        self._unseated = []
+        self._unresolved = []
+        self._render()
 
     def _shuffle_small_groups(self):
         """Break the room into 2s (and a 3 where a section is odd), mixed up.
@@ -455,14 +495,56 @@ class SeatingChartView(ttk.Frame):
             return hub_year
         return years[0] if years else None
 
-    def _effective_instrument(self, student_id, primary, secondary):
-        """Which instrument to seat a student by: a per-student override wins,
-        otherwise their primary instrument (the sensible default — secondaries
-        only matter for a handful of students, handled via the override dialog)."""
+    @staticmethod
+    def _row_value(row, key):
+        """One column off a student row, or "" if this database predates it."""
+        try:
+            return (row[key] or "").strip()
+        except (KeyError, IndexError, TypeError):
+            return ""
+
+    def _effective_instrument(self, student_id, primary, secondary,
+                              jazz_instrument=""):
+        """Which instrument to seat a student by.
+
+        A per-student override for THIS chart wins.  Then, on a jazz chart,
+        what they play in jazz band -- the Student Manager has had a "Jazz Band
+        Instrument" box for exactly this since long before the jazz chart did,
+        and a horn player who covers guitar was still being seated as a horn.
+        Otherwise their primary instrument.
+        """
         override = (self._cfg.get("instrument_overrides") or {}).get(str(student_id))
         if override:
             return override
+        if jazz_instrument and self._is_jazz_chart():
+            return jazz_instrument
         return (primary or "").strip()
+
+    def _is_jazz_chart(self):
+        """Is this chart for a jazz band?
+
+        True once Jazz Band Setup has been applied, and also when the class
+        being seated is a jazz class -- so the jazz instrument is used from the
+        first draw rather than only after a trip through the setup window.
+        """
+        if self._cfg.get("jazz_mode"):
+            return True
+        try:
+            import class_registry as cr
+            labels = [g.get("ensemble") for g in self._groups() if g.get("ensemble")]
+            if not labels:
+                return False
+            classes = cr.load_classes(self.base_dir, self.program_type)
+            for label in labels:
+                for k in classes:
+                    if cr.same_class(k.get("label"), label):
+                        if k.get("template") == "jazz":
+                            return True
+                if "jazz" in (label or "").lower():
+                    return True
+        except Exception:
+            pass
+        return False
 
     def _groups(self):
         """Normalized selection list [{'ensemble':.., 'period': 'all'|'N'}].
@@ -496,8 +578,11 @@ class SeatingChartView(ttk.Frame):
                 "first": r["first_name"] or "", "last": r["last_name"] or "",
                 "primary": (r["primary_instrument"] or "").strip(),
                 "secondary": (r["secondary_instrument"] or "").strip(),
+                "jazz_instrument": self._row_value(r, "jazz_instrument"),
+                "jazz_part": self._row_value(r, "jazz_part"),
                 "instrument": self._effective_instrument(
-                    r["id"], r["primary_instrument"], r["secondary_instrument"]),
+                    r["id"], r["primary_instrument"], r["secondary_instrument"],
+                    self._row_value(r, "jazz_instrument")),
             })
         # Extra students typed in from another ensemble (rare concert combos).
         for i, ex in enumerate(self._cfg.get("extra_students") or []):
@@ -796,6 +881,14 @@ class SeatingChartView(ttk.Frame):
         self._roster = {s["id"]: s for s in roster}
         zones, side_zones, zone_cols, anchors = self._effective_placement(caps)
         self._unseated = []
+
+        if self._cfg.get("jazz_mode") and from_layout is None:
+            # Rebuilt from the parts every time, not stamped once and hoped
+            # for.  Applying it as a fixed layout meant anything that redrew
+            # the chart -- Optimize, a sort radio, reopening it -- threw the
+            # band back into concert rows.
+            self._render_jazz()
+            return
 
         if from_layout is not None:
             rows_data = from_layout.get("rows", []) if isinstance(from_layout, dict) else from_layout
@@ -1313,10 +1406,9 @@ class SeatingChartView(ttk.Frame):
             Messagebox.show_info("Choose a group first.", title="No Students",
                                  parent=self)
             return
-        parts = dict(self._cfg.get("jazz_parts") or {})
-        guess = sc.jazz_auto_parts(roster)
-        for s in roster:
-            parts.setdefault(str(s["id"]), guess.get(s["id"], ""))
+        # Read from the students, so what was set last time is still there.
+        by_id = self._jazz_parts_map(roster)
+        parts = {str(k): v for k, v in by_id.items()}
 
         dlg = _JazzSetupDialog(self.winfo_toplevel(), roster=roster, parts=parts,
                                side=self._cfg.get("jazz_side", "left"),
@@ -1327,7 +1419,14 @@ class SeatingChartView(ttk.Frame):
             return
 
         chosen = dlg.result["parts"]
-        self._cfg["jazz_parts"] = chosen
+        # Saved on the STUDENT, not on this chart: the chair a player covers is
+        # the same on next week's chart, and re-entering it every time is how
+        # she found it -- "it doesn't save".
+        try:
+            self.main_db.set_jazz_parts(
+                {s["id"]: chosen.get(str(s["id"]), "") for s in roster})
+        except Exception:
+            pass
         self._cfg["jazz_side"] = dlg.result["side"]
         self._cfg["jazz_high_rows"] = dlg.result["high_rows"]
         self._cfg["view"] = dlg.result["view"]
@@ -1339,16 +1438,8 @@ class SeatingChartView(ttk.Frame):
         self._cfg["separate_percussion"] = False
         self._cfg["center_tuba"] = False
         self._cfg["close_gaps"] = False
-
-        pmap = {s["id"]: chosen.get(str(s["id"]), "") for s in roster}
-        rows, caps = sc.jazz_seating(roster, pmap, dlg.result["side"],
-                                     dlg.result["high_rows"])
-        self._cfg["row_caps"] = ",".join(str(c) for c in caps)
-        self._ensure_sections_mode()
-        self._regenerate(from_layout={
-            "rows": [[(x["id"] if x else None) for x in row] for row in rows],
-            "perc": [],
-        })
+        self._cfg["jazz_mode"] = True
+        self._regenerate()
         self._dirty = True
 
 

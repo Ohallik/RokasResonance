@@ -698,7 +698,13 @@ class Database:
                         "primary_instrument TEXT", "secondary_instrument TEXT",
                         "preferred_name TEXT",
                         "honors INTEGER DEFAULT 0", "all_state INTEGER DEFAULT 0",
-                        "jazz_instrument TEXT", "provisional INTEGER DEFAULT 0"):
+                        "jazz_instrument TEXT", "provisional INTEGER DEFAULT 0",
+                        # jazz_part: the CHAIR they cover in the big band
+                        # ("A1", "Tbn 2", "Drums").  Not the same as the
+                        # instrument -- three alto players cover A1, A2 and A3
+                        # -- and it belongs to the student, not to one chart,
+                        # so it is still there next term.
+                        "jazz_part TEXT"):
                 try:
                     conn.execute(f"ALTER TABLE students ADD COLUMN {col}")
                     conn.commit()
@@ -1374,6 +1380,28 @@ class Database:
             raise FileNotFoundError(f"Database not found: {self.db_path}")
         dest_dir = os.path.join(external_dir, profile_name) if profile_name else external_dir
         return self._backup_all_to(dest_dir, max_backups)
+
+    def set_jazz_parts(self, parts: dict):
+        """Record which chair each student covers in the big band.
+
+        Stored on the STUDENT rather than on a chart: a player's chair is the
+        same on Tuesday's chart as on the concert one, and typing it again for
+        every chart is how the feature gets abandoned.  ``parts`` is
+        {student_id: part}; an empty value clears it.
+        """
+        if not parts:
+            return 0
+        n = 0
+        with self._connect() as conn:
+            for sid, part in parts.items():
+                try:
+                    conn.execute("UPDATE students SET jazz_part=? WHERE id=?",
+                                 ((part or "").strip() or None, int(sid)))
+                    n += 1
+                except (ValueError, TypeError):
+                    continue
+            conn.commit()
+        return n
 
     # ─── Year-end archive ──────────────────────────────────────────────────────
 
@@ -2679,7 +2707,8 @@ KEEPING IT
             "parent1_phone", "parent1_email", "parent2_name", "parent2_relation",
             "parent2_phone", "parent2_email", "notes",
             "ensembles", "class_periods", "primary_instrument", "secondary_instrument",
-            "preferred_name", "jazz_instrument", "is_active", "provisional"
+            "preferred_name", "jazz_instrument", "jazz_part",
+            "is_active", "provisional"
         ]
         set_clause = ", ".join([f"{c}=?" for c in cols])
         values = [data.get(c) for c in cols] + [student_id]

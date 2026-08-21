@@ -156,7 +156,8 @@ class LessonPlansHub(ttk.Frame):
             return "band"
 
     _HELP_TOPICS = {"seating": "seating", "percussion": "percussion",
-                    "concerts": "concerts", "field": "fieldtrips",
+                    "rotations": "percussion", "jazz": "percussion",
+                    "performances": "concerts",
                     "agendas": "agendas"}
 
     def _help_topic(self):
@@ -199,17 +200,24 @@ class LessonPlansHub(ttk.Frame):
                 self._notebook, self.db, self.main_db, self._base_dir,
                 show_concert=any(k.get("percussion") for k in classes),
                 show_jazz=has_jazz)
-            self._notebook.add(self._percussion, text="  🥁 Percussion  ")
+            # Name the tab after what is actually in it.  The jazz
+            # rhythm-section rotation lives here as a toggle beside the
+            # concert-band one, and a tab called "Percussion" is where nobody
+            # looks for jazz -- she went hunting for a Jazz tab and concluded
+            # it had been taken away.
+            _has_perc = any(k.get("percussion") for k in classes)
+            _label = ("  🥁 Percussion  " if not has_jazz else
+                      ("  🥁🎷 Rotations  " if _has_perc else "  🎷 Jazz  "))
+            self._notebook.add(self._percussion, text=_label)
 
-        from ui.concerts_view import ConcertsView
-        self._concerts = ConcertsView(self._notebook, self.db, self.main_db,
-                                      self._base_dir)
-        self._notebook.add(self._concerts, text="  🎪 Concerts  ")
-
-        from ui.field_trips_view import FieldTripsView
-        self._field_trips = FieldTripsView(self._notebook, self.db,
-                                           self.main_db, self._base_dir)
-        self._notebook.add(self._field_trips, text="  🚌 Field Trips  ")
+        # One tab, because a field trip is a performance with more paperwork
+        # and the two were always read together: "what is coming up" used to be
+        # a question you answered in two windows and merged in your head.
+        self._performances = _PerformancesTab(self._notebook, self.db,
+                                              self.main_db, self._base_dir)
+        self._notebook.add(self._performances, text="  🎪 Performances  ")
+        self._concerts = self._performances
+        self._field_trips = self._performances
 
         self._agendas = _AgendasTab(self._notebook, self.db, self.main_db,
                                     self._base_dir, classes)
@@ -286,8 +294,8 @@ class LessonPlansHub(ttk.Frame):
         return outer
 
     def _tabs(self):
-        core = [self._seating, self._percussion, self._concerts,
-                self._field_trips, self._agendas]
+        core = [self._seating, self._percussion, self._performances,
+                self._agendas]
         return [t for t in core if t is not None]
 
     def _on_tab_changed(self, event):
@@ -501,6 +509,182 @@ _TMPL_DISPLAY = {
     "hs_band_perc": "HS Band (Percussion)",
     "jazz": "Jazz",
 }
+
+
+class _UpcomingView(ttk.Frame):
+    """Everything the band is going to, concerts and trips together, by date.
+
+    A field trip IS a performance, with more paperwork attached: the festival
+    you drive to is both. Keeping them on two tabs meant the only way to see
+    what was coming was to look in two places and merge them in your head.
+    """
+
+    def __init__(self, parent, db, on_open):
+        super().__init__(parent)
+        self._db = db
+        self._on_open = on_open
+
+        head = ttk.Frame(self)
+        head.pack(fill=X, padx=14, pady=(12, 4))
+        ttk.Label(head, text="🗓  Everything coming up",
+                  font=("Segoe UI", fs(12), "bold")).pack(side=LEFT)
+        ttk.Label(head, text="Concerts and field trips together, soonest first. "
+                            "Double-click one to open it.",
+                  font=("Segoe UI", fs(8)),
+                  foreground=muted_fg()).pack(side=LEFT, padx=(10, 0))
+
+        cols = ("when", "kind", "what", "who", "where")
+        self._tree = ttk.Treeview(self, columns=cols, show="headings", height=14)
+        for c, txt, w in (("when", "Date", 110), ("kind", "", 90),
+                          ("what", "What", 240), ("who", "Who's going", 200),
+                          ("where", "Where", 200)):
+            self._tree.heading(c, text=txt)
+            self._tree.column(c, width=fs(w), anchor=W)
+        self._tree.pack(fill=BOTH, expand=True, padx=14, pady=(4, 8))
+        self._tree.bind("<Double-1>", self._open)
+        self._tree.tag_configure("past", foreground=muted_fg())
+
+        self._empty = ttk.Label(
+            self, text="", font=("Segoe UI", fs(9)), foreground=muted_fg(),
+            wraplength=fs(46) * 12, justify=LEFT)
+        self._empty.pack(anchor=W, padx=14, pady=(0, 10))
+        self._rows = []
+        self.refresh()
+
+    @property
+    def db(self):
+        return self._db
+
+    @db.setter
+    def db(self, value):
+        self._db = value
+        self.refresh()
+
+    def _year(self):
+        base = os.path.basename(getattr(self._db, "db_path", "") or "")
+        if base.startswith("lesson_plans_") and base.endswith(".db"):
+            return base[len("lesson_plans_"):-len(".db")]
+        return None
+
+    @staticmethod
+    def _pretty(date_str):
+        from datetime import datetime as _dt
+        for f in ("%Y-%m-%d", "%m/%d/%Y"):
+            try:
+                return _dt.strptime((date_str or "").strip(), f).strftime("%a %b %d")
+            except ValueError:
+                continue
+        return (date_str or "").strip() or "(no date)"
+
+    def refresh(self):
+        from datetime import date as _date
+        for iid in self._tree.get_children():
+            self._tree.delete(iid)
+        year = self._year()
+        items = []
+        try:
+            for c in self._db.get_concerts(year):
+                c = dict(c)
+                items.append({
+                    "date": (c.get("concert_date") or "").strip(),
+                    "kind": "concert", "label": "🎪 Concert",
+                    "id": c.get("id"), "what": c.get("title") or "Concert",
+                    "who": c.get("ensembles") or "",
+                    "where": c.get("location") or "",
+                })
+        except Exception:
+            pass
+        try:
+            for t in self._db.get_field_trips(year):
+                t = dict(t)
+                items.append({
+                    "date": (t.get("depart_date") or "").strip(),
+                    "kind": "trip", "label": "🚌 Field trip",
+                    "id": t.get("id"), "what": t.get("name") or "Field trip",
+                    "who": t.get("groups_list") or "",
+                    "where": t.get("destination") or "",
+                })
+        except Exception:
+            pass
+
+        # Undated events sort last, not first: a blank date is a plan without a
+        # day yet, and it should not sit above tomorrow's concert.
+        items.sort(key=lambda x: (not x["date"], x["date"]))
+        today = _date.today().isoformat()
+        self._rows = items
+        for i, x in enumerate(items):
+            past = bool(x["date"]) and x["date"] < today
+            self._tree.insert(
+                "", "end", iid=str(i),
+                values=(self._pretty(x["date"]), x["label"], x["what"],
+                        x["who"], x["where"]),
+                tags=("past",) if past else ())
+        if not items:
+            self._empty.config(
+                text="Nothing on the calendar yet. Add a concert or a field "
+                     "trip with the buttons above and it appears here.")
+        else:
+            ahead = sum(1 for x in items if not x["date"] or x["date"] >= today)
+            self._empty.config(
+                text="%d coming up, %d already done."
+                     % (ahead, len(items) - ahead))
+
+    def _open(self, _event=None):
+        sel = self._tree.selection()
+        if not sel:
+            return
+        try:
+            row = self._rows[int(sel[0])]
+        except (ValueError, IndexError):
+            return
+        self._on_open(row["kind"], row["id"])
+
+
+class _PerformancesTab(_SwitcherTab):
+    """Concerts and field trips in one place, with a dated list over both.
+
+    They were two tabs. A field trip is a performance with more paperwork, and
+    the two were always read together anyway -- "what is coming up" was a
+    question you had to answer in two windows.
+    """
+
+    def __init__(self, parent, db, main_db, base_dir):
+        super().__init__(parent, db)
+        self._main_db = main_db
+        self._base_dir = base_dir
+        var = tk.StringVar(value="upcoming")
+        for key, text in (("upcoming", "  🗓 Upcoming  "),
+                          ("concerts", "  🎪 Concerts  "),
+                          ("trips", "  🚌 Field Trips  ")):
+            self._toggle_button(key, text, var)
+        self._show("upcoming")
+
+    def _make_view(self, key):
+        if key == "upcoming":
+            return _UpcomingView(self._host, self._db, self._open_one)
+        if key == "concerts":
+            from ui.concerts_view import ConcertsView
+            return ConcertsView(self._host, self._db, self._main_db,
+                                self._base_dir)
+        from ui.field_trips_view import FieldTripsView
+        return FieldTripsView(self._host, self._db, self._main_db,
+                              self._base_dir)
+
+    def _open_one(self, kind, _item_id):
+        """Double-clicking a line goes to the window that owns it."""
+        self._show("concerts" if kind == "concert" else "trips")
+
+    def refresh(self):
+        # The dated list is the one that goes stale when something is added in
+        # another view, so refresh it whether or not it is on screen.
+        up = self._views.get("upcoming")
+        if up is not None:
+            try:
+                up.refresh()
+            except Exception:
+                pass
+        super().refresh()
+
 
 
 class _ManageClassesDialog(ttk.Toplevel):
