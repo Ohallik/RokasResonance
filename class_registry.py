@@ -84,6 +84,19 @@ TEMPLATES = {
         "percussion": False,
         "desc": "Blank agendas, no rotation.",
     },
+    "piano": {
+        "label": "MS/HS Piano", "book": None, "class_type": None,
+        "percussion": False,
+        "desc": "Blank agendas, no rotation.",
+    },
+    # A before-school choir that swings.  Its own kind rather than "Jazz",
+    # because the band template's description promises a rhythm-section
+    # rotation a choir does not have.
+    "jazz_choir": {
+        "label": "Jazz Choir", "book": None, "class_type": None,
+        "percussion": False,
+        "desc": "Blank agendas for a jazz/show choir (usually zero period).",
+    },
     # Guitar and steel drum shared one template until teachers pointed out they
     # are plainly different courses.  The old key stays so a class already
     # using it keeps its kind -- _sanitize falls back to "generic" for an
@@ -114,7 +127,8 @@ TEMPLATES = {
 # The order templates are offered in the Manage Classes / onboarding picker.
 TEMPLATE_ORDER = ["generic", "band_5", "orch_5",
                   "band_entry", "band_intermediate", "band_advanced",
-                  "orch_mshs", "choir_mshs", "guitar", "steel_drum",
+                  "orch_mshs", "choir_mshs", "jazz_choir",
+                  "guitar", "steel_drum", "piano",
                   "hs_band_winds", "hs_band_perc", "jazz"]
 
 

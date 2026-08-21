@@ -63,14 +63,23 @@ class FifthGradeView(ttk.Frame):
             self._empty()
             return
 
+        top = ttk.Frame(self)
+        top.pack(fill=X, padx=16, pady=(10, 6))
         ttk.Label(
-            self,
+            top,
             text="Each school keeps its own instruments and its own children. "
                  "An instrument can only be checked out to a student at the "
                  "same school, and these loans carry no rental fee.",
             font=("Segoe UI", 9), foreground=muted_fg(),
-            wraplength=760, justify=LEFT,
-        ).pack(anchor=W, padx=16, pady=(10, 6))
+            wraplength=620, justify=LEFT,
+        ).pack(side=LEFT, anchor=W)
+        # ACROSS the schools, which is why it sits above the tabs and not on
+        # one of them: at year end the repair shop gets one sheet listing
+        # every broken instrument at every school, not six files stapled.
+        ttk.Button(top, text="🔧 All Schools' Repairs…",
+                   bootstyle=(WARNING, OUTLINE),
+                   command=lambda ss=list(sites): self._export_all_repairs(ss)
+                   ).pack(side=RIGHT, anchor=N)
 
         self.nb = ttk.Notebook(self, bootstyle=PRIMARY)
         self.nb.pack(fill=BOTH, expand=True, padx=12, pady=(0, 10))
@@ -340,6 +349,29 @@ class FifthGradeView(ttk.Frame):
         "repair_history": ("Repair history",
                            "Everything ever done to this school's instruments."),
     }
+
+    def _export_all_repairs(self, sites):
+        """One compiled needs-repair list, every school, one file."""
+        from tkinter import filedialog
+        import site_export as SE
+        path = filedialog.asksaveasfilename(
+            parent=self, defaultextension=".xlsx",
+            filetypes=[("Excel workbook", "*.xlsx")],
+            initialfile="Needs Repair - All Schools.xlsx",
+            title="Save the compiled repair list")
+        if not path:
+            return
+        try:
+            out = SE.export_needs_repair_all(self.db, sites, path)
+        except Exception as e:
+            Messagebox.show_error(f"Could not write the file:\n{e}",
+                                  title="Export failed", parent=self)
+            return
+        Messagebox.show_info(
+            "%d instrument%s awaiting repair across %d school%s.\n\nSaved to %s"
+            % (out["repair"], "" if out["repair"] == 1 else "s",
+               len(sites), "" if len(sites) == 1 else "s", out["path"]),
+            title="Repair List Saved", parent=self)
 
     def _export(self, site, kind):
         from tkinter import filedialog

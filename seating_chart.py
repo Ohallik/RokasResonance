@@ -275,7 +275,7 @@ def jazz_layout(instruments, high_rows=1, rhythm_side="left"):
 # third row of "trumpets" picks up flutes, clarinets, the odd violin.  They
 # still cover trombone and trumpet parts, so that is what they are labelled.
 JAZZ_SAX_PARTS = ["A1", "A2", "T1", "T2", "B"]
-JAZZ_RHYTHM_PARTS = ["Piano", "Guitar", "Bass", "Drums", "Aux"]
+JAZZ_RHYTHM_PARTS = ["Piano", "Guitar", "Bass", "Drums", "Vibes", "Aux"]
 JAZZ_MAX_PART = 8
 
 # Front rhythm shares the sax row; the other two stand behind with the brass.
@@ -308,7 +308,7 @@ def jazz_part_band(part):
     altos into the trumpet row.
     """
     p = (part or "").strip()
-    if p in JAZZ_RHYTHM_PARTS:
+    if p in JAZZ_RHYTHM_PARTS or p.startswith(("Vibes", "Aux")):
         return "rhythm"
     if p.startswith("Tbn"):
         return "low"
@@ -393,8 +393,8 @@ def jazz_auto_parts(players, taken=None):
                 out[p["id"]] = "Guitar"
             elif "bass" in low and "clarinet" not in low and "sax" not in low:
                 out[p["id"]] = "Bass"
-            elif "vibe" in low or "mallet" in low:
-                out[p["id"]] = take("Aux", "aux", first=["Aux"])
+            elif "vib" in low or "mallet" in low:
+                out[p["id"]] = take("Vibes ", "vibes", first=["Vibes"])
             else:
                 # Only one of them is on the kit.  A band with three
                 # percussionists had all three guessed as Drums, which is a

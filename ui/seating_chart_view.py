@@ -794,20 +794,33 @@ class SeatingChartView(ttk.Frame):
         "Euphonium BC": 9, "Euphonium TC": 9, "Baritone/Euphonium": 9,
     }
 
-    def _is_symphony(self, roster=None):
-        """A strings class with winds, brass or percussion in it.
+    _BOWED = ("Violin", "Viola", "Cello")
 
-        The two are laid out differently enough to be different charts -- a
-        string orchestra fills the stage with strings, a symphony pushes them
-        forward and stacks everyone else behind -- and the roster already says
-        which one this is, so there is nothing to ask.
+    def _is_symphony(self, roster=None):
+        """Bowed strings AND winds on the same chart, whichever program owns it.
+
+        A string orchestra fills the stage with strings; a symphony pushes them
+        forward and stacks the winds, brass and percussion behind.  The roster
+        says which one this is, so there is nothing to ask -- and it works both
+        ways around: an orchestra that gains winds AND a band that gains a
+        string section both read as a symphony.  A lone string bass does not
+        count as a string section; jazz bands carry one, and so do some
+        concert bands.
         """
+        if self._cfg.get("jazz_mode") or self._is_jazz_chart():
+            return False
         try:
             roster = self._resolve_roster() if roster is None else roster
         except Exception:
             return False
-        return any(sc.family(x.get("instrument")) not in ("String", "Other")
-                   for x in roster)
+        bowed = wind = False
+        for x in roster:
+            inst = (x.get("instrument") or "")
+            if any(inst.startswith(b) for b in self._BOWED):
+                bowed = True
+            elif sc.family(inst) in ("Woodwind", "Brass", "Percussion"):
+                wind = True
+        return bowed and wind
 
     def _orchestra_defaults(self, roster=None):
         return (self._SYMPHONY_DEFAULT_ZONES if self._is_symphony(roster)
@@ -835,7 +848,10 @@ class SeatingChartView(ttk.Frame):
         customized = bool(zones or sides or assigned
                           or self._cfg.get("section_order"))
 
-        if program == "orchestra" and not customized:
+        if not customized and (program == "orchestra" or self._is_symphony()):
+            # An orchestra gets its string layout; ANY chart that has become a
+            # symphony -- an orchestra that gained winds, or a band that gained
+            # a string section for one concert -- gets the symphony layout.
             for inst, z in self._orchestra_defaults().items():
                 assigned.setdefault(inst, z)
 
@@ -1242,9 +1258,11 @@ class SeatingChartView(ttk.Frame):
         at all now, so leaving them ON would apply a band rule invisibly.
         """
         program, _level = self._chart_program()
-        if program == "orchestra" and self._is_symphony():
+        if self._is_symphony():
             # Timpani and the rest stand behind the brass on every symphony
-            # chart, which is exactly what the separate percussion row draws.
+            # chart, which is exactly what the separate percussion row draws --
+            # and the tuba belongs with the back brass, not centered by the
+            # concert-band rule.  True for a band that gained strings too.
             self._cfg["separate_percussion"] = True
             self._cfg["center_tuba"] = False
         elif program != "band":
@@ -1383,6 +1401,13 @@ class SeatingChartView(ttk.Frame):
         options = seating_instruments(program, level,
                                       self._cfg.get("numbered_parts", False),
                                       self._cfg.get("piano", False))
+        if self._is_symphony() and program == "band":
+            # A band that has become a symphony seats strings too, so the
+            # override dialog has to be able to name them.
+            options = (options[:-1]
+                       + seating_instruments("orchestra", level,
+                                             self._cfg.get("numbered_parts", False))
+                       )
         dlg = _InstrumentDialog(self.winfo_toplevel(), roster,
                                 self._cfg.get("instrument_overrides") or {}, options)
         self.wait_window(dlg)
@@ -1418,15 +1443,6 @@ class SeatingChartView(ttk.Frame):
         if dlg.result is None:
             return
 
-        chosen = dlg.result["parts"]
-        # Saved on the STUDENT, not on this chart: the chair a player covers is
-        # the same on next week's chart, and re-entering it every time is how
-        # she found it -- "it doesn't save".
-        try:
-            self.main_db.set_jazz_parts(
-                {s["id"]: chosen.get(str(s["id"]), "") for s in roster})
-        except Exception:
-            pass
         self._cfg["jazz_side"] = dlg.result["side"]
         self._cfg["jazz_high_rows"] = dlg.result["high_rows"]
         self._cfg["view"] = dlg.result["view"]
@@ -1588,14 +1604,14 @@ class SeatingChartView(ttk.Frame):
 # ══════════════════════════════════════════════════════════════ dialogs ══════
 
 class _JazzSetupDialog(ttk.Toplevel):
-    """Jazz big band: who is covering which PART, and how the stage is shaped.
+    """The jazz STAGE: which side the rhythm section is on, how many rows the
+    trumpets use, straight rows or arcs.
 
-    A jazz chart is laid out by part, not by instrument -- the front row reads
-    T1 A2 A1 T2 B, which is three different instruments interleaved.  So the
-    window has to ask.  Every player is guessed from what they carry and the
-    teacher corrects the ones that matter; at middle school the second row is
-    whatever bass-clef players exist and the third row picks up flutes and
-    clarinets, all of them covering trombone and trumpet parts.
+    Who covers which part is deliberately NOT here.  Assigning lead trumpet in
+    a seating chart window read as confusing, so the parts live where the rest
+    of the jazz machinery does -- the Perc/Jazz tab's Band Parts button -- and
+    this chart simply reads what is set there (guessing from instruments for
+    anyone not yet assigned).
     """
 
     def __init__(self, parent, roster=None, parts=None, side="left",
@@ -1603,6 +1619,7 @@ class _JazzSetupDialog(ttk.Toplevel):
         super().__init__(master=parent)
         self.result = None
         self._roster = list(roster or [])
+        self._parts = dict(parts or {})
         self.title("Jazz Band Setup")
         self.grab_set()
         self.lift()
@@ -1618,129 +1635,69 @@ class _JazzSetupDialog(ttk.Toplevel):
                    command=self.destroy).pack(side=RIGHT, padx=4)
         ttk.Button(btn, text="Apply", bootstyle=SUCCESS,
                    command=self._ok).pack(side=RIGHT, padx=4)
-        ttk.Button(btn, text="Guess again from instruments",
-                   bootstyle=(SECONDARY, OUTLINE),
-                   command=self._reguess).pack(side=LEFT, padx=4)
 
-        cols = ttk.Frame(self)
-        cols.pack(fill=BOTH, expand=True, padx=16, pady=(10, 0))
-        left = ttk.Frame(cols)
-        left.pack(side=LEFT, fill=BOTH, expand=True, anchor=N)
-        ttk.Separator(cols, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=14)
-        right = ttk.Frame(cols)
-        right.pack(side=LEFT, fill=BOTH, expand=True, anchor=N)
-
-        # ── LEFT: the stage ──────────────────────────────────────────────
-        ttk.Label(left, text="The stage", font=("Segoe UI", 10, "bold")).pack(anchor=W)
-        ttk.Label(left,
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
+        ttk.Label(body,
                   text="Saxes across the front in part order, bass-clef players "
                        "behind them on the trombone parts, trumpets (plus any "
                        "flutes, clarinets or strings) at the back. Part 1 of "
-                       "each row lines up behind the lead alto. The rhythm "
-                       "section sits on the side you pick.",
-                  font=("Segoe UI", 9), wraplength=320,
-                  justify=LEFT).pack(anchor=W, pady=(2, 0))
+                       "each row lines up behind the lead alto.",
+                  font=("Segoe UI", 9), wraplength=420,
+                  justify=LEFT).pack(anchor=W)
 
-        ttk.Label(left, text="Rhythm section on:",
+        assigned = sum(1 for s in self._roster
+                       if (self._parts.get(str(s.get("id"))) or "").strip())
+        ttk.Label(body,
+                  text="%d of %d players have a part. Who covers which part "
+                       "is set on the Perc/Jazz tab — 🎺 Band Parts — and "
+                       "anyone without one is seated by a guess from their "
+                       "instrument." % (assigned, len(self._roster)),
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=420, justify=LEFT).pack(anchor=W, pady=(4, 0))
+
+        ttk.Label(body, text="Rhythm section on:",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 0))
         self._side = tk.StringVar(value=side if side in ("left", "right") else "left")
-        srow = ttk.Frame(left)
+        srow = ttk.Frame(body)
         srow.pack(fill=X)
         ttk.Radiobutton(srow, text="Left side", value="left",
                         variable=self._side).pack(side=LEFT, padx=(0, 12))
         ttk.Radiobutton(srow, text="Right side", value="right",
                         variable=self._side).pack(side=LEFT)
-        ttk.Label(left, text="(Flip this if the chart comes out mirrored from "
+        ttk.Label(body, text="(Flip this if the chart comes out mirrored from "
                              "your room.)",
                   font=("Segoe UI", 8), foreground=muted_fg(),
-                  wraplength=320, justify=LEFT).pack(anchor=W)
+                  wraplength=420, justify=LEFT).pack(anchor=W)
 
-        ttk.Label(left, text="Trumpet parts use:",
+        ttk.Label(body, text="Trumpet parts use:",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 0))
         self._high = tk.IntVar(value=2 if int(high_rows or 1) >= 2 else 1)
-        hrow = ttk.Frame(left)
+        hrow = ttk.Frame(body)
         hrow.pack(fill=X)
         ttk.Radiobutton(hrow, text="One row", value=1,
                         variable=self._high).pack(side=LEFT, padx=(0, 12))
         ttk.Radiobutton(hrow, text="Two rows", value=2,
                         variable=self._high).pack(side=LEFT)
 
-        ttk.Label(left, text="Shape:", font=("Segoe UI", 9, "bold")).pack(
+        ttk.Label(body, text="Shape:", font=("Segoe UI", 9, "bold")).pack(
             anchor=W, pady=(10, 0))
         self._view = tk.StringVar(value=view if view in ("rows", "arcs") else "rows")
-        vrow = ttk.Frame(left)
+        vrow = ttk.Frame(body)
         vrow.pack(fill=X)
         ttk.Radiobutton(vrow, text="Straight rows (jazz)", value="rows",
                         variable=self._view).pack(side=LEFT, padx=(0, 12))
         ttk.Radiobutton(vrow, text="Concert arcs", value="arcs",
                         variable=self._view).pack(side=LEFT)
 
-        # ── RIGHT: who plays what part ───────────────────────────────────
-        ttk.Label(right, text="Who is covering which part",
-                  font=("Segoe UI", 10, "bold")).pack(anchor=W)
-        ttk.Label(right, text="Guessed from their instrument. Change any of "
-                              "them — what you set here is what gets seated.",
-                  font=("Segoe UI", 8), foreground=muted_fg(),
-                  wraplength=320, justify=LEFT).pack(anchor=W, pady=(0, 4))
-
-        box = ttk.Frame(right)
-        box.pack(fill=BOTH, expand=True)
-        canvas = tk.Canvas(box, highlightthickness=0, width=330, height=320)
-        sb = ttk.Scrollbar(box, orient=VERTICAL, command=canvas.yview)
-        canvas.configure(yscrollcommand=sb.set)
-        sb.pack(side=RIGHT, fill=Y)
-        canvas.pack(side=LEFT, fill=BOTH, expand=True)
-        table = ttk.Frame(canvas)
-        win = canvas.create_window((0, 0), window=table, anchor=NW)
-        table.bind("<Configure>",
-                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
-
-        def _wheel(event):
-            try:
-                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            except tk.TclError:
-                pass
-        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
-
-        options = [""] + sc.jazz_part_options()
-        self._vars = {}
-        parts = parts or {}
-        for i, s in enumerate(self._roster):
-            row = ttk.Frame(table)
-            row.pack(fill=X, pady=1)
-            ttk.Label(row, text=(s.get("name") or "")[:16], width=16,
-                      font=("Segoe UI", 9)).pack(side=LEFT)
-            ttk.Label(row, text=(s.get("instrument") or "")[:14], width=14,
-                      font=("Segoe UI", 8),
-                      foreground=muted_fg()).pack(side=LEFT)
-            v = tk.StringVar(value=parts.get(str(s["id"]), ""))
-            self._vars[str(s["id"])] = v
-            ttk.Combobox(row, textvariable=v, values=options, width=8,
-                         state="readonly").pack(side=LEFT, padx=(4, 0))
-        if not self._roster:
-            ttk.Label(table, text="Choose a group first.",
-                      font=("Segoe UI", 9),
-                      foreground=muted_fg()).pack(anchor=W, pady=8)
-
         from ui.theme import fit_window
-        fit_window(self, 780, 560)
-
-    def _reguess(self):
-        """Throw away the hand edits and guess the lot again."""
-        guess = sc.jazz_auto_parts(self._roster)
-        for s in self._roster:
-            v = self._vars.get(str(s["id"]))
-            if v is not None:
-                v.set(guess.get(s["id"], ""))
+        fit_window(self, 480, 440)
 
     def _ok(self):
         self.result = {
             "side": self._side.get(),
             "high_rows": int(self._high.get()),
             "view": self._view.get(),
-            "parts": {k: v.get() for k, v in self._vars.items() if v.get()},
         }
         self.destroy()
 

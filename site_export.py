@@ -155,6 +155,32 @@ def export_needs_repair(db, site, out_path):
     return {"path": out_path, "repair": len(rows)}
 
 
+def export_needs_repair_all(db, sites, out_path):
+    """What is broken right now across EVERY school, in one list.
+
+    An itinerant hands the repair shop one sheet at the end of the year, not
+    six files stapled together.  The School column is first, because "whose
+    trombone is this" is the first question the technician asks.
+    """
+    from openpyxl import Workbook
+
+    rows = []
+    for site in sites:
+        site = dict(site)
+        for r in db.get_pending_repairs(site_id=site["id"]):
+            row = dict(r)
+            row["school"] = site["name"]
+            rows.append(row)
+    wb = Workbook()
+    ws = _sheet(wb, "Needs Repair", [("school", "School")] + REPAIR_FIELDS,
+                rows, first=True)
+    _stamp(ws, "All schools",
+           "instruments awaiting repair, %d school%s"
+           % (len(sites), "" if len(sites) == 1 else "s"))
+    wb.save(out_path)
+    return {"path": out_path, "repair": len(rows)}
+
+
 def export_repair_history(db, site, out_path):
     """Everything ever done to this school's instruments."""
     from openpyxl import Workbook

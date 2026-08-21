@@ -156,7 +156,7 @@ class LessonPlansHub(ttk.Frame):
             return "band"
 
     _HELP_TOPICS = {"seating": "seating", "percussion": "percussion",
-                    "rotations": "percussion", "jazz": "percussion",
+                    "perc": "percussion", "jazz": "percussion",
                     "performances": "concerts",
                     "agendas": "agendas"}
 
@@ -205,9 +205,11 @@ class LessonPlansHub(ttk.Frame):
             # concert-band one, and a tab called "Percussion" is where nobody
             # looks for jazz -- she went hunting for a Jazz tab and concluded
             # it had been taken away.
+            # "Rotations" told nobody that jazz lives here.  Meagan's words:
+            # call it exactly Perc/Jazz so both tools are findable by name.
             _has_perc = any(k.get("percussion") for k in classes)
             _label = ("  🥁 Percussion  " if not has_jazz else
-                      ("  🥁🎷 Rotations  " if _has_perc else "  🎷 Jazz  "))
+                      ("  🥁🎷 Perc/Jazz  " if _has_perc else "  🎷 Jazz  "))
             self._notebook.add(self._percussion, text=_label)
 
         # One tab, because a field trip is a performance with more paperwork
@@ -442,7 +444,8 @@ class _RotationsTab(_SwitcherTab):
     def _make_view(self, key):
         if key == "jazz":
             from ui.jazz_view import JazzView
-            return JazzView(self._host, self._db)
+            return JazzView(self._host, self._db, main_db=self.main_db,
+                            base_dir=self.base_dir)
         from ui.percussion_rotation_view import PercussionRotationView
         return PercussionRotationView(self._host, self._db,
                                       main_db=self.main_db,
@@ -502,8 +505,10 @@ _TMPL_DISPLAY = {
     "band_advanced": "MS Band (Advanced)",
     "orch_mshs": "MS/HS Orchestra",
     "choir_mshs": "MS/HS Choir",
+    "jazz_choir": "Jazz Choir",
     "guitar": "MS/HS Guitar",
     "steel_drum": "HS Steel Drum",
+    "piano": "MS/HS Piano",
     "guitar_steel": "MS/HS Guitar / Steel Drum",   # retired; see class_registry
     "hs_band_winds": "HS Band (Winds)",
     "hs_band_perc": "HS Band (Percussion)",
