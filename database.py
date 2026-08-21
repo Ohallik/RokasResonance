@@ -1248,7 +1248,7 @@ class Database:
     def data_changed_since(self, when):
         """Has anything a backup would copy been touched since ``when``?
 
-        An app left open for a fortnight over the holidays should not fill the
+        An app left open for a two weeks over the holidays should not fill the
         folder with identical copies of a database nobody has opened.
         """
         if when is None:
@@ -1412,10 +1412,10 @@ KEEPING IT
     def archive_year(self, dest_dir: str, school_year: str,
                      profile_name: str = "", include_sheet_music: bool = False,
                      progress=None) -> str:
-        """Write a keep-for-ever copy of one school year to ``dest_dir``.
+        """Write a permanent copy of one school year to ``dest_dir``.
 
         Different job from the rolling backups, which are a safety net for the
-        last fortnight and are meant to be thrown away.  This is the copy that
+        last two weeks and are meant to be thrown away.  This is the copy that
         outlives the laptop: taken once when a year is closed out, put wherever
         the teacher keeps things permanently, and laid out as a profile folder
         so it can simply be opened again years later rather than needing a

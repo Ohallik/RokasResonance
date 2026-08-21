@@ -1246,10 +1246,10 @@ def layout_section_blocks(groups, row_caps, target_width=4, zones=None,
             if only_cols is not None:
                 # Inside a zone, fill STRICTLY along the row so each section
                 # lands as one run.  Working outward from the middle (which is
-                # what a centred section wants on its own) made the second
+                # what a centered section wants on its own) made the second
                 # section in a zone wrap around the first: clarinets took the
                 # two middle seats and the trombones ended up one on each side
-                # of them.  compact_rows centres the row afterwards, so
+                # of them.  compact_rows centers the row afterwards, so
                 # sequential order here costs nothing.
                 allowed = sorted(only_cols(caps[r]))
                 cols = allowed[::-1] if side == "right" else allowed
@@ -1443,7 +1443,7 @@ def _row_anchor(people, anchors):
     """Which end of the row a compacted block should hold on to.
 
     Only a DELIBERATE corner holds: the string basses pinned to the back corner
-    by their own tick box.  Anything else centres.
+    by their own check box.  Anything else centers.
 
     This used to look at the zone SIDE, which anchored any row that happened to
     hold only right-hand sections -- so a row with three players in it was
@@ -1557,7 +1557,7 @@ def compact_rows(rows, row_caps, anchors=None):
 
     Each row keeps its LEFT-TO-RIGHT ORDER, so the arrangement the zones
     produced survives: whoever was stage right of whom still is.  The block is
-    then centred, which splits the spare chairs between the two outside ends --
+    then centered, which splits the spare chairs between the two outside ends --
     unless every player in the row was deliberately pinned to a corner (see
     ``_row_anchor``), which only the string basses are.
 

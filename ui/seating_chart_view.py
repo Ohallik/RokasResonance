@@ -674,7 +674,7 @@ class SeatingChartView(ttk.Frame):
     # chart: firsts front on stage right, seconds just behind them, the violas
     # as the middle wedge (where she says they go, and where the chart puts
     # them), cellos stage left.  The basses are not here -- they have their own
-    # tick box, because they are the one section a director nearly always wants
+    # check box, because they are the one section a director nearly always wants
     # pinned whatever else they have done.
     _ORCHESTRA_DEFAULT_ZONES = {
         "Violin": 1, "Violin 1": 1,

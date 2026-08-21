@@ -317,13 +317,13 @@ class NewSchoolYearWizard(ttk.Toplevel):
             self._n += 1
             step(self._n, title, hint)
 
-        # ── Step 2: the keep-for-ever copy ──
-        # The rolling backups are a fortnight's safety net and are meant to be
+        # ── Step 2: the permanent copy ──
+        # The rolling backups are a two weeks's safety net and are meant to be
         # thrown away.  This is the other kind: taken once, when a year is
         # finished, and put somewhere that outlives the laptop.  Closing out
         # the year is the one moment a teacher is certain to be thinking about
         # the year as a whole, so it is asked for here.
-        nstep("Save a keep-for-ever copy of " + str(current_year),
+        nstep("Save a permanent copy of " + str(current_year),
               "Students, the whole sheet music library with its performance "
               "history, agendas, seating charts, concerts and field trips — "
               "written as a folder you can open again years from now. Put it "
@@ -339,7 +339,7 @@ class NewSchoolYearWizard(ttk.Toplevel):
         self._archive_log = ttk.Label(
             body, text="Not saved yet. The library's titles, composers and "
                        "performance history are in the copy either way — the "
-                       "tick box is only about the scans themselves.",
+                       "check box is only about the scans themselves.",
             font=("Segoe UI", fs(8)), foreground=muted_fg(),
             wraplength=560, justify=LEFT)
         self._archive_log.pack(anchor=W, pady=(2, 0))
@@ -539,7 +539,7 @@ class NewSchoolYearWizard(ttk.Toplevel):
                                 foreground="#1a7a1a")
 
     def _save_archive(self):
-        """Write the year's keep-for-ever copy wherever they say."""
+        """Write the year's permanent copy wherever they say."""
         dest = filedialog.askdirectory(
             parent=self,
             title="Where should the %s archive go?" % self.current_year,
@@ -627,12 +627,12 @@ class NewSchoolYearWizard(ttk.Toplevel):
         if self._imports:
             parts.append(f"Imported {len(self._imports)} class list(s).")
         if self._archived_to:
-            parts.append(f"A keep-for-ever copy of {self.current_year} is at "
+            parts.append(f"A permanent copy of {self.current_year} is at "
                          f"{self._archived_to}.")
         else:
-            parts.append(f"You did not save a keep-for-ever copy of "
+            parts.append(f"You did not save a permanent copy of "
                          f"{self.current_year}. The rolling backups only go "
-                         f"back a fortnight — you can still make one from "
+                         f"back a two weeks — you can still make one from "
                          f"New School Year, or Settings \u2192 Backup.")
         parts.append("Teacher Tools is now on the new year — add your "
                      "concert dates in the Concerts tab, and switch the "
