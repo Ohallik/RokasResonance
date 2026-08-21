@@ -1177,12 +1177,18 @@ class Database:
     # makes plain "keep the newest N" the wrong rule: at one copy every couple
     # of hours, ten copies is less than a day of history and last week's is
     # gone.  So: keep the newest N whatever their age, and then one per DAY
-    # going back keep_days.  Dense where you need it, sparse where you don't,
-    # and still a hard ceiling on the number of files.
-    BACKUP_KEEP_DAYS = 14
+    # going back keep_days.  Dense where you need it, sparse where you don't.
+    #
+    # The two numbers are a HARD CEILING of N + keep_days copies of any one
+    # file, and Meagan's ceiling is about twenty: ten recent plus ten daily.
+    # In practice it sits below that, because the ten newest usually fall
+    # inside the last day or two and are counted once, not twice.
+    BACKUP_KEEP_RECENT = 10
+    BACKUP_KEEP_DAYS = 10
 
     @staticmethod
-    def _rotate_backups(dir_, max_backups, keep_days=BACKUP_KEEP_DAYS):
+    def _rotate_backups(dir_, max_backups=BACKUP_KEEP_RECENT,
+                        keep_days=BACKUP_KEEP_DAYS):
         """Keep the newest max_backups per file family, plus the newest copy
         from each of the last keep_days days.  A family is the name before the
         _YYYYMMDD_HHMMSS timestamp, so the main database, each year's Teacher
@@ -1343,7 +1349,7 @@ class Database:
         self._last_backup_at = time.time()
         return backup_path
 
-    def backup(self, max_backups: int = 10) -> str | None:
+    def backup(self, max_backups: int = BACKUP_KEEP_RECENT) -> str | None:
         """
         Copy the database — plus the per-year Teacher Tools databases and
         settings.json — to timestamped backups in a 'backups' folder next to
@@ -1355,7 +1361,8 @@ class Database:
         backup_dir = os.path.join(os.path.dirname(self.db_path), "backups")
         return self._backup_all_to(backup_dir, max_backups)
 
-    def backup_to_external(self, external_dir: str, profile_name: str = "", max_backups: int = 30) -> str:
+    def backup_to_external(self, external_dir: str, profile_name: str = "",
+                           max_backups: int = BACKUP_KEEP_RECENT) -> str:
         """
         Copy the database — plus the per-year Teacher Tools databases and
         settings.json — to a user-specified external folder (e.g. OneDrive,

@@ -600,8 +600,8 @@ class SettingsDialog(ttk.Toplevel):
                  "A copy is saved here when the app starts, when it closes, and\n"
                  "every couple of hours while it is open — so a laptop that never\n"
                  "gets shut down is still backed up. Nothing is copied if nothing\n"
-                 "has changed. The most recent copies are kept, plus one a day\n"
-                 "going back a fortnight.",
+                 "has changed. The ten newest copies are kept, plus one a day\n"
+                 "for ten days — never more than twenty of any one file.",
             font=("Segoe UI", 9),
             foreground="#888",
             justify=LEFT,
