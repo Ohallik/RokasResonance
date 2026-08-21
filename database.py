@@ -1381,6 +1381,17 @@ class Database:
         dest_dir = os.path.join(external_dir, profile_name) if profile_name else external_dir
         return self._backup_all_to(dest_dir, max_backups)
 
+    def set_jazz_instrument(self, student_id: int, instrument: str):
+        """What this student plays in JAZZ band when it differs from concert.
+
+        Its own setter on purpose: update_student() rewrites every column from
+        its dict, so a one-field save through it would blank the record.
+        An empty value clears the override (back to the concert instrument).
+        """
+        with self._connect() as conn:
+            conn.execute("UPDATE students SET jazz_instrument=? WHERE id=?",
+                         ((instrument or "").strip() or None, student_id))
+
     def set_jazz_parts(self, parts: dict):
         """Record which chair each student covers in the big band.
 
