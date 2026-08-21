@@ -262,6 +262,157 @@ def fifth_grade_instruments(program_type: str):
     return list(FIFTH_GRADE_BAND_COMMON) + rest + ["Other"]
 
 
+# Which program a class TEMPLATE belongs to.  "generic", "guitar" and
+# "steel_drum" are deliberately absent: they say nothing about band vs strings,
+# so a class using one falls through to the next clue instead of being guessed.
+_TEMPLATE_PROGRAM = {
+    "orch_5": "orchestra", "orch_mshs": "orchestra",
+    "choir_mshs": "choir",
+    "band_5": "band", "band_entry": "band", "band_intermediate": "band",
+    "band_advanced": "band", "hs_band_winds": "band", "hs_band_perc": "band",
+    "jazz": "band",
+}
+# Templates that only exist at 5th grade.
+_TEMPLATE_ELEMENTARY = {"band_5", "orch_5"}
+
+# Program words that can appear in a class's own NAME.
+_NAME_PROGRAM = {"band": "band", "orchestra": "orchestra", "strings": "orchestra",
+                 "choir": "choir", "chorus": "choir"}
+
+
+def site_of_class(main_db, label, base_dir=None):
+    """The school a class belongs to, as a site row, or None.
+
+    Two ways a class names its school, and a teacher may have both: bound to
+    one in Manage Classes (secondary), or carrying the school in its own name
+    the way every elementary section does ("Medina Elementary School:
+    Section 1").
+    """
+    if main_db is None or not (label or "").strip():
+        return None
+    try:
+        sites = [dict(s) for s in main_db.get_sites()]
+    except Exception:
+        return None
+    try:
+        bound = class_school(label, base_dir=base_dir)
+    except Exception:
+        bound = None
+    if bound:
+        for s in sites:
+            if s.get("id") == bound:
+                return s
+    low = label.strip().lower()
+    for s in sites:
+        name = (s.get("name") or "").strip().lower()
+        if name and low.startswith(name + ":"):
+            return s
+    return None
+
+
+def class_program(main_db, label, base_dir=None, program_type=None):
+    """``(program, level)`` for ONE class — the two facts a screen needs before
+    it can stop assuming concert band.
+
+    ``program`` is "band", "orchestra" or "choir"; ``level`` is "elementary" or
+    "secondary".  Roka was written band-first, so every screen that offers
+    instruments, sections or placement options used to read the PROFILE's
+    program type — one value for a teacher who may run a 5th grade strings
+    class at one building and a concert band at another.  The class is the
+    thing that has a program; the profile only has a default.
+
+    In order of how much each clue actually knows:
+
+      1. The class's template in Manage Classes.  "MS/HS Orchestra" is a
+         teacher saying so directly, and it is the only clue that distinguishes
+         two classes in the SAME building -- a middle school runs band and
+         orchestra down the hall from each other, so the school's own program
+         cannot separate them.
+      2. A program word in the class's own name ("Entry Strings", "5th Grade
+         Orchestra"), which is what an imported roster usually carries.
+      3. The school the class belongs to.  Elementary sections are named after
+         their school and each school records whether it is band or strings.
+      4. The profile's program type, when it names a program at all
+         ("elementary" does not).
+
+    Band last, because it is the assumption this function exists to stop.
+    """
+    program = level = None
+    label = (label or "").strip()
+
+    if label:
+        try:
+            import class_registry as cr
+            for k in cr.load_classes(base_dir or _current_base_dir,
+                                     program_type or "band"):
+                if cr.same_class(k.get("label"), label):
+                    tmpl = k.get("template")
+                    program = _TEMPLATE_PROGRAM.get(tmpl)
+                    if tmpl in _TEMPLATE_ELEMENTARY:
+                        level = "elementary"
+                    break
+        except Exception:
+            pass
+
+    if not program and label:
+        try:
+            import class_registry as cr
+            for word in cr._name_words(label):
+                if word in _NAME_PROGRAM:
+                    program = _NAME_PROGRAM[word]
+                    break
+        except Exception:
+            pass
+
+    if not program or not level:
+        site = site_of_class(main_db, label, base_dir)
+        if site:
+            if not level:
+                level = site.get("level") or None
+            if not program:
+                program = (site.get("program") or "").strip().lower() or None
+
+    if not program and program_type in ("band", "orchestra", "choir"):
+        program = program_type
+    if not level and program_type == "elementary":
+        level = "elementary"
+
+    return (program or "band", level or "secondary")
+
+
+def seating_instruments(program, level="secondary", numbered_parts=False,
+                        piano=False):
+    """The instruments a seating chart should offer for ONE class.
+
+    A strings class lists strings.  Nothing else -- no flute, no "Percussion",
+    and none of the band-shaped options that go with them.
+
+    Only the VIOLINS divide.  Firsts and seconds are a violin idea; violas,
+    cellos and basses are one section that happens to divisi on the page, and
+    offering "Cello 1 / Cello 2" invites a seating split that orchestras do not
+    make.  It is a middle and high school choice even for the violins, and off
+    by default: a 10-year-old plays the violin, not second violin -- the rule
+    ``fifth_grade_instruments`` already follows on the roster.
+
+    Harp is not offered at all (school orchestras do not have one).  Piano does
+    turn up, rarely, so it is its own toggle rather than something bundled in
+    with the part split.
+    """
+    if program == "choir":
+        return list(CHOIR_PARTS) + ["Other"]
+    if program == "orchestra":
+        out = list(FIFTH_GRADE_STRINGS_COMMON)      # Violin, Viola, Cello, Bass
+        if numbered_parts and level != "elementary":
+            i = out.index("Violin") + 1
+            out[i:i] = ["Violin 1", "Violin 2"]
+        if piano:
+            out.append("Piano")
+        return out + ["Other"]
+    if level == "elementary":
+        return fifth_grade_instruments("band")
+    return list(BAND_INSTRUMENTS) + ["Other"]
+
+
 def choir_ensemble(site_name: str) -> str:
     """The choir group for one school, named the way its sections are."""
     return f"{(site_name or '').strip()}: {CHOIR_SUFFIX}"

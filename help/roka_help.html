@@ -913,20 +913,135 @@
   <span class="btn-ref">💾 Save Image…</span> get the chart out for printing or
   for a substitute.</p>
 
-  <h3>The set up buttons</h3>
+  <h3>The two set up buttons</h3>
+  <p>Two, split by what they are about: the chart, and the students in it.</p>
   <ul>
-    <li><span class="btn-ref">🎼 Concert Setup…</span> lays students out in
-      concert arcs instead of classroom rows.</li>
-    <li><span class="btn-ref">🎷 Jazz Setup…</span> uses a jazz stage layout.</li>
-    <li><span class="btn-ref">🚫 Keep-Apart Pairs…</span> keeps two students who
-      should not sit together apart, every time you reshuffle.</li>
-    <li><span class="btn-ref">♿ Special Accommodations…</span> holds a student to
-      the front or back row.</li>
-    <li><span class="btn-ref">🎺 Change a student's instrument…</span> fixes a
+    <li><span class="btn-ref">⚙ Configuration…</span> is the chart itself —
+      rows or arcs, which end of the picture is the front, how many seats are
+      in each row, the color coding, how names are shown, and where each
+      section sits (drag a section up to move it forward, lock one to
+      particular rows, or pin it to the left or right as the audience sees
+      it).</li>
+    <li><span class="btn-ref">👤 Set Up…</span> is the students —
+      <span class="btn-ref">🚫 Keep-Apart Pairs…</span> for two who should not
+      sit together, <span class="btn-ref">♿ Special Accommodations…</span> for
+      a student who needs the front row, the end of a row, or an empty seat
+      beside them, and
+      <span class="btn-ref">🎺 Change a student's instrument…</span> to fix a
       wrong instrument without leaving the chart.</li>
-    <li><span class="btn-ref">🔀 Shuffle…</span> gives you a fresh arrangement,
-      obeying everything above.</li>
+    <li><span class="btn-ref">🔀 Shuffle…</span> offers four, described below.
+      All of them obey keep-apart pairs and accommodations.</li>
+    <li><span class="btn-ref">🎷 Jazz Band Setup…</span> seats a big band by
+      PART. Band classes only — a jazz choir is a different shape and is not
+      covered by it yet.</li>
   </ul>
+
+  <h3>The four shuffles</h3>
+  <ul>
+    <li><strong>Shuffle everyone</strong> — a new seat and new neighbours for
+      every student, every click.</li>
+    <li><strong>Shuffle section placement</strong> — whole sections move to
+      different zones, at random. Nothing to do with concert order.</li>
+    <li><strong>Shuffle within sections</strong> — who sits by whom changes
+      inside each section; the sections themselves do not move, wherever they
+      currently are.</li>
+    <li><strong>Shuffle into 2s and 3s</strong> — pairs of the same part (a
+      three only where a section has an odd number), spread around the room so
+      a big section cannot re-form as a block. A section of one buddies up with
+      the nearest sound: a lone bassoon sits with a lone tuba, both low.</li>
+  </ul>
+  <p>Each of them works on its own — shuffling within sections does just that,
+  whether the sections are in the default concert layout, in zones you set, or
+  wherever a section shuffle happened to put them. That is also what lets the
+  middle two chain: shuffle the section placement to get a room the class has
+  not sat in, then shuffle within sections to re-mix the people without
+  disturbing where each section landed.</p>
+
+  <h3>Optimize</h3>
+  <p><span class="btn-ref">✨ Optimize Seats</span> on the main panel fits
+  the ROOM to the group in one click: it adds chairs (and rows) when people do
+  not fit — combining two bands for one concert doubles the room overnight —
+  and takes away chairs nobody is sitting in. The shape of the room is kept, so
+  a concert arc stays an arc. A long percussion line wraps onto a second row on
+  its own rather than running wider than the band in front of it.</p>
+
+  <h3>Jazz band</h3>
+  <p><span class="btn-ref">🎷 Jazz Band Setup…</span> seats a big band the way
+  a jazz chart is drawn — by the PART each player is covering, not by what
+  they carry. The front row reads T1 A2 A1 T2 B, the trombones behind them
+  read 2 1 3 4, the trumpets behind those the same, and part 1 of each row
+  lines up behind the lead alto. The rhythm section sits on the side you
+  pick.</p>
+  <p>The window lists every player with a part next to them, guessed from
+  their instrument; change any of them and that is what gets seated. Real
+  bands are not the book, and it copes: eleven saxes simply make a longer
+  front row, and at middle school the second row is whatever bass-clef
+  players you have (baritones, bassoons, a cello, the odd tuba) covering the
+  trombone parts, with flutes and clarinets covering trumpet parts behind
+  them. When the trumpet row will not fit in one line, set it to two and it
+  splits in order — the lead trumpet stays in the nearer row, still lined up
+  behind trombone 1.</p>
+
+  <h3>Symphony orchestra</h3>
+  <p>A strings class with winds, brass or percussion in it is laid out as a
+  symphony without being asked: strings across the front (firsts stage right,
+  then seconds, violas, cellos, with the basses behind the cellos), woodwinds
+  through the middle with harp and piano at the stage-right edge, horns,
+  trumpets and low brass along the back, and percussion in its own row behind
+  everyone. A strings-only class keeps the plain string layout and gets no
+  percussion row. Either way the zones are yours to change afterwards.</p>
+
+  <h3>The nine zones</h3>
+  <p>Under <span class="btn-ref">⚙ Configuration…</span>, Concert seating gives
+  every section a zone. The room splits into three depths and three sides, the
+  way a concert chart is drawn in rings:</p>
+  <ul>
+    <li><strong>1, 2, 3</strong> — front: stage right, center, stage left.</li>
+    <li><strong>4, 5, 6</strong> — middle: stage right, center, stage left.</li>
+    <li><strong>7, 8, 9</strong> — back: stage right, center, stage left.</li>
+  </ul>
+  <p><span class="btn-ref">↺ Standard concert seating</span>, under the zone
+  list, puts every section back in normal concert order front to back and drops
+  all the zones — that is the way back to an ordinary chart.</p>
+
+  <p>Empty chairs are closed up automatically, so a section that does not fill
+  its zone does not leave a hole in the middle of the band; the spare chairs go
+  to the outside ends and the back. Only a deliberate corner holds its wall —
+  the string basses when their tick box is on — everything else centres.
+  Reserved “empty beside” seats from an accommodation are never closed up. Untick
+  <span class="btn-ref">No empty chairs inside the ensemble</span> in
+  Configuration if you want the gaps left alone.</p>
+
+  <p>With four rows the front is rows 1–2, the middle row 3 and the back row 4;
+  with six rows it is two each. Each zone is about a third of the row wide, so
+  sections sit beside each other instead of one filling the row. A section too
+  big for its zone spills outward from it rather than being left standing, and a
+  section is kept together in one row wherever the zone allows. Leave a section
+  blank to let it flow into whatever is free.</p>
+  <p>An orchestra starts out laid out the standard way: first violins front on
+  stage right, seconds behind them, violas the middle wedge, cellos stage left,
+  basses in the back corner. Charts saved before there were nine zones keep the
+  placement they were saved with.</p>
+  <p>Stage right is the left of the picture when the front of the room is at the
+  top. Setting the front of the room to the bottom rotates the whole chart 180°,
+  seat numbers and all, so everybody keeps the same real seat — it is the same
+  room seen from the other end, not a mirror image.</p>
+
+  <h3>Band, strings and choir</h3>
+  <p>The chart follows the CLASS, not your program type — so a teacher who runs
+  a band at one school and a strings class at another gets the right options in
+  each. A strings class lists Violin, Viola, Cello and String Bass and nothing
+  else, and is offered
+  <span class="btn-ref">Keep string basses in the back corner</span> (audience
+  right is the usual one). By default the violins sit stage right, the
+  violas are the middle wedge in the front half, and the cellos sit stage left.
+  A middle or high school orchestra can tick
+  <span class="btn-ref">Expand to Violin 1 / Violin 2</span>; only the violins
+  divide, and fifth grade does not get that choice, because a beginner plays the
+  violin, not second violin. Piano is its own tick box, since a school orchestra
+  rarely has one. Only a band
+  class is offered <span class="btn-ref">Keep percussion in a back row</span>
+  and the tuba option.</p>
 
   <a class="top" href="#seating">Back to top</a>
 </section>

@@ -644,8 +644,11 @@ class PercussionRotationView(ttk.Frame):
         if self.main_db is None:
             return False
         try:
+            # level=None: a 5th grade band has a percussion section like any
+            # other, and the teacher is entitled to try the rotation on it.
+            # Without this the picker came up empty for them.
             rows = self.main_db.get_students_for_email(
-                school_year=self._student_year())
+                school_year=self._student_year(), level=None)
         except Exception:
             return False
         return any(_FromStudentsDialog._is_percussion(r["primary_instrument"])
@@ -1336,7 +1339,10 @@ class _FromStudentsDialog(ttk.Toplevel):
             rows = self.main_db.get_students_for_email(
                 school_year=self._year,
                 ensemble=None if ens == "All" else ens,
-                period=None if per == "All" else per)
+                period=None if per == "All" else per,
+                # "All" means all of THIS teacher's students, including a 5th
+                # grade section.  The class dropdown beside it is the filter.
+                level=None)
         except Exception:
             rows = []
         self._rows = []

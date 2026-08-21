@@ -79,16 +79,27 @@ def render_rows(rows, row_caps, palette_on=True, palette=None,
     specs = []
     for r in range(n_rows):
         specs.append({
-            "key": r, "cap": caps[r], "cells": rows[r],
+            "key": r, "cap": caps[r], "cells": rows[r], "offset": 0,
             "color": palette[r % len(palette)] if row_band else NO_COLOR,
             "caption": None,
         })
     if percussion:
-        specs.append({
-            "key": "P", "cap": len(percussion), "cells": percussion,
-            "color": PERC_COLOR if row_band else NO_COLOR,
-            "caption": "Percussion (back row)",
-        })
+        # A long percussion line wraps rather than running wider than the band
+        # in front of it.  The seat KEY stays the position in the flat list, so
+        # click-to-swap does not care how many rows it is drawn across.
+        chunks = sc.split_percussion(percussion, max(caps or [8]))
+        # Flipping reverses the whole stack, so the caption goes on the line
+        # that will end up drawn first -- otherwise it lands BETWEEN the two
+        # percussion rows.
+        cap_on = (len(chunks) - 1) if flip else 0
+        start = 0
+        for i, chunk in enumerate(chunks):
+            specs.append({
+                "key": "P", "cap": len(chunk), "cells": chunk, "offset": start,
+                "color": PERC_COLOR if row_band else NO_COLOR,
+                "caption": ("Percussion (back row)" if i == cap_on else None),
+            })
+            start += len(chunk)
 
     all_names = [_name_of(x) for sp in specs for x in sp["cells"]] + ["Wwwwwwww"]
     cell_w = max(_text_size(d0, n, font)[0] for n in all_names) + pad * 2
@@ -115,6 +126,11 @@ def render_rows(rows, row_caps, palette_on=True, palette=None,
         draw.text((pad, y), front_label, font=font_lbl, fill="#000000")
     y += top_h
 
+    # ``flip`` turns the ROOM around, so the picture rotates a full 180 degrees:
+    # the rows reverse AND every row is mirrored end for end.  Reversing only
+    # the rows left seat 1 of each row on the same side of the page in both
+    # views, which is a mirror image of the room rather than a rotation of it --
+    # the chart said a student was on the left when they were on the right.
     ordered_specs = specs if not flip else specs[::-1]
     for sp in ordered_specs:
         if sp["caption"]:
@@ -126,8 +142,12 @@ def render_rows(rows, row_caps, palette_on=True, palette=None,
         cap = sp["cap"]
         cells = sp["cells"]
         key = sp["key"]
+        # Display position p -> the seat that actually sits there.  Seat boxes
+        # stay keyed by the real column, so click-to-swap keeps working.
+        order = list(range(cap - 1, -1, -1)) if flip else list(range(cap))
+        offset = sp.get("offset", 0)
         x = pad
-        for c in range(cap):
+        for c in order:
             draw.rectangle([x, y, x + cell_w, y + num_h], fill=color, outline=grid)
             num = str(c + 1)
             nw, nh = _text_size(draw, num, font_b)
@@ -136,7 +156,7 @@ def render_rows(rows, row_caps, palette_on=True, palette=None,
             x += cell_w
         x = pad
         ny = y + num_h
-        for c in range(cap):
+        for c in order:
             seat = cells[c] if c < len(cells) else None
             reserved = bool(seat and seat.get("reserved"))
             nm = _name_of(seat)
@@ -156,7 +176,7 @@ def render_rows(rows, row_caps, palette_on=True, palette=None,
                 rw, rh = _text_size(draw, "reserved", font_i)
                 draw.text((x + (cell_w - rw) / 2, ny + (name_h - rh) / 2), "reserved",
                           font=font_i, fill=nm_fill)
-                seat_boxes[(key, c)] = (x // s, ny // s, (x + cell_w) // s, (ny + name_h) // s)
+                seat_boxes[(key, offset + c)] = (x // s, ny // s, (x + cell_w) // s, (ny + name_h) // s)
                 x += cell_w
                 continue
             show_inst = show_instrument and inst and key != "P"
@@ -172,7 +192,7 @@ def render_rows(rows, row_caps, palette_on=True, palette=None,
                 else:
                     draw.text((x + (cell_w - tw) / 2, ny + (name_h - th) / 2), nm,
                               font=font, fill=nm_fill)
-            seat_boxes[(key, c)] = (x // s, ny // s, (x + cell_w) // s, (ny + name_h) // s)
+            seat_boxes[(key, offset + c)] = (x // s, ny // s, (x + cell_w) // s, (ny + name_h) // s)
             x += cell_w
         y += num_h + name_h + row_gap
 
@@ -232,16 +252,25 @@ def render_arcs(rows, row_caps, palette_on=True, palette=None,
     r_max = radii[-1] if radii else int(seat_h * 2.0)
 
     perc = percussion or []
-    perc_band = (seat_h * 1.9) if perc else 0    # caption + straight row
+    # Wrapped to the widest arc, so nineteen percussionists do not run wider
+    # than the band in front of them.
+    perc_lines = sc.split_percussion(perc, max(caps or [8]))
+    perc_step = seat_h * 1.08
+    perc_band = (seat_h + perc_step * len(perc_lines)) if perc else 0
     lbl_h = int(fs * 1.7) if front_label else 0
 
-    width = int(max(2 * (r_max + seat_w), len(perc) * seat_w + pad * 2))
+    widest_perc = max((len(x) for x in perc_lines), default=0)
+    width = int(max(2 * (r_max + seat_w), widest_perc * seat_w + pad * 2))
     height = int(r_max + seat_h * 2 + pad * 2 + perc_band + lbl_h)
     cx = width / 2
 
     # ``flip`` True == front of the room at the BOTTOM (conductor bottom, arcs
     # fan upward, percussion straight row across the top).  Matches the rows view.
     d = -1 if flip else 1                         # arc grow direction (screen y)
+    # Mirror x too: turning the room around rotates the picture 180 degrees.
+    # Flipping only y gave a mirror image, so a player drawn on the conductor's
+    # left in one view was on their right in the other.
+    dx = -1 if flip else 1
     if flip:
         cy = height - pad - lbl_h - seat_h / 2     # conductor near bottom
         perc_py = pad + seat_h * 1.5               # percussion across the top
@@ -268,7 +297,7 @@ def render_arcs(rows, row_caps, palette_on=True, palette=None,
             angles = [start_deg - span_deg * (c / (cap - 1)) for c in range(cap)]
         for c in range(cap):
             a = math.radians(angles[c])
-            sx = cx + R * math.cos(a)
+            sx = cx + dx * R * math.cos(a)
             sy = cy + d * R * math.sin(a)
             x0, y0 = sx - seat_w / 2, sy - seat_h / 2
             x1, y1 = sx + seat_w / 2, sy + seat_h / 2
@@ -310,22 +339,33 @@ def render_arcs(rows, row_caps, palette_on=True, palette=None,
     if perc:
         pcolor = PERC_COLOR if palette_on else NO_COLOR
         ptxt = _text_on(pcolor)
-        total_w = len(perc) * seat_w
-        px = cx - total_w / 2
-        py = perc_py
         cap_font = _calibri(int(fs * 1.0), bold=True)
         cw, _ = _text_size(draw, "Percussion", cap_font)
-        draw.text((cx - cw / 2, py - seat_h), "Percussion", font=cap_font, fill="#555555")
-        for c, seat in enumerate(perc):
-            x0, y0 = px + c * seat_w, py - seat_h / 2
-            x1, y1 = x0 + seat_w, py + seat_h / 2
-            draw.rounded_rectangle([x0, y0, x1, y1], radius=int(8 * s),
-                                   fill=pcolor, outline=grid, width=max(1, s))
-            nm = _name_of(seat)
-            if nm:
-                tw, th = _text_size(draw, nm, font)
-                draw.text((x0 + seat_w / 2 - tw / 2, py - th / 2), nm, font=font, fill=ptxt)
-            seat_boxes[("P", c)] = (int(x0 // s), int(y0 // s), int(x1 // s), int(y1 // s))
+        # Extra lines stack AWAY from the band, so line 1 stays nearest the
+        # players and the block grows toward the outside edge of the picture.
+        # ``perc_py`` is the outermost line, so the stack is laid back from it.
+        span = perc_step * (len(perc_lines) - 1)
+        ys = [perc_py - d * (span - li * perc_step)
+              for li in range(len(perc_lines))]
+        draw.text((cx - cw / 2, min(ys) - seat_h), "Percussion", font=cap_font,
+                  fill="#555555")
+        start = 0
+        for li, line in enumerate(perc_lines):
+            py = ys[li]
+            px = cx - (len(line) * seat_w) / 2
+            for c, seat in enumerate(line):
+                x0, y0 = px + c * seat_w, py - seat_h / 2
+                x1, y1 = x0 + seat_w, py + seat_h / 2
+                draw.rounded_rectangle([x0, y0, x1, y1], radius=int(8 * s),
+                                       fill=pcolor, outline=grid, width=max(1, s))
+                nm = _name_of(seat)
+                if nm:
+                    tw, th = _text_size(draw, nm, font)
+                    draw.text((x0 + seat_w / 2 - tw / 2, py - th / 2), nm,
+                              font=font, fill=ptxt)
+                seat_boxes[("P", start + c)] = (int(x0 // s), int(y0 // s),
+                                                int(x1 // s), int(y1 // s))
+            start += len(line)
 
     # Conductor marker.
     cw = int(seat_w * 0.9)

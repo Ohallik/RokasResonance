@@ -2617,9 +2617,11 @@ class Database:
         except Exception:
             return None
 
+    _LEVEL_UNSET = object()          # "the caller did not say", not "any level"
+
     def get_students_for_email(self, school_year=None, ensemble=None, period=None,
                                instrument=None, include_inactive=False,
-                               site_id=None, level="secondary"):
+                               site_id=None, level=_LEVEL_UNSET):
         """Return active student rows matching the given filters.  Multi-value
         fields (ensembles, class_periods) are matched by membership.
 
@@ -2632,7 +2634,15 @@ class Database:
 
         The 5th grade screens pass site_id for their own school, which takes
         precedence; level=None returns everybody.
+
+        The secondary default applies only when NO class was named.  Naming a
+        class is already the narrower filter -- "Medina Elementary School:
+        Section 1" cannot mean a middle schooler -- and forcing secondary on
+        top of it returned nothing at all, which is how an elementary
+        teacher's seating chart came back empty.
         """
+        if level is self._LEVEL_UNSET:
+            level = None if ensemble else "secondary"
         sql = "SELECT * FROM students WHERE 1=1"
         params = []
         if not include_inactive:

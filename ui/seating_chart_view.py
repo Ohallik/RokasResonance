@@ -18,7 +18,7 @@ from ttkbootstrap.dialogs import Messagebox
 
 import seating_chart as sc
 import seating_render as sr
-from ui.ensembles import ensembles_for, instruments_for, PERIOD_OPTIONS
+from ui.ensembles import ensembles_for, PERIOD_OPTIONS
 from ui.names import display_first_of, display_full
 from ui.theme import muted_fg, fs
 
@@ -39,9 +39,13 @@ def _default_config(chart_type="concert"):
         "ensembles": [],                # legacy (kept for old saved charts)
         "scope": "all",                 # legacy
         "extra_students": [],           # [{"name":..., "instrument":...}] cross-ensemble adds
-        "row_caps": "8,10,12,13",
+        # Four rows of ten and no color: a plain room, not a copy of Meagan's.
+        # Her own 8/10/12/13 and row colors are a click away in Configuration,
+        # and whatever a teacher sets last becomes their default (see
+        # _remembered_layout).
+        "row_caps": "10,10,10,10",
         "sort_mode": "sections",
-        "color_mode": "row",            # "row" | "section" | "none"
+        "color_mode": "none",            # "row" | "section" | "none"
         "name_display": "first",        # "first" | "last_initial" | "last_full"
         "show_instrument": True,
         "separate_percussion": True,
@@ -55,6 +59,13 @@ def _default_config(chart_type="concert"):
         "together": [],                     # [[nameA, nameB], ...] seat these side by side
         "zones": {},                        # {instrument: [1-based row numbers]} lock section to rows
         "side_zones": {},                   # {instrument: "left"|"right"} stage side (audience view)
+        "section_zones": {},                # {instrument: 1..9} — see sc.ZONE_LABELS
+        "zone_scheme": 9,                   # migrates charts saved with six
+        "close_gaps": True,                 # no empty chairs inside the ensemble
+        "bass_corner": True,                # orchestra: string basses in the back corner
+        "bass_corner_side": "right",        # which corner (audience view)
+        "numbered_parts": False,            # orchestra: offer Violin 1 / Violin 2 (MS/HS)
+        "piano": False,                     # orchestra: rare, so it is its own toggle
         "seed": 1,
     }
 
@@ -76,6 +87,7 @@ class SeatingChartView(ttk.Frame):
         self.program_type = _program_type(base_dir)
         self._chart_id = None
         self._cfg = _default_config()
+        self._apply_remembered_layout()
         self._apply_program_defaults()
         self._rows = []
         self._perc = []
@@ -87,6 +99,7 @@ class SeatingChartView(ttk.Frame):
         self._swap_first = None
         self._dirty = False
         self._build()
+        self._sync_program_ui()
         self._refresh_chart_list()
         self._update_roster_label()
         self._regenerate()
@@ -153,10 +166,23 @@ class SeatingChartView(ttk.Frame):
                    command=self._load_dialog).pack(side=LEFT, fill=X, expand=True, padx=(2, 0))
         ttk.Button(parent, text="🔀  Shuffle…", bootstyle=SUCCESS,
                    command=self._shuffle_prompt).pack(fill=X, **bpad, pady=(4, 0))
-        ttk.Button(parent, text="🎼  Concert Setup…", bootstyle=(INFO, OUTLINE),
-                   command=self._edit_section_order).pack(fill=X, **bpad, pady=(4, 0))
-        ttk.Button(parent, text="🎷  Jazz Setup…", bootstyle=(INFO, OUTLINE),
-                   command=self._jazz_setup).pack(fill=X, **bpad, pady=(4, 0))
+        # On the main panel on purpose: combining two bands for one concert is
+        # the moment you need it, and hunting for it inside a settings window
+        # is the moment you give up.
+        ttk.Button(parent, text="✨  Optimize Seats", bootstyle=(SUCCESS, OUTLINE),
+                   command=self._optimize).pack(fill=X, **bpad, pady=(4, 0))
+        # Jazz is a concert-band idea.  A strings or choir chart had a Jazz
+        # Setup button sitting on it that could only ever produce a big-band
+        # layout of instruments they do not have.
+        # Its own frame, which STAYS packed whether the button is showing or
+        # not.  pack_forget on the button itself would send it to the bottom of
+        # the panel when it came back.
+        self._jazz_slot = ttk.Frame(parent)
+        self._jazz_slot.pack(fill=X, **bpad, pady=(4, 0))
+        self._jazz_btn = ttk.Button(self._jazz_slot, text="🎷  Jazz Band Setup…",
+                                    bootstyle=(INFO, OUTLINE),
+                                    command=self._jazz_setup)
+        self._jazz_btn.pack(fill=X)
 
         # ── Group ──
         head("Group").pack(anchor=W, padx=10, pady=(10, 0))
@@ -166,9 +192,13 @@ class SeatingChartView(ttk.Frame):
         ttk.Button(parent, text="Choose group…", bootstyle=SECONDARY,
                    command=self._edit_group).pack(fill=X, **bpad, pady=(3, 0))
 
-        # ── Set Up (view / rows / colors / section placement) ──
-        ttk.Button(parent, text="⚙  Set Up…", bootstyle=SECONDARY,
-                   command=self._open_setup).pack(fill=X, **bpad, pady=(8, 0))
+        # ── Configuration: everything about the CHART ──
+        # There used to be three buttons within an inch of each other called
+        # "Set Up", "Concert Setup" and "Student Set Up", and no way to guess
+        # which held what.  Two now, split by what they are about: the chart
+        # (Configuration) and the students in it (Set Up).
+        ttk.Button(parent, text="⚙  Configuration…", bootstyle=SECONDARY,
+                   command=self._open_configuration).pack(fill=X, **bpad, pady=(8, 0))
 
         # ── Group students (sort) ──
         head("Group students").pack(anchor=W, padx=10, pady=(10, 0))
@@ -180,8 +210,8 @@ class SeatingChartView(ttk.Frame):
             ttk.Radiobutton(parent, text=label, value=key, variable=self._sort_var,
                             command=self._apply_and_regen).pack(anchor=W, padx=16)
 
-        # ── Student Set Up + AI Assist ──
-        ttk.Button(parent, text="👤  Student Set Up…", bootstyle=SECONDARY,
+        # ── Set Up: everything about the STUDENTS in it ──
+        ttk.Button(parent, text="👤  Set Up…", bootstyle=SECONDARY,
                    command=self._open_student_setup).pack(fill=X, **bpad, pady=(12, 0))
         ttk.Button(parent, text="🤖  AI Assist…", bootstyle=INFO,
                    command=self._ai_assistant).pack(fill=X, **bpad, pady=(4, 0))
@@ -282,10 +312,100 @@ class SeatingChartView(ttk.Frame):
         return False
 
     def _shuffle_sections(self):
+        """Move whole sections to different parts of the room, at random.
+
+        This used to shuffle the section ORDER, which is not the same thing:
+        once sections had zones, reordering the list changed only who was
+        seated first and everybody stayed exactly where they were, so the
+        button appeared to do nothing.  It now deals the sections out into
+        random zones, which is what "move sections somewhere else" means.
+
+        Nothing to do with concert order -- the point is a room the students
+        have not seen before.
+        """
+        caps = sc.parse_row_caps(self._cfg["row_caps"])
+        roster = self._resolve_roster()
+        sections = self._section_list()
+        if not sections:
+            Messagebox.show_info("Choose a group first.", title="No Sections",
+                                 parent=self)
+            return
+        counts = {}
+        for st in roster:
+            inst = (st.get("instrument") or "").strip()
+            if inst:
+                counts[inst] = counts.get(inst, 0) + 1
+        self._cfg["section_zones"] = sc.random_zone_assignment(
+            sections, counts, caps, random.Random())
+        self._cfg["shuffle_sections"] = False
         self._ensure_sections_mode()
         self._cfg["seed"] = random.randint(1, 10_000_000)
-        self._cfg["shuffle_sections"] = True
         self._apply_and_regen()
+
+    def _optimize(self):
+        """Fit the room to the ensemble, in one click.
+
+        Adds chairs and rows when people do not fit -- combining an
+        intermediate and an advanced band for one concert doubles the room
+        overnight -- and takes away chairs nobody is sitting in, so the
+        formation is not full of holes.  The shape of the room is kept, so a
+        concert arc stays an arc.
+        """
+        roster = self._resolve_roster()
+        if not roster:
+            Messagebox.show_info("Choose a group first.", title="No Students",
+                                 parent=self)
+            return
+        seated = roster
+        if self._cfg.get("separate_percussion", True):
+            # Percussion has its own row (and wraps on its own), so it must not
+            # count toward the width of the rows in front of it.
+            seated = [s for s in roster
+                      if sc.family(s.get("instrument")) != "Percussion"]
+        # Reserved seats beside a student are seats too.
+        need = len(seated) + sum(int(s.get("buffer") or 0) for s in seated)
+
+        before = sc.parse_row_caps(self._cfg.get("row_caps") or "8")
+        after = sc.optimize_row_caps(need, before)
+        self._cfg["row_caps"] = ",".join(str(c) for c in after)
+        self._cfg["close_gaps"] = True
+        self._regenerate()
+
+        # An exact fit is not always seatable: in 2s and 3s a group will
+        # not split across a row, so a room with precisely enough chairs
+        # can still leave somebody standing.  Rather than reason about it,
+        # add the seats that turned out to be missing and look again.
+        for _ in range(4):
+            if not self._unseated:
+                break
+            after = sc.optimize_row_caps(
+                sum(after) + len(self._unseated) + 1, after)
+            self._cfg["row_caps"] = ",".join(str(c) for c in after)
+            self._regenerate()
+        self._remember_layout()
+
+        was, now = sum(before), sum(after)
+        bits = [f"{len(seated)} to seat."]
+        if len(after) != len(before):
+            bits.append(f"{len(before)} rows → {len(after)}.")
+        bits.append(f"{was} chairs → {now}.")
+        if self._unseated:
+            bits.append(f"⚠ {len(self._unseated)} still do not fit — "
+                        f"the room is capped at {sc.MAX_ROWS} rows.")
+        self._status.config(text="  ".join(bits))
+
+    def _shuffle_small_groups(self):
+        """Break the room into 2s (and a 3 where a section is odd), mixed up.
+
+        Part independence with training wheels: everybody has a buddy on the
+        same part nearby, but the section as a block is gone.
+        """
+        self._cfg["sort_mode"] = "small_groups"
+        self._sort_var.set("small_groups")
+        self._cfg["seed"] = random.randint(1, 10_000_000)
+        self._cfg["shuffle_members"] = False
+        self._cfg["shuffle_sections"] = False
+        self._regenerate()
 
     def _shuffle_all(self):
         """True scramble: everyone gets a new seat and new neighbors, every
@@ -300,13 +420,16 @@ class SeatingChartView(ttk.Frame):
     def _shuffle_prompt(self):
         _ShufflePrompt(self.winfo_toplevel(), self._shuffle_all,
                        self._shuffle_members, self._shuffle_sections,
+                       self._shuffle_small_groups,
                        self._clear_concert_setup,
                        has_setup=bool(self._cfg.get("section_order")
+                                      or self._cfg.get("section_zones")
                                       or self._cfg.get("zones")
                                       or self._cfg.get("side_zones")))
 
     def _clear_concert_setup(self):
         self._cfg["section_order"] = []
+        self._cfg["section_zones"] = {}
         self._cfg["zones"] = {}
         self._cfg["side_zones"] = {}
 
@@ -442,6 +565,96 @@ class SeatingChartView(ttk.Frame):
                 else:
                     m["name"] = f"{base} {m['last']}".strip()
 
+    # What a new chart inherits from the last one they set up.  Room shape and
+    # appearance only -- never a placement, which belongs to the group being
+    # seated, and never the group itself.
+    _REMEMBERED_KEYS = ("row_caps", "view", "flip", "color_mode",
+                        "show_instrument", "name_display",
+                        "separate_percussion", "center_tuba",
+                        "bass_corner", "bass_corner_side",
+                        "numbered_parts", "piano", "close_gaps")
+
+    def _remember_layout(self):
+        """Keep the room they just described, so the next new chart opens as
+        their room rather than as the built-in default."""
+        try:
+            from ui.settings_dialog import load_settings, save_settings
+            cfg = load_settings(self.base_dir) or {}
+            cfg.setdefault("seating", {})["layout"] = {
+                k: self._cfg.get(k) for k in self._REMEMBERED_KEYS
+                if k in self._cfg}
+            save_settings(self.base_dir, cfg)
+        except Exception:
+            pass
+
+    def _apply_remembered_layout(self):
+        """The saved room shape, over the built-in default, on a NEW chart."""
+        try:
+            from ui.settings_dialog import load_settings
+            saved = ((load_settings(self.base_dir).get("seating") or {})
+                     .get("layout") or {})
+        except Exception:
+            saved = {}
+        for k in self._REMEMBERED_KEYS:
+            if k in saved and saved[k] is not None:
+                self._cfg[k] = saved[k]
+
+    def _sync_program_ui(self):
+        """Show only what this chart's program can use.
+
+        Called whenever the chosen class changes, because the answer changes
+        with it: the same window is a band chart one minute and a 5th grade
+        strings chart the next.
+        """
+        program, _level = self._chart_program()
+        try:
+            if program == "band":
+                self._jazz_btn.pack(fill=X)
+            else:
+                self._jazz_btn.pack_forget()
+        except Exception:
+            pass
+
+    def _chart_program(self):
+        """``(program, level)`` for the class this chart is seating.
+
+        Not the profile's program type: a teacher can run a 5th grade strings
+        class at one building and a concert band at another, and the chart in
+        front of them belongs to exactly one of those.  Everything that used to
+        read ``self.program_type`` -- the instrument list, which placement
+        options appear, whether Jazz Setup is offered -- reads this instead.
+
+        A chart seating two classes at once (a combined concert) only gets one
+        answer, so when the groups disagree the profile's own program is used
+        rather than picking one class's program for all of them.
+        """
+        from ui.ensembles import class_program
+        groups = [g.get("ensemble") for g in self._groups() if g.get("ensemble")]
+        answers = []
+        for label in groups:
+            try:
+                answers.append(class_program(self.main_db, label, self.base_dir,
+                                             self.program_type))
+            except Exception:
+                pass
+        if answers and all(a == answers[0] for a in answers):
+            return answers[0]
+        if self.program_type in ("band", "orchestra", "choir"):
+            return (self.program_type, "secondary")
+        if self.program_type == "elementary":
+            # Every school they have is elementary; the program still has to
+            # come from a school, so use one only when they all agree.
+            try:
+                progs = {(dict(s).get("program") or "").lower()
+                         for s in self.main_db.get_sites()
+                         if (dict(s).get("program") or "").strip()}
+            except Exception:
+                progs = set()
+            if len(progs) == 1:
+                return (progs.pop(), "elementary")
+            return ("band", "elementary")
+        return ("band", "secondary")
+
     def _zones_0based(self, caps):
         """Convert cfg zones {instrument: [1-based rows]} to {instrument:
         [0-based indices]} within the current row count."""
@@ -453,23 +666,114 @@ class SeatingChartView(ttk.Frame):
                 out[inst] = idxs
         return out or None
 
+    # How a roster might spell the basses.  Only consulted for an ORCHESTRA
+    # chart, so plain "Bass" is safe here — in a choir it is a voice part.
+    _BASS_NAMES = ("String Bass", "Double Bass", "Upright Bass", "Bass")
+
+    # The standard string layout, in zone numbers, off a normal orchestra
+    # chart: firsts front on stage right, seconds just behind them, the violas
+    # as the middle wedge (where she says they go, and where the chart puts
+    # them), cellos stage left.  The basses are not here -- they have their own
+    # tick box, because they are the one section a director nearly always wants
+    # pinned whatever else they have done.
+    _ORCHESTRA_DEFAULT_ZONES = {
+        "Violin": 1, "Violin 1": 1,
+        "Violin 2": 4,
+        "Viola": 2, "Viola 1": 2, "Viola 2": 2,
+        "Cello": 3, "Cello 1": 3, "Cello 2": 3,
+    }
+
+    # A SYMPHONY orchestra -- strings with winds, brass and percussion behind
+    # them -- off the standard chart.  The strings keep the front: firsts stage
+    # right, seconds beside them, violas the middle wedge, cellos stage left,
+    # basses behind the cellos.  Woodwinds sit in the middle across the centre,
+    # horns / trumpets / low brass line the back, and the percussion has its own
+    # row further back still.  Harp and piano stand at the stage-right edge.
+    _SYMPHONY_DEFAULT_ZONES = {
+        # front: the string body
+        "Violin": 1, "Violin 1": 1, "Violin 2": 1,
+        "Viola": 2, "Viola 1": 2, "Viola 2": 2,
+        "Cello": 3, "Cello 1": 3, "Cello 2": 3,
+        # middle: keyboards and harp at the edge, winds across the centre,
+        # basses standing behind the cellos
+        "Harp": 4, "Piano": 4,
+        "Flute": 5, "Piccolo": 5, "Oboe": 5, "English Horn": 5,
+        "Clarinet": 5, "Bass Clarinet": 5, "Bassoon": 5, "Contrabassoon": 5,
+        "Alto Sax": 5, "Tenor Sax": 5, "Bari Sax": 5,
+        "String Bass": 6, "Double Bass": 6, "Upright Bass": 6,
+        # back: brass
+        "French Horn": 7,
+        "Trumpet": 8,
+        "Trombone": 9, "Tuba": 9,
+        "Baritone BC": 9, "Baritone TC": 9,
+        "Euphonium BC": 9, "Euphonium TC": 9, "Baritone/Euphonium": 9,
+    }
+
+    def _is_symphony(self, roster=None):
+        """A strings class with winds, brass or percussion in it.
+
+        The two are laid out differently enough to be different charts -- a
+        string orchestra fills the stage with strings, a symphony pushes them
+        forward and stacks everyone else behind -- and the roster already says
+        which one this is, so there is nothing to ask.
+        """
+        try:
+            roster = self._resolve_roster() if roster is None else roster
+        except Exception:
+            return False
+        return any(sc.family(x.get("instrument")) not in ("String", "Other")
+                   for x in roster)
+
+    def _orchestra_defaults(self, roster=None):
+        return (self._SYMPHONY_DEFAULT_ZONES if self._is_symphony(roster)
+                else self._ORCHESTRA_DEFAULT_ZONES)
+
     def _effective_placement(self, caps):
-        """(zones, side_zones) to seat by.  Orchestra programs get the standard
-        string-orchestra layout by default — violins stage left, cellos stage
-        right, violas in the middle, basses in the back row toward stage right
-        (audience view) — unless the teacher has set anything in Concert Setup."""
+        """(zones, side_zones) to seat by, in the layout engine's terms.
+
+        Three sources, narrowest last:
+
+          * the program's default layout, while the teacher has placed nothing
+          * the six zones they assigned in Configuration
+          * the string-bass corner checkbox, which holds whatever else they do
+
+        Zones are stored as the NUMBER (1-6), not as rows and a side, so they
+        keep meaning the same thing when the room grows a row or gets turned
+        around.  They are turned into rows and sides here, against the row
+        count actually in force.
+        """
+        n = len(caps)
         zones = self._zones_0based(caps) or {}
         sides = dict(self._cfg.get("side_zones") or {})
-        customized = bool(zones or sides or self._cfg.get("section_order"))
-        if self.program_type == "orchestra" and not customized:
-            for v in ("Violin", "Violin 1", "Violin 2"):
-                sides[v] = "left"
-            for c in ("Cello", "Cello 1", "Cello 2"):
-                sides[c] = "right"
-            if len(caps) > 1:
-                zones["String Bass"] = [len(caps) - 1]
-            sides["String Bass"] = "right"
-        return (zones or None), (sides or None)
+        assigned = dict(self._cfg.get("section_zones") or {})
+        program, _level = self._chart_program()
+        customized = bool(zones or sides or assigned
+                          or self._cfg.get("section_order"))
+
+        if program == "orchestra" and not customized:
+            for inst, z in self._orchestra_defaults().items():
+                assigned.setdefault(inst, z)
+
+        cols = {}
+        for inst, z in assigned.items():
+            rows, side = sc.zone_rows_side(z, n)
+            if rows:
+                zones[inst] = rows
+                sides[inst] = side
+                # A zone is a box a third of the room wide, not a whole row.
+                cols[inst] = (lambda zz: (lambda cap: sc.zone_columns(zz, cap)))(z)
+
+        anchors = {}
+        if program == "orchestra" and self._cfg.get("bass_corner", True):
+            corner = self._cfg.get("bass_corner_side", "right")
+            for b in self._BASS_NAMES:
+                if n > 1:
+                    zones.setdefault(b, [n - 1])
+                sides.setdefault(b, corner)
+                # The one placement that hugs the wall even in a half-empty
+                # room, because the teacher asked for a CORNER.
+                anchors[b] = corner
+        return (zones or None), (sides or None), (cols or None), (anchors or None)
 
     def _conflict_set(self):
         out = set()
@@ -490,7 +794,7 @@ class SeatingChartView(ttk.Frame):
         self._caps = caps
         roster = self._resolve_roster()
         self._roster = {s["id"]: s for s in roster}
-        zones, side_zones = self._effective_placement(caps)
+        zones, side_zones, zone_cols, anchors = self._effective_placement(caps)
         self._unseated = []
 
         if from_layout is not None:
@@ -518,7 +822,8 @@ class SeatingChartView(ttk.Frame):
                 shuffle_members=self._cfg.get("shuffle_members", False),
                 shuffle_sections=self._cfg.get("shuffle_sections", False),
                 together=self._cfg.get("together") or None,
-                zones=zones, side_zones=side_zones)
+                zones=zones, side_zones=side_zones, zone_cols=zone_cols,
+                close_gaps=self._cfg.get("close_gaps", True), anchors=anchors)
             self._rows = self._pad(built, caps)
             self._perc = list(perc)
             self._unresolved = unresolved
@@ -566,8 +871,9 @@ class SeatingChartView(ttk.Frame):
         if self._unseated:
             who = ", ".join(s["name"] for s in self._unseated[:8])
             more = "…" if len(self._unseated) > 8 else ""
-            warns.append(f"⚠ {len(self._unseated)} students don't fit the current rows — "
-                         f"add seats or another row in Set Up ({who}{more}).")
+            warns.append(f"⚠ {len(self._unseated)} students don't fit the "
+                         f"current rows — click Optimize Seats, or add a "
+                         f"row in Configuration ({who}{more}).")
         if self._unresolved:
             pairs = "; ".join(f"{a} & {b}" for a, b in self._unresolved[:4])
             warns.append(f"⚠ Couldn't keep these apart: {pairs}.")
@@ -676,7 +982,13 @@ class SeatingChartView(ttk.Frame):
         except Exception:
             all_years = []
         try:
-            n = len(self.main_db.get_students_for_email(school_year=year))
+            # level=None: this is a COUNT of the teacher's own roster, not a
+            # contact list.  Left at the secondary default it told an
+            # elementary teacher their year had 0 students while four of
+            # their 5th graders sat in it -- the one message on the screen
+            # whose whole job is to say where the students went.
+            n = len(self.main_db.get_students_for_email(school_year=year,
+                                                        level=None))
         except Exception:
             n = 0
         bits = [f"Looking at the {year or 'current'} school year, "
@@ -706,6 +1018,11 @@ class SeatingChartView(ttk.Frame):
         self._cfg["groups"] = dlg.result["groups"]
         self._cfg["ensembles"] = []       # supersede legacy
         self._cfg["extra_students"] = dlg.result["extra"]
+        # The class decides the program, so choosing one can change which
+        # options apply -- a band chart pointed at a strings class keeps
+        # "percussion in a back row" on until this runs.
+        self._apply_program_defaults()
+        self._sync_program_ui()
         self._update_roster_label()
         self._regenerate()
 
@@ -725,13 +1042,39 @@ class SeatingChartView(ttk.Frame):
         n = len(self._resolve_roster())
         self._roster_lbl.config(text=f"{txt}\n{n} students")
 
-    def _open_setup(self):
-        dlg = _SetupDialog(self.winfo_toplevel(), self._cfg,
-                           concert=self._cfg.get("chart_type") == "concert")
+    def _section_list(self):
+        """The instrument sections on this chart, in their placement order."""
+        roster = self._resolve_roster()
+        seen, uniq = set(), []
+        for s in roster:
+            inst = (s.get("instrument") or "").strip()
+            if inst and inst not in seen:
+                seen.add(inst)
+                uniq.append(inst)
+        cur = self._cfg.get("section_order") or []
+        uniq.sort(key=lambda i: (cur.index(i) if i in cur else 999,
+                                 sc.concert_rank(i), i))
+        return uniq
+
+    def _open_configuration(self):
+        program, level = self._chart_program()
+        dlg = _ConfigurationDialog(
+            self.winfo_toplevel(), self._cfg, program, level,
+            sections=self._section_list())
         self.wait_window(dlg)
-        if dlg.result is not None:
-            self._cfg.update(dlg.result)
-            self._regenerate()
+        if dlg.result is None:
+            return
+        had_order = bool(self._cfg.get("section_order"))
+        self._cfg.update(dlg.result)
+        self._remember_layout()
+        # Zones and section order only mean anything grouped by section.
+        # Switch the sort only when they actually placed something, so
+        # opening Configuration to change a color does not silently
+        # re-sort the chart.
+        if (self._cfg.get("section_order")
+                or self._cfg.get("section_zones") or had_order):
+            self._ensure_sections_mode()
+        self._regenerate()
 
     def _open_student_setup(self):
         roster = self._resolve_roster()
@@ -770,11 +1113,24 @@ class SeatingChartView(ttk.Frame):
             self._cfg = json.loads(chart["config_json"]) if chart["config_json"] else _default_config()
         except Exception:
             self._cfg = _default_config()
+        migrate = ("zone_scheme" not in self._cfg
+                   and bool(self._cfg.get("section_zones")))
         for k, v in _default_config().items():
             self._cfg.setdefault(k, v)
+        if migrate:
+            # Six zones were front HALF (1-3) and back half (4-6).  With nine
+            # the back three are 7-9, so a saved chart keeps the placement it
+            # was saved with instead of silently sliding into the middle.
+            self._cfg["section_zones"] = {
+                inst: sc.ZONE_MIGRATION_6_TO_9.get(int(z), int(z))
+                for inst, z in (self._cfg.get("section_zones") or {}).items()}
         self._name_var.set(chart["name"])
         self._sort_var.set(self._cfg.get("sort_mode", "alphabetical"))
         self._chart_var.set(chart["name"])
+        # A saved chart carries its own class, so the program can differ from
+        # the one on screen a moment ago.
+        self._apply_program_defaults()
+        self._sync_program_ui()
         self._update_roster_label()
         layout = None
         try:
@@ -785,17 +1141,29 @@ class SeatingChartView(ttk.Frame):
         self._dirty = False
 
     def _apply_program_defaults(self):
-        """Choir and orchestra basically never need the band-specific seating
-        options, so leave 'separate percussion into a back row' and 'center the
-        tuba' OFF for them by default."""
-        if self.program_type in ("choir", "orchestra"):
+        """Turn off the options that belong to another program.
+
+        'Keep percussion in a back row' and 'center the tuba' are concert band
+        and nothing else — a strings class has no percussion section and no
+        tuba, and a choir has neither.  They are not offered to those programs
+        at all now, so leaving them ON would apply a band rule invisibly.
+        """
+        program, _level = self._chart_program()
+        if program == "orchestra" and self._is_symphony():
+            # Timpani and the rest stand behind the brass on every symphony
+            # chart, which is exactly what the separate percussion row draws.
+            self._cfg["separate_percussion"] = True
+            self._cfg["center_tuba"] = False
+        elif program != "band":
             self._cfg["separate_percussion"] = False
             self._cfg["center_tuba"] = False
 
     def _new_chart(self):
         self._chart_id = None
         self._cfg = _default_config()
+        self._apply_remembered_layout()
         self._apply_program_defaults()
+        self._sync_program_ui()
         self._name_var.set("Untitled Chart")
         self._sort_var.set(self._cfg["sort_mode"])
         self._chart_var.set("")
@@ -917,7 +1285,11 @@ class SeatingChartView(ttk.Frame):
         if not roster:
             Messagebox.show_info("Choose students first.", title="No Students", parent=self)
             return
-        options = instruments_for(self.program_type)
+        from ui.ensembles import seating_instruments
+        program, level = self._chart_program()
+        options = seating_instruments(program, level,
+                                      self._cfg.get("numbered_parts", False),
+                                      self._cfg.get("piano", False))
         dlg = _InstrumentDialog(self.winfo_toplevel(), roster,
                                 self._cfg.get("instrument_overrides") or {}, options)
         self.wait_window(dlg)
@@ -925,63 +1297,60 @@ class SeatingChartView(ttk.Frame):
             self._cfg["instrument_overrides"] = dlg.result
             self._regenerate()
 
-    def _edit_section_order(self):
-        roster = self._resolve_roster()
-        seen, uniq = set(), []
-        for s in roster:
-            inst = (s.get("instrument") or "").strip()
-            if inst and inst not in seen:
-                seen.add(inst)
-                uniq.append(inst)
-        if not uniq:
-            Messagebox.show_info("Choose students first.", title="No Sections", parent=self)
-            return
-        cur = self._cfg.get("section_order") or []
-        uniq.sort(key=lambda i: (cur.index(i) if i in cur else 999, sc.concert_rank(i), i))
-        n_rows = len(sc.parse_row_caps(self._cfg.get("row_caps") or "8"))
-        dlg = _SectionOrderDialog(self.winfo_toplevel(), uniq,
-                                  self._cfg.get("zones") or {}, n_rows,
-                                  self._cfg.get("side_zones") or {})
-        self.wait_window(dlg)
-        if dlg.result is not None:
-            self._ensure_sections_mode()
-            self._cfg["section_order"] = dlg.result.get("order", [])
-            self._cfg["zones"] = dlg.result.get("zones", {})
-            self._cfg["side_zones"] = dlg.result.get("side_zones", {})
-            self._regenerate()
-
     def _jazz_setup(self):
-        """Apply a jazz big-band layout to the current roster: saxes across the
-        front, bass-clef (trombones + horn/bari/tuba/bassoon/cello) behind, then
-        trumpets and any high winds/strings in the back — rhythm section on the
-        chosen side, the whole band packed toward it (empty chairs on the far
-        side).  Works as straight rows OR concert arcs."""
+        """Seat a jazz band by PART, as close to the standard chart as the
+        players allow.
+
+        Instrument grouping cannot produce a jazz chart: the front row reads
+        T1 A2 A1 T2 B, three instruments interleaved by part.  So the parts are
+        assigned (guessed, then corrected by the teacher) and the seats come
+        from those -- saxes across the front, bass-clef players on the trombone
+        parts behind them, trumpets and high winds at the back, with part 1 of
+        each row lined up behind the lead alto.
+        """
         roster = self._resolve_roster()
         if not roster:
-            Messagebox.show_info("Choose a group first.", title="No Students", parent=self)
+            Messagebox.show_info("Choose a group first.", title="No Students",
+                                 parent=self)
             return
-        dlg = _JazzSetupDialog(self.winfo_toplevel(),
+        parts = dict(self._cfg.get("jazz_parts") or {})
+        guess = sc.jazz_auto_parts(roster)
+        for s in roster:
+            parts.setdefault(str(s["id"]), guess.get(s["id"], ""))
+
+        dlg = _JazzSetupDialog(self.winfo_toplevel(), roster=roster, parts=parts,
                                side=self._cfg.get("jazz_side", "left"),
                                high_rows=int(self._cfg.get("jazz_high_rows", 1)),
                                view=self._cfg.get("view", "rows"))
         self.wait_window(dlg)
         if dlg.result is None:
             return
-        insts = [s.get("instrument") for s in roster if s.get("instrument")]
-        order, zones0, sides, caps = sc.jazz_layout(
-            insts, high_rows=dlg.result["high_rows"], rhythm_side=dlg.result["side"])
-        # cfg stores zones 1-based (the view converts back to 0-based per row count).
-        self._cfg["section_order"] = order
-        self._cfg["zones"] = {i: [r + 1 for r in rows] for i, rows in zones0.items()}
-        self._cfg["side_zones"] = sides
-        self._cfg["row_caps"] = ",".join(str(c) for c in caps)
-        self._cfg["view"] = dlg.result["view"]
-        self._cfg["separate_percussion"] = False   # keep drums/vibes in the layout
-        self._cfg["center_tuba"] = False           # don't re-center the low row
+
+        chosen = dlg.result["parts"]
+        self._cfg["jazz_parts"] = chosen
         self._cfg["jazz_side"] = dlg.result["side"]
         self._cfg["jazz_high_rows"] = dlg.result["high_rows"]
+        self._cfg["view"] = dlg.result["view"]
+        # A jazz chart is placed by hand, so none of the concert machinery
+        # applies: no zones, no percussion back row (the drummer is IN the
+        # band), no tuba centring, and the gaps on the far side are the point.
+        self._cfg["section_zones"] = {}
+        self._cfg["section_order"] = []
+        self._cfg["separate_percussion"] = False
+        self._cfg["center_tuba"] = False
+        self._cfg["close_gaps"] = False
+
+        pmap = {s["id"]: chosen.get(str(s["id"]), "") for s in roster}
+        rows, caps = sc.jazz_seating(roster, pmap, dlg.result["side"],
+                                     dlg.result["high_rows"])
+        self._cfg["row_caps"] = ",".join(str(c) for c in caps)
         self._ensure_sections_mode()
-        self._regenerate()
+        self._regenerate(from_layout={
+            "rows": [[(x["id"] if x else None) for x in row] for row in rows],
+            "perc": [],
+        })
+        self._dirty = True
+
 
     # ─────────────────────────────────────────────────────── AI assistant ────
 
@@ -1128,15 +1497,22 @@ class SeatingChartView(ttk.Frame):
 # ══════════════════════════════════════════════════════════════ dialogs ══════
 
 class _JazzSetupDialog(ttk.Toplevel):
-    """Options for a jazz big-band layout: which side the rhythm section is on
-    (and the band packs toward), how many rows the trumpets/high winds may use,
-    and straight rows vs. concert arcs."""
+    """Jazz big band: who is covering which PART, and how the stage is shaped.
 
-    def __init__(self, parent, side="left", high_rows=1, view="rows"):
+    A jazz chart is laid out by part, not by instrument -- the front row reads
+    T1 A2 A1 T2 B, which is three different instruments interleaved.  So the
+    window has to ask.  Every player is guessed from what they carry and the
+    teacher corrects the ones that matter; at middle school the second row is
+    whatever bass-clef players exist and the third row picks up flutes and
+    clarinets, all of them covering trombone and trumpet parts.
+    """
+
+    def __init__(self, parent, roster=None, parts=None, side="left",
+                 high_rows=1, view="rows"):
         super().__init__(master=parent)
         self.result = None
-        self.title("Jazz Setup")
-        self.resizable(False, False)
+        self._roster = list(roster or [])
+        self.title("Jazz Band Setup")
         self.grab_set()
         self.lift()
 
@@ -1145,66 +1521,138 @@ class _JazzSetupDialog(ttk.Toplevel):
         ttk.Label(hdr, text="🎷  Jazz Band Setup", font=("Segoe UI", 12, "bold"),
                   bootstyle=(INVERSE, INFO)).pack(pady=10, padx=16, anchor=W)
 
-        body = ttk.Frame(self)
-        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
-        ttk.Label(body,
-                  text="Saxes go across the front, trombones (and any other "
-                       "bass-clef players — horns, baritones, tubas, bassoons, "
-                       "cellos) behind them, trumpets (plus any clarinets, "
-                       "flutes, or strings) in the back. The rhythm section sits "
-                       "on the side you pick and the whole band packs toward it, "
-                       "leaving the empty chairs on the far side.",
-                  font=("Segoe UI", 9), wraplength=420, justify=LEFT).pack(anchor=W)
+        btn = ttk.Frame(self)
+        btn.pack(side=BOTTOM, fill=X, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Apply", bootstyle=SUCCESS,
+                   command=self._ok).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Guess again from instruments",
+                   bootstyle=(SECONDARY, OUTLINE),
+                   command=self._reguess).pack(side=LEFT, padx=4)
 
-        ttk.Label(body, text="Rhythm section on / pack toward:",
+        cols = ttk.Frame(self)
+        cols.pack(fill=BOTH, expand=True, padx=16, pady=(10, 0))
+        left = ttk.Frame(cols)
+        left.pack(side=LEFT, fill=BOTH, expand=True, anchor=N)
+        ttk.Separator(cols, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=14)
+        right = ttk.Frame(cols)
+        right.pack(side=LEFT, fill=BOTH, expand=True, anchor=N)
+
+        # ── LEFT: the stage ──────────────────────────────────────────────
+        ttk.Label(left, text="The stage", font=("Segoe UI", 10, "bold")).pack(anchor=W)
+        ttk.Label(left,
+                  text="Saxes across the front in part order, bass-clef players "
+                       "behind them on the trombone parts, trumpets (plus any "
+                       "flutes, clarinets or strings) at the back. Part 1 of "
+                       "each row lines up behind the lead alto. The rhythm "
+                       "section sits on the side you pick.",
+                  font=("Segoe UI", 9), wraplength=320,
+                  justify=LEFT).pack(anchor=W, pady=(2, 0))
+
+        ttk.Label(left, text="Rhythm section on:",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 0))
         self._side = tk.StringVar(value=side if side in ("left", "right") else "left")
-        srow = ttk.Frame(body)
+        srow = ttk.Frame(left)
         srow.pack(fill=X)
         ttk.Radiobutton(srow, text="Left side", value="left",
                         variable=self._side).pack(side=LEFT, padx=(0, 12))
         ttk.Radiobutton(srow, text="Right side", value="right",
                         variable=self._side).pack(side=LEFT)
-        ttk.Label(body, text="(Flip this if the projected chart ends up mirrored "
-                             "from your room.)",
+        ttk.Label(left, text="(Flip this if the chart comes out mirrored from "
+                             "your room.)",
                   font=("Segoe UI", 8), foreground=muted_fg(),
-                  wraplength=420, justify=LEFT).pack(anchor=W)
+                  wraplength=320, justify=LEFT).pack(anchor=W)
 
-        ttk.Label(body, text="Back rows (trumpets + high winds/strings):",
+        ttk.Label(left, text="Trumpet parts use:",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 0))
         self._high = tk.IntVar(value=2 if int(high_rows or 1) >= 2 else 1)
-        hrow = ttk.Frame(body)
+        hrow = ttk.Frame(left)
         hrow.pack(fill=X)
         ttk.Radiobutton(hrow, text="One row", value=1,
                         variable=self._high).pack(side=LEFT, padx=(0, 12))
-        ttk.Radiobutton(hrow, text="Two rows (split the trumpet row)", value=2,
+        ttk.Radiobutton(hrow, text="Two rows", value=2,
                         variable=self._high).pack(side=LEFT)
 
-        ttk.Label(body, text="Shape:", font=("Segoe UI", 9, "bold")).pack(
+        ttk.Label(left, text="Shape:", font=("Segoe UI", 9, "bold")).pack(
             anchor=W, pady=(10, 0))
         self._view = tk.StringVar(value=view if view in ("rows", "arcs") else "rows")
-        vrow = ttk.Frame(body)
+        vrow = ttk.Frame(left)
         vrow.pack(fill=X)
         ttk.Radiobutton(vrow, text="Straight rows (jazz)", value="rows",
                         variable=self._view).pack(side=LEFT, padx=(0, 12))
         ttk.Radiobutton(vrow, text="Concert arcs", value="arcs",
                         variable=self._view).pack(side=LEFT)
 
-        btn = ttk.Frame(self)
-        btn.pack(fill=X, padx=16, pady=12)
-        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
-                   command=self.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(btn, text="Apply", bootstyle=SUCCESS,
-                   command=self._ok).pack(side=RIGHT, padx=4)
+        # ── RIGHT: who plays what part ───────────────────────────────────
+        ttk.Label(right, text="Who is covering which part",
+                  font=("Segoe UI", 10, "bold")).pack(anchor=W)
+        ttk.Label(right, text="Guessed from their instrument. Change any of "
+                              "them — what you set here is what gets seated.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=320, justify=LEFT).pack(anchor=W, pady=(0, 4))
+
+        box = ttk.Frame(right)
+        box.pack(fill=BOTH, expand=True)
+        canvas = tk.Canvas(box, highlightthickness=0, width=330, height=320)
+        sb = ttk.Scrollbar(box, orient=VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side=RIGHT, fill=Y)
+        canvas.pack(side=LEFT, fill=BOTH, expand=True)
+        table = ttk.Frame(canvas)
+        win = canvas.create_window((0, 0), window=table, anchor=NW)
+        table.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
+
+        def _wheel(event):
+            try:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except tk.TclError:
+                pass
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        options = [""] + sc.jazz_part_options()
+        self._vars = {}
+        parts = parts or {}
+        for i, s in enumerate(self._roster):
+            row = ttk.Frame(table)
+            row.pack(fill=X, pady=1)
+            ttk.Label(row, text=(s.get("name") or "")[:16], width=16,
+                      font=("Segoe UI", 9)).pack(side=LEFT)
+            ttk.Label(row, text=(s.get("instrument") or "")[:14], width=14,
+                      font=("Segoe UI", 8),
+                      foreground=muted_fg()).pack(side=LEFT)
+            v = tk.StringVar(value=parts.get(str(s["id"]), ""))
+            self._vars[str(s["id"])] = v
+            ttk.Combobox(row, textvariable=v, values=options, width=8,
+                         state="readonly").pack(side=LEFT, padx=(4, 0))
+        if not self._roster:
+            ttk.Label(table, text="Choose a group first.",
+                      font=("Segoe UI", 9),
+                      foreground=muted_fg()).pack(anchor=W, pady=8)
 
         from ui.theme import fit_window
-        fit_window(self, 470, 470)
+        fit_window(self, 780, 560)
+
+    def _reguess(self):
+        """Throw away the hand edits and guess the lot again."""
+        guess = sc.jazz_auto_parts(self._roster)
+        for s in self._roster:
+            v = self._vars.get(str(s["id"]))
+            if v is not None:
+                v.set(guess.get(s["id"], ""))
 
     def _ok(self):
-        self.result = {"side": self._side.get(),
-                       "high_rows": int(self._high.get()),
-                       "view": self._view.get()}
+        self.result = {
+            "side": self._side.get(),
+            "high_rows": int(self._high.get()),
+            "view": self._view.get(),
+            "parts": {k: v.get() for k, v in self._vars.items() if v.get()},
+        }
         self.destroy()
+
 
 
 class _StudentPicker(ttk.Toplevel):
@@ -1326,7 +1774,10 @@ class _ConflictsDialog(ttk.Toplevel):
         ttk.Combobox(add, textvariable=self._b, values=names, width=16, state="readonly").pack(side=LEFT)
         ttk.Button(add, text="Add", bootstyle=SUCCESS, command=self._add).pack(side=LEFT, padx=6)
 
-        self._list = tk.Listbox(body, height=8)
+        # exportselection=False everywhere a list shares a window with a box
+        # you type in: otherwise the list loses its highlight to the box and
+        # "Remove Selected" quietly removes nothing.
+        self._list = tk.Listbox(body, height=8, exportselection=False)
         self._list.pack(fill=BOTH, expand=True, pady=(8, 4))
         ttk.Button(body, text="Remove Selected", bootstyle=(DANGER, OUTLINE),
                    command=self._remove).pack(anchor=W)
@@ -1399,7 +1850,7 @@ class _PinsDialog(ttk.Toplevel):
                   font=("Segoe UI", 8), foreground=muted_fg(), wraplength=460,
                   justify=LEFT).pack(anchor=W, pady=(4, 0))
 
-        self._list = tk.Listbox(body, height=8)
+        self._list = tk.Listbox(body, height=8, exportselection=False)
         self._list.pack(fill=BOTH, expand=True, pady=(8, 4))
         ttk.Button(body, text="Remove Selected", bootstyle=(DANGER, OUTLINE),
                    command=self._remove).pack(anchor=W)
@@ -1521,149 +1972,6 @@ class _InstrumentDialog(ttk.Toplevel):
         self.destroy()
 
 
-class _SectionOrderDialog(ttk.Toplevel):
-    """Reorder the instrument sections (front-to-back placement order) and
-    optionally lock a section to specific rows (a zone).  Move a section up to
-    seat it closer to the front, or type e.g. “4” to keep flutes in the back row.
-    """
-
-    def __init__(self, parent, instruments, zones, n_rows, side_zones=None):
-        super().__init__(master=parent)
-        self.result = None
-        self.n_rows = n_rows
-        self._zones = {i: list(zones.get(i, [])) for i in instruments}
-        self._sides = {i: (side_zones or {}).get(i, "") for i in instruments}
-        self.title("Concert Setup")
-        self.grab_set()
-        self.lift()
-
-        hdr = ttk.Frame(self, bootstyle=PRIMARY)
-        hdr.pack(fill=X)
-        ttk.Label(hdr, text="🎼 Concert Setup", font=("Segoe UI", 12, "bold"),
-                  bootstyle=(INVERSE, PRIMARY)).pack(pady=10, padx=16, anchor=W)
-        ttk.Label(self, text=f"Place sections in performance positions. Top of the list = "
-                             f"frontmost. A “row zone” locks a section to specific rows "
-                             f"(1–{n_rows}, front to back; e.g. 4 = back row). “Stage side” "
-                             f"pins a section left or right as the audience sees it.",
-                  font=("Segoe UI", 9), wraplength=400,
-                  justify=LEFT).pack(anchor=W, padx=16, pady=(6, 0))
-
-        body = ttk.Frame(self)
-        body.pack(fill=BOTH, expand=True, padx=16, pady=8)
-        self._instruments = list(instruments)
-        self._list = tk.Listbox(body, height=12, activestyle="dotbox")
-        self._list.pack(side=LEFT, fill=BOTH, expand=True)
-        self._list.bind("<<ListboxSelect>>", lambda e: self._on_select())
-        side = ttk.Frame(body)
-        side.pack(side=LEFT, fill=Y, padx=(8, 0))
-        ttk.Button(side, text="▲ Up", bootstyle=(SECONDARY, OUTLINE),
-                   command=lambda: self._move(-1)).pack(fill=X, pady=2)
-        ttk.Button(side, text="▼ Down", bootstyle=(SECONDARY, OUTLINE),
-                   command=lambda: self._move(1)).pack(fill=X, pady=2)
-        ttk.Label(side, text="Row zone:", font=("Segoe UI", 8, "bold")).pack(anchor=W, pady=(10, 0))
-        self._zone_var = tk.StringVar()
-        ttk.Entry(side, textvariable=self._zone_var, width=8).pack(anchor=W)
-        ttk.Button(side, text="Set zone", bootstyle=(INFO, OUTLINE),
-                   command=self._set_zone).pack(fill=X, pady=(2, 0))
-        ttk.Button(side, text="Clear zone", bootstyle=(SECONDARY, OUTLINE),
-                   command=self._clear_zone).pack(fill=X, pady=(2, 0))
-        ttk.Label(side, text="Stage side:", font=("Segoe UI", 8, "bold")).pack(anchor=W, pady=(10, 0))
-        self._side_var = tk.StringVar(value="")
-        ttk.Combobox(side, textvariable=self._side_var, width=7, state="readonly",
-                     values=["", "left", "right"]).pack(anchor=W)
-        ttk.Button(side, text="Set side", bootstyle=(INFO, OUTLINE),
-                   command=self._set_side).pack(fill=X, pady=(2, 0))
-        ttk.Label(side, text="(audience view)", font=("Segoe UI", 7),
-                  foreground=muted_fg()).pack(anchor=W)
-
-        self._refresh_list()
-
-        btn = ttk.Frame(self)
-        btn.pack(fill=X, padx=16, pady=12)
-        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
-                   command=self.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(btn, text="Apply", bootstyle=SUCCESS, command=self._ok).pack(side=RIGHT, padx=4)
-        ttk.Button(btn, text="Clear concert setup", bootstyle=(WARNING, OUTLINE),
-                   command=self._reset).pack(side=LEFT, padx=4)
-
-        from ui.theme import fit_window
-        fit_window(self, 470, 480)
-
-    def _refresh_list(self, select_idx=None):
-        self._list.delete(0, END)
-        for inst in self._instruments:
-            z = self._zones.get(inst)
-            sd = self._sides.get(inst)
-            tag = ""
-            if z:
-                tag += f"  → rows {','.join(str(x) for x in z)}"
-            if sd:
-                tag += f"  → {sd}"
-            self._list.insert(END, f"{inst}{tag}")
-        self._list.selection_clear(0, END)
-        if select_idx is not None and 0 <= select_idx < len(self._instruments):
-            self._list.selection_set(select_idx)
-            self._list.activate(select_idx)
-            self._list.see(select_idx)
-
-    def _on_select(self):
-        sel = self._list.curselection()
-        if sel:
-            inst = self._instruments[sel[0]]
-            self._zone_var.set(",".join(str(x) for x in self._zones.get(inst, [])))
-            self._side_var.set(self._sides.get(inst, ""))
-
-    def _set_side(self):
-        sel = self._list.curselection()
-        if not sel:
-            return
-        i = sel[0]
-        self._sides[self._instruments[i]] = self._side_var.get()
-        self._refresh_list(i)
-
-    def _move(self, delta):
-        sel = self._list.curselection()
-        if not sel:
-            return
-        i = sel[0]
-        j = i + delta
-        if j < 0 or j >= len(self._instruments):
-            return
-        self._instruments[i], self._instruments[j] = self._instruments[j], self._instruments[i]
-        self._refresh_list(j)
-
-    def _set_zone(self):
-        sel = self._list.curselection()
-        if not sel:
-            return
-        i = sel[0]
-        inst = self._instruments[i]
-        rows = []
-        for part in self._zone_var.get().replace(";", ",").split(","):
-            part = part.strip()
-            if part.isdigit() and 1 <= int(part) <= self.n_rows:
-                rows.append(int(part))
-        self._zones[inst] = sorted(set(rows))
-        self._refresh_list(i)
-
-    def _clear_zone(self):
-        sel = self._list.curselection()
-        if sel:
-            i = sel[0]
-            self._zones[self._instruments[i]] = []
-            self._refresh_list(i)
-
-    def _reset(self):
-        self.result = {"order": [], "zones": {}, "side_zones": {}}
-        self.destroy()
-
-    def _ok(self):
-        zones = {i: z for i, z in self._zones.items() if z}
-        sides = {i: s for i, s in self._sides.items() if s in ("left", "right")}
-        self.result = {"order": list(self._instruments), "zones": zones, "side_zones": sides}
-        self.destroy()
-
-
 _SORT_WORDS = {
     "alphabetical_first": "alpha by first name",
     "alphabetical": "alpha by last name",
@@ -1743,14 +2051,24 @@ class _LoadDialog(ttk.Toplevel):
 
 
 class _ShufflePrompt(ttk.Toplevel):
-    def __init__(self, parent, on_all, on_members, on_sections,
+    """The four kinds of shuffle, which are four different questions.
+
+    Each stands alone.  "Shuffle within sections" shuffles inside every section
+    wherever that section currently sits -- the default concert layout, a zone
+    set by hand, or one a section shuffle landed on; it never needs another
+    shuffle run first.  That is also what lets the two chain: shuffle the
+    sections into new parts of the room, then shuffle within them, and you get
+    an arrangement nobody has sat in before.
+    """
+
+    def __init__(self, parent, on_all, on_members, on_sections, on_groups=None,
                  on_clear_setup=None, has_setup=False):
         super().__init__(master=parent)
         self.title("Shuffle")
         self.grab_set()
         self.lift()
-        ttk.Label(self, text="🔀  Shuffle", font=("Segoe UI", 13, "bold"),
-                  bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(14, 8))
+        ttk.Label(self, text="\U0001f500  Shuffle", font=("Segoe UI", 13, "bold"),
+                  bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(14, 4))
         ttk.Label(self, text="What would you like to shuffle?",
                   font=("Segoe UI", 10)).pack(anchor=W, padx=16)
         body = ttk.Frame(self)
@@ -1767,32 +2085,51 @@ class _ShufflePrompt(ttk.Toplevel):
         def make(text, desc, cb):
             f = ttk.Frame(body)
             f.pack(fill=X, pady=4)
-            ttk.Button(f, text=text, bootstyle=SUCCESS, width=24,
-                       command=lambda: run(cb)).pack(side=LEFT)
-            ttk.Label(f, text=desc, font=("Segoe UI", 9), wraplength=230,
+            ttk.Button(f, text=text, bootstyle=SUCCESS, width=26,
+                       command=lambda: run(cb)).pack(side=LEFT, anchor=N)
+            ttk.Label(f, text=desc, font=("Segoe UI", 9), wraplength=300,
                       justify=LEFT).pack(side=LEFT, padx=8)
 
-        make("Shuffle all students", "Everyone gets a new seat and new neighbors, every click.",
+        make("Shuffle everyone",
+             "A brand new seat and new neighbours for every student, every "
+             "click. Keep-apart pairs and accommodations are still obeyed.",
              on_all)
-        make("Shuffle within sections", "Keep sections where they are; change who sits by whom.",
-             on_members)
-        make("Shuffle section placement", "Move whole sections to different parts of the room.",
+        make("Shuffle section placement",
+             "Move whole sections to different parts of the room, at random. "
+             "The people inside each section stay in their order.",
              on_sections)
+        make("Shuffle within sections",
+             "Change who sits by whom INSIDE each section, leaving every "
+             "section exactly where it is — wherever that is. Use it on "
+             "its own, or after the one above to re-mix the people without "
+             "disturbing the room you just made.",
+             on_members)
+        if on_groups is not None:
+            make("Shuffle into 2s and 3s",
+                 "Break the band into pairs of the same part (a three only "
+                 "where a section is odd), spread around the room so no "
+                 "section re-forms. A section of one buddies up with the "
+                 "nearest sound \u2014 a lone bassoon with a lone tuba.",
+                 on_groups)
 
         if has_setup:
             ttk.Separator(body).pack(fill=X, pady=(8, 4))
-            ttk.Checkbutton(body, text="Also clear Concert Setup (section order, row zones, "
-                                       "stage sides) so nothing stays pinned",
+            ttk.Checkbutton(body, text="Start from standard concert seating "
+                                       "(drop the zones first)",
                             variable=self._clear, bootstyle=WARNING).pack(anchor=W)
-            ttk.Label(body, text="Otherwise, sections locked to a zone or stage side stay put "
-                                 "and everything else moves.",
+            ttk.Label(body, text="Otherwise a section with a zone stays in it "
+                                 "and everything else moves around it.  There "
+                                 "is a \u201cStandard concert seating\u201d "
+                                 "button in Configuration too, if that is all "
+                                 "you want.",
                       font=("Segoe UI", 8), foreground=muted_fg(),
                       wraplength=430, justify=LEFT).pack(anchor=W, pady=(2, 0))
 
         ttk.Button(self, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
                    command=self.destroy).pack(side=RIGHT, padx=16, pady=(0, 12))
         from ui.theme import fit_window
-        fit_window(self, 500, 380 if has_setup else 300)
+        fit_window(self, 620, 480 if has_setup else 420)
+
 
 
 class _GroupDialog(ttk.Toplevel):
@@ -1915,109 +2252,391 @@ class _GroupDialog(ttk.Toplevel):
         self.destroy()
 
 
-class _SetupDialog(ttk.Toplevel):
-    """View / rows / color / section-placement setup window."""
+class _ConfigurationDialog(ttk.Toplevel):
+    """Everything about the CHART, in one window, in two columns.
 
-    def __init__(self, parent, cfg, concert):
+    This was three windows: "Set Up" (view, rows, colors), "Concert Setup"
+    (section order and row zones) and half of "Student Set Up" (names).  Three
+    buttons with near-identical names sat within an inch of each other and
+    nothing said which was which.
+
+    Two columns rather than one long scroll, because the concert seating was
+    below the fold in a single column and a teacher who did not think to scroll
+    concluded it had been taken away.  Nothing here is worth hiding.
+
+    What is offered depends on the class being seated.  A strings class is not
+    shown 'keep percussion in a back row' -- it has no percussion section, and
+    an option that cannot apply is worse than a missing one.
+    """
+
+    def __init__(self, parent, cfg, program, level, sections=None):
         super().__init__(master=parent)
         self.result = None
+        self._program = program
+        self._level = level
+        self.title("Configuration")
+        self.grab_set()
+        self.lift()
+
+        hdr = ttk.Frame(self, bootstyle=PRIMARY)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text="⚙  Configuration", font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, PRIMARY)).pack(pady=10, padx=16, anchor=W)
+
+        btn = ttk.Frame(self)
+        btn.pack(side=BOTTOM, fill=X, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Apply", bootstyle=SUCCESS,
+                   command=self._ok).pack(side=RIGHT, padx=4)
+
+        cols = ttk.Frame(self)
+        cols.pack(fill=BOTH, expand=True, padx=16, pady=(10, 0))
+        left = ttk.Frame(cols)
+        left.pack(side=LEFT, fill=BOTH, expand=True, anchor=N)
+        ttk.Separator(cols, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=14)
+        right = ttk.Frame(cols)
+        right.pack(side=LEFT, fill=BOTH, expand=True, anchor=N)
+
+        def head(parent, t, top=12):
+            ttk.Label(parent, text=t, font=("Segoe UI", 10, "bold")).pack(
+                anchor=W, pady=(top, 2))
+
+        # -- LEFT: how the chart looks -----------------------------------
+        head(left, "Layout", top=0)
+        self._view = tk.StringVar(value=cfg.get("view", "rows"))
+        vf = ttk.Frame(left); vf.pack(fill=X)
+        ttk.Radiobutton(vf, text="Rows", value="rows",
+                        variable=self._view).pack(side=LEFT)
+        ttk.Radiobutton(vf, text="Arcs", value="arcs",
+                        variable=self._view).pack(side=LEFT, padx=(12, 0))
+
+        ttk.Label(left, text="Front of the room is",
+                  font=("Segoe UI", 9)).pack(anchor=W, pady=(8, 0))
+        self._front = tk.StringVar(value="bottom" if cfg.get("flip") else "top")
+        ff = ttk.Frame(left); ff.pack(fill=X)
+        ttk.Radiobutton(ff, text="Top", value="top",
+                        variable=self._front).pack(side=LEFT)
+        ttk.Radiobutton(ff, text="Bottom", value="bottom",
+                        variable=self._front).pack(side=LEFT, padx=(12, 0))
+
+        ttk.Label(left, text="Seats in each row (front → back)",
+                  font=("Segoe UI", 9)).pack(anchor=W, pady=(8, 0))
+        ttk.Label(left, text="Leave a box blank to remove that row.",
+                  font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W)
+        caps = sc.parse_row_caps(cfg.get("row_caps") or "8")
+        self._rows = []
+        rowsf = ttk.Frame(left); rowsf.pack(fill=X, pady=(2, 0))
+        # Two per line: six stacked boxes were most of the window's height.
+        line = None
+        for i in range(6):
+            if i % 2 == 0:
+                line = ttk.Frame(rowsf); line.pack(fill=X, pady=1)
+            ttk.Label(line, text="Row %d:" % (i + 1), width=7).pack(side=LEFT)
+            v = tk.StringVar(value=str(caps[i]) if i < len(caps) else "")
+            self._rows.append(v)
+            ttk.Entry(line, textvariable=v, width=5).pack(side=LEFT, padx=(0, 12))
+
+        head(left, "Colors and names")
+        self._color = tk.StringVar(value=cfg.get("color_mode", "none"))
+        cf = ttk.Frame(left); cf.pack(fill=X)
+        ttk.Radiobutton(cf, text="By row", value="row",
+                        variable=self._color).pack(side=LEFT)
+        ttk.Radiobutton(cf, text="By section", value="section",
+                        variable=self._color).pack(side=LEFT, padx=(12, 0))
+        ttk.Radiobutton(cf, text="None", value="none",
+                        variable=self._color).pack(side=LEFT, padx=(12, 0))
+
+        self._showinst = tk.BooleanVar(value=cfg.get("show_instrument", True))
+        ttk.Checkbutton(left, text="Show instrument under each name",
+                        variable=self._showinst,
+                        bootstyle=INFO).pack(anchor=W, pady=(6, 0))
+        self._name_display = tk.StringVar(value=cfg.get("name_display", "first"))
+        for val, txt in [
+                ("first", "First name only (last initial only if two share it)"),
+                ("last_initial", "Show all last-name initials"),
+                ("last_full", "Show full last names")]:
+            ttk.Radiobutton(left, text=txt, value=val,
+                            variable=self._name_display).pack(anchor=W)
+
+        head(left, "Section placement")
+        self._close = tk.BooleanVar(value=cfg.get("close_gaps", True))
+        ttk.Checkbutton(left, text="No empty chairs inside the ensemble",
+                        variable=self._close, bootstyle=INFO).pack(anchor=W)
+        ttk.Label(left, text="Closes up gaps between sections and leaves the "
+                             "spare chairs at the outside ends and the back.",
+                  font=("Segoe UI", 8),
+                  foreground=muted_fg()).pack(anchor=W, pady=(0, 4))
+        self._perc = tk.BooleanVar(value=cfg.get("separate_percussion", True))
+        self._tuba = tk.BooleanVar(value=cfg.get("center_tuba", True))
+        self._bass = tk.BooleanVar(value=cfg.get("bass_corner", True))
+        self._bass_side = tk.StringVar(value=cfg.get("bass_corner_side", "right"))
+        self._parts = tk.BooleanVar(value=cfg.get("numbered_parts", False))
+        self._piano = tk.BooleanVar(value=cfg.get("piano", False))
+
+        if program == "band":
+            ttk.Checkbutton(left, text="Keep percussion in a back row",
+                            variable=self._perc, bootstyle=INFO).pack(anchor=W)
+            ttk.Checkbutton(left, text="Keep tuba in the middle of the back row",
+                            variable=self._tuba, bootstyle=INFO).pack(anchor=W)
+        elif program == "orchestra":
+            bf = ttk.Frame(left); bf.pack(fill=X)
+            ttk.Checkbutton(bf, text="Keep string basses in the back corner",
+                            variable=self._bass, bootstyle=INFO).pack(side=LEFT)
+            ttk.Combobox(bf, textvariable=self._bass_side, width=6,
+                         state="readonly",
+                         values=["right", "left"]).pack(side=LEFT, padx=(8, 0))
+            ttk.Label(left, text="Which corner, as the audience sees it. "
+                                 "Right is the usual one.",
+                      font=("Segoe UI", 8),
+                      foreground=muted_fg()).pack(anchor=W)
+            if level != "elementary":
+                ttk.Checkbutton(left, text="Expand to Violin 1 / Violin 2",
+                                variable=self._parts,
+                                bootstyle=INFO).pack(anchor=W, pady=(6, 0))
+            ttk.Checkbutton(left, text="This group has a piano",
+                            variable=self._piano, bootstyle=INFO).pack(anchor=W)
+        else:
+            ttk.Label(left, text="A choir seats by voice part; there are no "
+                                 "extra placement rules.",
+                      font=("Segoe UI", 8),
+                      foreground=muted_fg()).pack(anchor=W)
+
+        # -- RIGHT: concert seating --------------------------------------
+        head(right, "Concert seating", top=0)
+        self._sections = list(sections or [])
+        self._zones = {i: (cfg.get("section_zones") or {}).get(i, "")
+                       for i in self._sections}
+        self._last_sel = None
+        self._had_placement = bool(cfg.get("section_order")
+                                   or cfg.get("section_zones"))
+        self._touched = False
+        self._cleared = False
+
+        self._zone_legend(right)
+
+        if not self._sections:
+            ttk.Label(right, text="Choose a group first, and the sections in it "
+                                  "appear here to place.",
+                      font=("Segoe UI", 9), foreground=muted_fg(),
+                      wraplength=300, justify=LEFT).pack(anchor=W, pady=(8, 0))
+            self._list = None
+        else:
+            ttk.Label(right, text="Give a section a zone, or leave it blank to "
+                                  "let it flow.  Top of the list is seated "
+                                  "first, nearest the front.",
+                      font=("Segoe UI", 8), foreground=muted_fg(),
+                      wraplength=300, justify=LEFT).pack(anchor=W, pady=(6, 2))
+            sec = ttk.Frame(right); sec.pack(fill=BOTH, expand=True)
+            # exportselection=False: with Tk's default the list DROPS its
+            # selection the moment a box beside it takes focus, which is why
+            # setting a zone used to do nothing at all.
+            self._list = tk.Listbox(sec, height=9, activestyle="dotbox",
+                                    exportselection=False, width=30)
+            self._list.pack(side=LEFT, fill=BOTH, expand=True)
+            self._list.bind("<<ListboxSelect>>", lambda e: self._on_select())
+            side = ttk.Frame(sec); side.pack(side=LEFT, fill=Y, padx=(8, 0))
+            ttk.Button(side, text="▲ Up", bootstyle=(SECONDARY, OUTLINE),
+                       command=lambda: self._move(-1)).pack(fill=X, pady=2)
+            ttk.Button(side, text="▼ Down", bootstyle=(SECONDARY, OUTLINE),
+                       command=lambda: self._move(1)).pack(fill=X, pady=2)
+            ttk.Label(side, text="Zone:",
+                      font=("Segoe UI", 8, "bold")).pack(anchor=W, pady=(10, 0))
+            self._zone_var = tk.StringVar(value="")
+            ttk.Combobox(side, textvariable=self._zone_var, width=20,
+                         state="readonly",
+                         values=[""] + [sc.ZONE_LABELS[z] for z in sorted(sc.ZONE_LABELS)]
+                         ).pack(anchor=W)
+            ttk.Button(side, text="Set zone", bootstyle=(INFO, OUTLINE),
+                       command=self._set_zone).pack(fill=X, pady=(4, 0))
+            ttk.Button(side, text="Clear zone", bootstyle=(SECONDARY, OUTLINE),
+                       command=self._clear_zone).pack(fill=X, pady=(2, 0))
+            ttk.Button(right, text="\u21ba  Standard concert seating",
+                       bootstyle=(INFO, OUTLINE),
+                       command=self._clear_placement).pack(anchor=W, pady=(8, 2))
+            ttk.Label(right, text="Puts every section back in normal concert "
+                                  "order, front to back, and removes the zones "
+                                  "above.",
+                      font=("Segoe UI", 8), foreground=muted_fg(),
+                      wraplength=300, justify=LEFT).pack(anchor=W)
+            self._refresh_list(0)
+
+        from ui.theme import fit_window
+        fit_window(self, 880, 560)
+
+    def _zone_legend(self, parent):
+        """The nine zones drawn as the room, so the numbers need no explaining."""
+        box = ttk.Labelframe(parent, text=" The nine zones ", padding=8)
+        box.pack(fill=X)
+        ttk.Label(box, text="Front of the room at the top, as the audience sees it.",
+                  font=("Segoe UI", 8),
+                  foreground=muted_fg()).grid(row=0, column=0, columnspan=4,
+                                              sticky=W, pady=(0, 4))
+        for c, t in enumerate(sc.ZONE_SIDES):
+            ttk.Label(box, text=t, font=("Segoe UI", 8),
+                      foreground=muted_fg()).grid(row=1, column=c + 1, padx=6)
+        for r, depth in enumerate(sc.ZONE_DEPTHS):
+            ttk.Label(box, text=depth, font=("Segoe UI", 8, "bold")).grid(
+                row=r + 2, column=0, sticky=W, padx=(0, 6), pady=2)
+            for c in range(3):
+                ttk.Label(box, text=str(r * 3 + c + 1),
+                          font=("Segoe UI", 11, "bold"),
+                          bootstyle=INFO, anchor=CENTER, width=4,
+                          relief="solid", borderwidth=1).grid(
+                              row=r + 2, column=c + 1, padx=6, pady=2)
+
+    # -- section list helpers --------------------------------------------
+    def _n_rows(self):
+        """How many rows there are RIGHT NOW - read from the boxes, not from
+        the config, so a zone means the layout being edited."""
+        n = len([v for v in self._rows
+                 if v.get().strip().isdigit() and int(v.get()) > 0])
+        return n or 1
+
+    def _selected(self):
+        """The section being edited, falling back to the last one clicked: a
+        listbox can lose its highlight to whatever takes focus next, and losing
+        the highlight must not mean losing the click."""
+        sel = self._list.curselection() if self._list else ()
+        if sel:
+            self._last_sel = sel[0]
+            return sel[0]
+        if self._last_sel is not None and self._last_sel < len(self._sections):
+            return self._last_sel
+        return None
+
+    def _need_selection(self):
+        Messagebox.show_info("Click a section in the list first.",
+                             title="No Section Chosen", parent=self)
+
+    def _refresh_list(self, select_idx=None):
+        self._list.delete(0, END)
+        for inst in self._sections:
+            z = self._zones.get(inst)
+            self._list.insert(END, inst + ("   →  zone %s" % z if z else ""))
+        self._list.selection_clear(0, END)
+        if select_idx is not None and 0 <= select_idx < len(self._sections):
+            self._list.selection_set(select_idx)
+            self._list.activate(select_idx)
+            self._list.see(select_idx)
+            self._last_sel = select_idx
+            self._on_select()
+
+    def _on_select(self):
+        sel = self._list.curselection()
+        if not sel:
+            return
+        self._last_sel = sel[0]
+        z = self._zones.get(self._sections[sel[0]])
+        self._zone_var.set(sc.ZONE_LABELS.get(z, "") if z else "")
+
+    def _mark(self):
+        self._touched = True
+        self._cleared = False
+
+    def _move(self, delta):
+        i = self._selected()
+        if i is None:
+            return self._need_selection()
+        j = i + delta
+        if j < 0 or j >= len(self._sections):
+            return
+        self._sections[i], self._sections[j] = self._sections[j], self._sections[i]
+        self._mark()
+        self._refresh_list(j)
+
+    def _set_zone(self):
+        i = self._selected()
+        if i is None:
+            return self._need_selection()
+        label = self._zone_var.get()
+        zone = next((z for z, t in sc.ZONE_LABELS.items() if t == label), None)
+        self._zones[self._sections[i]] = zone or ""
+        self._mark()
+        self._refresh_list(i)
+
+    def _clear_zone(self):
+        i = self._selected()
+        if i is None:
+            return self._need_selection()
+        self._zones[self._sections[i]] = ""
+        self._zone_var.set("")
+        self._mark()
+        self._refresh_list(i)
+
+    def _clear_placement(self):
+        """Back to standard concert seating: sections in their normal
+        front-to-back order and no zones on any of them."""
+        self._sections.sort(key=lambda i: (sc.concert_rank(i), i))
+        self._zones = {i: "" for i in self._sections}
+        self._zone_var.set("")
+        self._touched = True
+        self._cleared = True
+        self._refresh_list(0)
+
+    def _ok(self):
+        caps = [v.get().strip() for v in self._rows
+                if v.get().strip().isdigit() and int(v.get()) > 0]
+        out = {
+            "view": self._view.get(),
+            "flip": self._front.get() == "bottom",
+            "row_caps": ",".join(caps) if caps else "8",
+            "color_mode": self._color.get(),
+            "show_instrument": self._showinst.get(),
+            "name_display": self._name_display.get(),
+            "separate_percussion": self._perc.get() if self._program == "band" else False,
+            "center_tuba": self._tuba.get() if self._program == "band" else False,
+            "bass_corner": self._bass.get(),
+            "bass_corner_side": self._bass_side.get(),
+            "numbered_parts": self._parts.get(),
+            "piano": self._piano.get(),
+            "close_gaps": self._close.get(),
+        }
+        # Only write a placement if they made one.  Opening Configuration to
+        # change a color must not stamp an order on the chart: "the teacher has
+        # placed sections themselves" is what switches off a program's default
+        # layout, so an order nobody asked for would quietly take an orchestra's
+        # violins off stage right.
+        if self._list is not None and (self._touched or self._had_placement):
+            if self._cleared:
+                out["section_order"] = []
+                out["section_zones"] = {}
+            else:
+                out["section_order"] = list(self._sections)
+                out["section_zones"] = {i: int(z)
+                                        for i, z in self._zones.items() if z}
+        self.result = out
+        self.destroy()
+
+
+
+class _StudentSetupDialog(ttk.Toplevel):
+    """The rules that belong to individual STUDENTS: who cannot sit together,
+    who needs a particular row or an empty seat beside them, and who plays
+    something other than what the roster says.
+
+    How the chart itself looks -- rows, colors, names, section placement --
+    moved to Configuration.  This window used to hold half of each, which is
+    why neither its name nor "Set Up" told anyone which one to open.
+    """
+
+    def __init__(self, parent, view, roster):
+        super().__init__(master=parent)
+        self._view = view
         self.title("Set Up")
         self.grab_set()
         self.lift()
 
         hdr = ttk.Frame(self, bootstyle=PRIMARY)
         hdr.pack(fill=X)
-        ttk.Label(hdr, text="⚙  Set Up", font=("Segoe UI", 12, "bold"),
+        ttk.Label(hdr, text="👤  Set Up", font=("Segoe UI", 12, "bold"),
                   bootstyle=(INVERSE, PRIMARY)).pack(pady=10, padx=16, anchor=W)
 
         body = ttk.Frame(self)
         body.pack(fill=BOTH, expand=True, padx=16, pady=10)
-
-        ttk.Label(body, text="View", font=("Segoe UI", 10, "bold")).pack(anchor=W)
-        self._view = tk.StringVar(value=cfg.get("view", "rows"))
-        vf = ttk.Frame(body)
-        vf.pack(fill=X)
-        ttk.Radiobutton(vf, text="Rows", value="rows", variable=self._view).pack(side=LEFT)
-        ttk.Radiobutton(vf, text="Arcs", value="arcs", variable=self._view).pack(side=LEFT, padx=(12, 0))
-
-        ttk.Label(body, text="Front of the room is", font=("Segoe UI", 10, "bold")).pack(anchor=W, pady=(10, 0))
-        self._front = tk.StringVar(value="bottom" if cfg.get("flip") else "top")
-        ff = ttk.Frame(body)
-        ff.pack(fill=X)
-        ttk.Radiobutton(ff, text="Top", value="top", variable=self._front).pack(side=LEFT)
-        ttk.Radiobutton(ff, text="Bottom", value="bottom", variable=self._front).pack(side=LEFT, padx=(12, 0))
-
-        ttk.Label(body, text="Seats in each row (front → back)",
-                  font=("Segoe UI", 10, "bold")).pack(anchor=W, pady=(10, 0))
-        ttk.Label(body, text="Leave a box blank to remove that row.",
-                  font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W)
-        caps = sc.parse_row_caps(cfg.get("row_caps") or "8")
-        self._rows = []
-        rowsf = ttk.Frame(body)
-        rowsf.pack(fill=X, pady=(2, 0))
-        for i in range(6):
-            r = ttk.Frame(rowsf)
-            r.pack(fill=X, pady=1)
-            ttk.Label(r, text=f"Row {i + 1}:", width=7).pack(side=LEFT)
-            v = tk.StringVar(value=str(caps[i]) if i < len(caps) else "")
-            self._rows.append(v)
-            ttk.Entry(r, textvariable=v, width=6).pack(side=LEFT)
-
-        ttk.Label(body, text="Color coding", font=("Segoe UI", 10, "bold")).pack(anchor=W, pady=(10, 0))
-        self._color = tk.StringVar(value=cfg.get("color_mode", "row"))
-        cf = ttk.Frame(body)
-        cf.pack(fill=X)
-        ttk.Radiobutton(cf, text="By row", value="row", variable=self._color).pack(side=LEFT)
-        ttk.Radiobutton(cf, text="By section", value="section", variable=self._color).pack(side=LEFT, padx=(12, 0))
-        ttk.Radiobutton(cf, text="None", value="none", variable=self._color).pack(side=LEFT, padx=(12, 0))
-
-        ttk.Label(body, text="Section placement", font=("Segoe UI", 10, "bold")).pack(anchor=W, pady=(10, 0))
-        self._perc = tk.BooleanVar(value=cfg.get("separate_percussion", True))
-        ttk.Checkbutton(body, text="Keep percussion in a back row", variable=self._perc,
-                        bootstyle=INFO).pack(anchor=W)
-        self._tuba = tk.BooleanVar(value=cfg.get("center_tuba", True))
-        ttk.Checkbutton(body, text="Keep tuba in the middle of the back row", variable=self._tuba,
-                        bootstyle=INFO).pack(anchor=W)
-
-        btn = ttk.Frame(self)
-        btn.pack(fill=X, padx=16, pady=12)
-        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
-                   command=self.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(btn, text="Apply", bootstyle=SUCCESS, command=self._ok).pack(side=RIGHT, padx=4)
-        from ui.theme import fit_window
-        fit_window(self, 420, 620)
-
-    def _ok(self):
-        caps = [v.get().strip() for v in self._rows if v.get().strip().isdigit() and int(v.get()) > 0]
-        self.result = {
-            "view": self._view.get(),
-            "flip": self._front.get() == "bottom",
-            "row_caps": ",".join(caps) if caps else "8",
-            "color_mode": self._color.get(),
-            "separate_percussion": self._perc.get(),
-            "center_tuba": self._tuba.get(),
-        }
-        self.destroy()
-
-
-class _StudentSetupDialog(ttk.Toplevel):
-    """One window: keep-apart, accommodations, change-instrument, section order,
-    and name-display options."""
-
-    def __init__(self, parent, view, roster):
-        super().__init__(master=parent)
-        self._view = view
-        self.title("Student Set Up")
-        self.grab_set()
-        self.lift()
-
-        hdr = ttk.Frame(self, bootstyle=PRIMARY)
-        hdr.pack(fill=X)
-        ttk.Label(hdr, text="👤  Student Set Up", font=("Segoe UI", 12, "bold"),
-                  bootstyle=(INVERSE, PRIMARY)).pack(pady=10, padx=16, anchor=W)
-
-        body = ttk.Frame(self)
-        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
+        ttk.Label(body, text="Rules for particular students on this chart.",
+                  font=("Segoe UI", 9),
+                  foreground=muted_fg()).pack(anchor=W, pady=(0, 8))
 
         ttk.Button(body, text="🚫  Keep-Apart Pairs…", bootstyle=(WARNING, OUTLINE),
                    command=view._edit_conflicts).pack(fill=X, pady=3)
@@ -2026,30 +2645,16 @@ class _StudentSetupDialog(ttk.Toplevel):
         ttk.Button(body, text="🎺  Change a student's instrument…", bootstyle=(SECONDARY, OUTLINE),
                    command=view._edit_instruments).pack(fill=X, pady=3)
 
-        ttk.Separator(body).pack(fill=X, pady=(10, 6))
-        ttk.Label(body, text="Show on the chart", font=("Segoe UI", 10, "bold")).pack(anchor=W)
-        self._showinst = tk.BooleanVar(value=view._cfg.get("show_instrument", True))
-        ttk.Checkbutton(body, text="Show instrument under each name", variable=self._showinst,
-                        bootstyle=INFO, command=self._apply).pack(anchor=W)
-
-        ttk.Label(body, text="Names", font=("Segoe UI", 10, "bold")).pack(anchor=W, pady=(8, 0))
-        self._name = tk.StringVar(value=view._cfg.get("name_display", "first"))
-        for val, txt in [("first", "First name only (add last initial only if two share a name)"),
-                         ("last_initial", "Show all last-name initials"),
-                         ("last_full", "Show full last names")]:
-            ttk.Radiobutton(body, text=txt, value=val, variable=self._name,
-                            command=self._apply).pack(anchor=W)
+        ttk.Label(body, text="Rows, colors, names and where each section sits "
+                             "are in Configuration.",
+                  font=("Segoe UI", 8), foreground=muted_fg(),
+                  wraplength=360, justify=LEFT).pack(anchor=W, pady=(12, 0))
 
         ttk.Button(self, text="Close", bootstyle=SUCCESS,
                    command=self.destroy).pack(side=RIGHT, padx=16, pady=(0, 12))
         self.resizable(True, True)
         from ui.theme import fit_window
-        fit_window(self, 420, 460)
-
-    def _apply(self):
-        self._view._cfg["show_instrument"] = self._showinst.get()
-        self._view._cfg["name_display"] = self._name.get()
-        self._view._regenerate()
+        fit_window(self, 420, 300)
 
 
 def _extract_json_object(text):
