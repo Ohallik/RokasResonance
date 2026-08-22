@@ -102,3 +102,17 @@ def write_roster_xlsx(rows, out_path, title="Roster", subtitle=""):
     ws.column_dimensions["C"].width = 14
     wb.save(out_path)
     return out_path
+
+
+def write_roster_csv(rows, out_path, subtitle=""):
+    """The same roster as a plain CSV -- for the school laptop with no Excel.
+    utf-8-sig so Excel, if it IS there, reads the accents right."""
+    import csv
+    with open(out_path, "w", encoding="utf-8-sig", newline="") as fh:
+        w = csv.writer(fh)
+        if subtitle:
+            w.writerow([subtitle])
+        w.writerow(["Student Name", "Grade", "Student ID"])
+        for row in rows:
+            w.writerow([row["name"], row["grade"], row["student_id"]])
+    return out_path

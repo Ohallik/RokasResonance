@@ -4,7 +4,9 @@ ui/student_manager.py - Student management by school year
 
 import csv
 import os
+import queue
 import re
+import threading
 import tkinter as tk
 from tkinter import filedialog
 import ttkbootstrap as ttk
@@ -1289,12 +1291,25 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             title="Save Student Export", parent=self.winfo_toplevel(),
             defaultextension=".xlsx",
             initialfile=f"Students_{scope_tag}_{datetime.date.today().isoformat()}.xlsx",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            filetypes=[("Excel files", "*.xlsx"), ("CSV files", "*.csv"),
+                       ("All files", "*.*")],
         )
         if not path:
             return
         try:
-            wb.save(path)
+            # CSV opens on any machine, Excel installed or not.
+            if path.lower().endswith(".csv"):
+                with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                    w = csv.writer(fh)
+                    w.writerow(headers)
+                    for st in students:
+                        w.writerow([
+                            ("Active" if self._sval(st, "is_active")
+                             else "Inactive") if key is None
+                            else (self._sval(st, key) or "")
+                            for key in keys])
+            else:
+                wb.save(path)
         except Exception as e:
             Messagebox.show_error(f"Could not save file:\n{e}", title="Save Error",
     parent=self.winfo_toplevel())
@@ -1532,6 +1547,13 @@ class _StudentImportDialog(_ClassOptionsMixin, ttk.Toplevel):
         self.resizable(False, False)
         self.grab_set()
         self.lift()
+        # The import runs on a worker thread and talks to this window only
+        # through the queue -- parsing a roster on the UI thread froze the
+        # whole dialog when a file was slow to read (a OneDrive placeholder
+        # can block open() while it downloads), with no error and no way out.
+        self._q = queue.Queue()
+        self._running = False
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._build()
 
@@ -1618,26 +1640,67 @@ class _StudentImportDialog(_ClassOptionsMixin, ttk.Toplevel):
         self._close_btn.pack(pady=(0, 12))
 
     def _log_msg(self, msg: str):
+        """Queue a line for the window.  Safe from any thread."""
+        self._q.put(("log", msg))
+
+    def _show_msg(self, msg: str):
         self._log.config(state="normal")
         self._log.insert("end", msg + "\n")
         self._log.see("end")
         self._log.config(state="disabled")
-        self.update()
+
+    def _on_close(self):
+        # Never trap the teacher: if the worker is stuck on an unreadable
+        # file, the window still closes.  A healthy import simply finishes in
+        # the background and the students are there on the next refresh.
+        self.destroy()
 
     def _start(self):
         self._start_btn.config(state="disabled")
         self._progress.start(10)
-        self.after(50, self._run_import)
+        self._running = True
+        self._cfg_snapshot = (self._ensemble_var.get(), self._period_var.get(),
+                              self._instrument_var.get(),
+                              self._carry_over_var.get())
+        self._last_line_at = datetime.now()
+        self._hinted = False
+        threading.Thread(target=self._run_import, daemon=True).start()
+        self.after(120, self._poll)
+
+    def _poll(self):
+        """Drain the worker's messages onto the window, on the UI thread."""
+        if not self.winfo_exists():
+            return
+        got = False
+        while True:
+            try:
+                kind, msg = self._q.get_nowait()
+            except queue.Empty:
+                break
+            got = True
+            if kind == "done":
+                self._progress.stop()
+                self._close_btn.config(state="normal")
+                self._running = False
+                return
+            self._show_msg(msg)
+        if got:
+            self._last_line_at = datetime.now()
+        elif (not self._hinted and
+              (datetime.now() - self._last_line_at).total_seconds() > 6):
+            self._hinted = True
+            self._show_msg(
+                "Still reading the file… (a file kept in OneDrive may need "
+                "to finish downloading first — watch for its cloud icon)")
+        self.after(120, self._poll)
 
     def _run_import(self):
-        # Resolve the batch label chosen in the config controls
-        ens = self._ensemble_var.get()
-        per = self._period_var.get()
-        instr = self._instrument_var.get()
+        # Runs on the worker thread: widgets and Tk variables stay untouched
+        # here (the snapshot was taken on the UI thread in _start).
+        ens, per, instr, carry_over = self._cfg_snapshot
         batch_ensemble = ens if ens and ens != "— none —" else None
         batch_period = per if per and per != "— none —" else None
         batch_instrument = instr if instr and instr != "— none —" else None
-        carry_over = self._carry_over_var.get()
         label_ids = []   # student ids to label after import
         try:
             # ── Parse files ───────────────────────────────────────────────
@@ -1651,6 +1714,24 @@ class _StudentImportDialog(_ClassOptionsMixin, ttk.Toplevel):
                 f"\nFound {len(students)} unique student(s) across "
                 f"{len(self.paths)} file(s)."
             )
+            if not students:
+                self._log_msg(
+                    "\nRoka reads rosters by their column names and needs "
+                    "at least a 'Student ID' or 'Student Name' column.")
+                try:
+                    import synergy_import
+                    rows = synergy_import._read_rows(self.paths[0])
+                    hdr = ", ".join(h.strip() for h in rows[0]
+                                    if h.strip()) if rows else ""
+                    self._log_msg(
+                        f"This file's first row reads: {hdr[:300]}"
+                        if hdr else "This file appears to be empty.")
+                except Exception:
+                    pass
+                self._log_msg(
+                    "Nothing was imported. Export the roster again from "
+                    "Synergy (CSV format) and try once more.")
+                return
             self._log_msg(f"Importing into school year: {self.school_year}\n")
 
             # ── Import with deduplication ─────────────────────────────────
@@ -1737,11 +1818,20 @@ class _StudentImportDialog(_ClassOptionsMixin, ttk.Toplevel):
                 f"(already on file for {self.school_year})"
             )
 
+        except PermissionError:
+            self._log_msg(
+                "\nError: Windows blocked reading the file. If it is open "
+                "in Excel, close it there and try again.")
+        except FileNotFoundError:
+            self._log_msg(
+                "\nError: That file has moved or was deleted since it was "
+                "chosen. Save it somewhere steady (like Documents) and pick "
+                "it again.")
         except Exception as e:
             self._log_msg(f"\nError: {e}")
         finally:
-            self._progress.stop()
-            self._close_btn.config(state="normal")
+            # Widgets belong to the UI thread; _poll flips the buttons.
+            self._q.put(("done", None))
 
 
 class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):

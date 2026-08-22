@@ -249,6 +249,17 @@ class JazzView(ttk.Frame):
         for w in self._band_bar.winfo_children():
             w.destroy()
         ensembles = self.db.get_jazz_ensembles(self._year())
+        if not ensembles:
+            # A fresh profile showed a placeholder and a wall of winds with
+            # "no options to edit my rhythm section" -- the New Jazz Band
+            # button was the missing step nobody knew to take.  One band is
+            # the floor every jazz teacher starts from.
+            self.db.add_jazz_ensemble({
+                "school_year": self._year(),
+                "name": self._default_band_name(),
+                "seats": _dumps([dict(x) for x in jr.DEFAULT_SEATS]),
+                "pools": _dumps([]), "current_day": 1})
+            ensembles = self.db.get_jazz_ensembles(self._year())
         for e in ensembles:
             ttk.Radiobutton(self._band_bar, text=e["name"],
                             value=str(e["id"]), variable=self._band_var,
@@ -267,6 +278,20 @@ class JazzView(ttk.Frame):
             self._winds.refresh(None)
             return
         self._on_selected()
+
+    def _default_band_name(self):
+        """Name the first band after the jazz class when there is one."""
+        try:
+            import class_registry as cr
+            from ui.settings_dialog import load_settings
+            program = (load_settings(self.base_dir).get("teacher")
+                       or {}).get("program_type", "band")
+            for k in cr.load_classes(self.base_dir, program):
+                if k.get("template") == "jazz":
+                    return k.get("label") or "Jazz 1"
+        except Exception:
+            pass
+        return "Jazz 1"
 
     def _year(self):
         base = os.path.basename(self.db.db_path)
@@ -875,11 +900,6 @@ class _WindsPanel(ttk.Labelframe):
     rotation panel to the right.
     """
 
-    _GUESS_NOTE = ("Blank parts are guessed from instruments and saved as "
-                   "they appear -- pick a different part any time.  Doubling "
-                   "a written part is normal at middle school.  Changing a "
-                   "player's instrument moves them to that section.")
-
     def __init__(self, parent, main_db, base_dir):
         super().__init__(parent, text=" 🎺 Winds ", padding=6)
         self.main_db = main_db
@@ -917,7 +937,7 @@ class _WindsPanel(ttk.Labelframe):
         box.pack(fill=BOTH, expand=True)
         # Wide enough for name + instrument + the part dropdown, and it
         # follows the app font size so Large fonts don't clip the dropdown.
-        canvas = tk.Canvas(box, highlightthickness=0, width=fs(9) * 42)
+        canvas = tk.Canvas(box, highlightthickness=0, width=fs(9) * 36)
         sb = ttk.Scrollbar(box, orient=VERTICAL, command=canvas.yview)
         canvas.configure(yscrollcommand=sb.set)
         sb.pack(side=RIGHT, fill=Y)
@@ -939,10 +959,6 @@ class _WindsPanel(ttk.Labelframe):
                     lambda e: canvas.bind_all("<MouseWheel>", _wheel))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
-        self._note = ttk.Label(self, text="", font=("Segoe UI", fs(8)),
-                               foreground=muted_fg(), wraplength=320,
-                               justify=LEFT)
-        self._note.pack(anchor=W, pady=(4, 0))
 
     # ── data ────────────────────────────────────────────────────────────────
 
@@ -997,7 +1013,10 @@ class _WindsPanel(ttk.Labelframe):
             w.destroy()
         self._vars = {}
         roster = self._students()
-        options = [""] + self._sc.jazz_part_options()
+        # One choice per player, reading as instrument AND part ("Trumpet 2",
+        # "Alto Sax 1") -- two dropdowns per row was cramped and confusing,
+        # and the codes ("Tpt 2") meant nothing at a glance.
+        options = [""] + self._sc.jazz_part_choices()
 
         # Blanks get a first guess, saved as shown, never overwriting a
         # choice.  Saving the guess keeps this list, the seating chart and the
@@ -1018,8 +1037,6 @@ class _WindsPanel(ttk.Labelframe):
                     if r["id"] in guessed:
                         r["jazz_part"] = guessed[r["id"]]
 
-        rhythm_n = sum(1 for r in roster if self._sc.jazz_part_band(
-            (r.get("jazz_part") or "").strip()) == "rhythm")
         self._roster = [r for r in roster if self._sc.jazz_part_band(
             (r.get("jazz_part") or "").strip()) != "rhythm"]
 
@@ -1029,54 +1046,32 @@ class _WindsPanel(ttk.Labelframe):
                            "with Manage Students and they appear here.",
                       font=("Segoe UI", fs(9)), foreground=muted_fg(),
                       wraplength=250, justify=LEFT).pack(anchor=W, pady=8)
-            self._note.config(text="")
             return
 
-        from ui.ensembles import JAZZ_INSTRUMENTS
-        self._inst_vars = {}
         for r in self._roster:
             row = ttk.Frame(self._table)
             row.pack(fill=X, pady=1)
             name = (r.get("preferred_name") or r.get("first_name") or "")
             full = ("%s %s" % (name, r.get("last_name") or "")).strip()
-            inst = (r.get("jazz_instrument") or r.get("primary_instrument")
-                    or "")
             ttk.Label(row, text=full[:19], width=18,
                       font=("Segoe UI", fs(9))).pack(side=LEFT)
-            # The instrument is a choice too: a kid who covers trumpet,
-            # trombone and clarinet gets shifted to whatever section needs
-            # him, right here.  Saved as the jazz-band override
-            # (students.jazz_instrument), never touching the concert one.
-            iv = tk.StringVar(value=inst)
-            self._inst_vars[r["id"]] = iv
-            icb = ttk.Combobox(row, textvariable=iv,
-                               values=[""] + JAZZ_INSTRUMENTS, width=13,
-                               state="readonly", font=("Segoe UI", fs(8)))
-            icb.pack(side=LEFT, padx=(2, 0))
-            icb.bind("<<ComboboxSelected>>",
-                     lambda e, sid=r["id"]: self._picked_instrument(sid))
-            v = tk.StringVar(value=(r.get("jazz_part") or "").strip())
+            v = tk.StringVar(value=self._sc.jazz_part_label(
+                (r.get("jazz_part") or "").strip()))
             self._vars[r["id"]] = v
-            cb = ttk.Combobox(row, textvariable=v, values=options, width=8,
+            cb = ttk.Combobox(row, textvariable=v, values=options, width=13,
                               state="readonly")
-            cb.pack(side=LEFT, padx=(2, 6))
+            cb.pack(side=LEFT, padx=(4, 6))
             cb.bind("<<ComboboxSelected>>",
                     lambda e, sid=r["id"]: self._picked(sid))
 
-        note = self._GUESS_NOTE
-        if rhythm_n:
-            note += ("  %d rhythm player%s → the panel on the right."
-                     % (rhythm_n, "" if rhythm_n == 1 else "s"))
-        self._note.config(text=note)
-
     def _picked(self, sid):
         """A part was chosen: save it at once -- there is no Save button to
-        forget.  Choosing a rhythm part moves the player to the rhythm side,
-        so the list reloads to show them gone."""
+        forget.  Choosing a rhythm part ("Piano", "Drums") moves the player
+        to the rhythm side, so the list reloads to show them gone."""
         v = self._vars.get(sid)
         if v is None:
             return
-        part = v.get()
+        part = self._sc.jazz_part_from_label(v.get())
         try:
             self.main_db.set_jazz_parts({sid: part})
         except Exception as e:
@@ -1085,36 +1080,6 @@ class _WindsPanel(ttk.Labelframe):
             return
         if self._sc.jazz_part_band(part) == "rhythm":
             self._reload()
-
-    def _picked_instrument(self, sid):
-        """The player was moved to a different instrument: save the jazz-band
-        override and re-guess their part for the new section (their old part
-        would seat a trombonist among the trumpets).  The part stays a free
-        choice afterward."""
-        iv = self._inst_vars.get(sid)
-        if iv is None:
-            return
-        inst = iv.get().strip()
-        try:
-            self.main_db.set_jazz_instrument(sid, inst)
-        except Exception as e:
-            Messagebox.show_error("Could not save the instrument:\n%s" % e,
-                                  title="Winds", parent=self)
-            return
-        if not inst:
-            # Cleared: back to the concert instrument for the re-guess.
-            row = next((r for r in self._roster if r["id"] == sid), None)
-            inst = (row or {}).get("primary_instrument") or ""
-        taken = [v.get() for pid, v in self._vars.items()
-                 if pid != sid and v.get()]
-        guess = self._sc.jazz_auto_parts(
-            [{"id": sid, "instrument": inst}], taken=taken)
-        part = guess.get(sid, "")
-        try:
-            self.main_db.set_jazz_parts({sid: part})
-        except Exception:
-            pass
-        self._reload()
 
 
 class _AddPlayersDialog(ttk.Toplevel):

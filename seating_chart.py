@@ -276,7 +276,9 @@ def jazz_layout(instruments, high_rows=1, rhythm_side="left"):
 # still cover trombone and trumpet parts, so that is what they are labelled.
 JAZZ_SAX_PARTS = ["A1", "A2", "T1", "T2", "B"]
 JAZZ_RHYTHM_PARTS = ["Piano", "Guitar", "Bass", "Drums", "Vibes", "Aux"]
-JAZZ_MAX_PART = 8
+# Meagan: "The parts are literally 1, 2, 3, or 4."  No chart is written with a
+# Trumpet 5; an eleventh trumpet DOUBLES a written part instead.
+JAZZ_MAX_PART = 4
 
 # Front rhythm shares the sax row; the other two stand behind with the brass.
 _RHYTHM_FRONT = ("Piano", "Guitar")
@@ -295,8 +297,53 @@ def jazz_high_parts(n=JAZZ_MAX_PART):
 
 def jazz_part_options():
     """Every part a player can be put on, in the order the picker shows them."""
-    return (JAZZ_SAX_PARTS + jazz_low_parts(5) + jazz_high_parts(5)
+    return (JAZZ_SAX_PARTS + jazz_low_parts() + jazz_high_parts()
             + JAZZ_RHYTHM_PARTS)
+
+
+# ── Display names: one dropdown that reads as instrument AND part ─────────
+# The teacher-facing picker says "Trumpet 2", not "Tpt 2" -- the short codes
+# stay as the stored value so saved charts keep working.
+_PART_LABEL_PREFIX = [("A", "Alto Sax "), ("T", "Tenor Sax "),
+                      ("Tbn ", "Trombone "), ("Tpt ", "Trumpet ")]
+
+
+def jazz_part_label(part):
+    """The stored part code as its teacher-facing name ("Tpt 2" -> "Trumpet 2",
+    "A1" -> "Alto Sax 1", "B" -> "Bari Sax", rhythm parts as themselves)."""
+    p = (part or "").strip()
+    if not p:
+        return ""
+    if p == "B":
+        return "Bari Sax"
+    for code, word in (("Tbn ", "Trombone "), ("Tpt ", "Trumpet ")):
+        if p.startswith(code):
+            return word + p[len(code):]
+    m = _re.match(r"^([AT])\s*(\d+)$", p)
+    if m:
+        word = "Alto Sax " if m.group(1) == "A" else "Tenor Sax "
+        return word + m.group(2)
+    return p
+
+
+def jazz_part_from_label(label):
+    """The inverse of jazz_part_label -- a picker value back to the stored
+    code.  Unknown text comes back as itself, so nothing is ever lost."""
+    t = (label or "").strip()
+    if not t:
+        return ""
+    if t == "Bari Sax":
+        return "B"
+    for word, code in (("Alto Sax ", "A"), ("Tenor Sax ", "T"),
+                       ("Trombone ", "Tbn "), ("Trumpet ", "Tpt ")):
+        if t.startswith(word):
+            return code + t[len(word):]
+    return t
+
+
+def jazz_part_choices():
+    """The picker's values: every part under its teacher-facing name."""
+    return [jazz_part_label(p) for p in jazz_part_options()]
 
 
 def jazz_part_band(part):
@@ -356,31 +403,27 @@ def jazz_auto_parts(players, taken=None):
     what they set is what gets used.  Guessing beats an empty table: most of a
     middle school band is already in the right place once the altos are altos.
     """
-    from collections import defaultdict
-    used = defaultdict(int)
+    from collections import Counter
     out = {}
-    # Parts the teacher has already given out.  Guessing straight past them put
-    # a second player on the lead trumpet part, and two players on one part
-    # seat in an order nobody chose.
-    spoken_for = {(t or "").strip() for t in (taken or ()) if (t or "").strip()}
+    # How many players already sit on each part -- the teacher's own picks
+    # count, so the guess fills the empty parts before doubling anybody.
+    load = Counter((t or "").strip() for t in (taken or ()) if (t or "").strip())
 
-    def take(prefix, key, first=None):
-        """The next free part on a line, numbering past the end of the ideal
-        rather than sitting two players on the same part -- and never one that
-        is already spoken for."""
-        for _ in range(64):
-            i = used[key]
-            used[key] += 1
-            if first and i < len(first):
-                part = first[i]
-            elif not prefix:
-                part = first[-1] if first else ""
-            else:
-                part = "%s%d" % (prefix, i + 1)
-            if part not in spoken_for:
-                spoken_for.add(part)
-                return part
-        return ""
+    def take(parts, overflow="wrap"):
+        """The emptiest part on a line.  The written parts stop at
+        JAZZ_MAX_PART; an eleventh trumpet DOUBLES the least-covered part
+        ("wrap") rather than inventing a Trumpet 5.  "last" families instead
+        pile the overflow on the final part (one kit: Drums, then Aux)."""
+        if overflow == "last":
+            for part in parts:
+                if load[part] == 0:
+                    load[part] += 1
+                    return part
+            part = parts[-1]
+        else:
+            part = min(parts, key=lambda q: (load[q], parts.index(q)))
+        load[part] += 1
+        return part
 
     for p in players:
         inst = (p.get("instrument") or "").strip()
@@ -394,23 +437,23 @@ def jazz_auto_parts(players, taken=None):
             elif "bass" in low and "clarinet" not in low and "sax" not in low:
                 out[p["id"]] = "Bass"
             elif "vib" in low or "mallet" in low:
-                out[p["id"]] = take("Vibes ", "vibes", first=["Vibes"])
+                out[p["id"]] = take(["Vibes"], overflow="last")
             else:
                 # Only one of them is on the kit.  A band with three
                 # percussionists had all three guessed as Drums, which is a
                 # guess nobody can use.
-                out[p["id"]] = take("", "kit", first=["Drums", "Aux", "Aux"])
+                out[p["id"]] = take(["Drums", "Aux"], overflow="last")
         elif band == "sax":
             if "tenor" in low:
-                out[p["id"]] = take("T", "tenor")
+                out[p["id"]] = take(["T1", "T2"])
             elif "bari" in low:
-                out[p["id"]] = take("B", "bari", first=["B"])
+                out[p["id"]] = take(["B"], overflow="last")
             else:
-                out[p["id"]] = take("A", "alto")
+                out[p["id"]] = take(["A1", "A2"])
         elif band == "low":
-            out[p["id"]] = take("Tbn ", "low")
+            out[p["id"]] = take(jazz_low_parts())
         else:
-            out[p["id"]] = take("Tpt ", "high")
+            out[p["id"]] = take(jazz_high_parts())
     return out
 
 
@@ -467,21 +510,41 @@ def jazz_seating(players, parts, rhythm_side="left", high_rows=1):
                 if not jazz_part_band((parts or {}).get(p["id"]))]
     high = high + unplaced          # never leave anybody off the chart
 
-    # Where the brass blocks start, so the leads line up behind the lead alto.
+    # Where the brass blocks start, so the leads line up behind the lead
+    # alto.  A row reads 2 1 3 4 and part 2 may be DOUBLED, so the lead's
+    # chair is however many part-2 players actually sit before it -- assuming
+    # exactly one put the lead stack a chair off whenever anybody doubled.
     sax_order = jazz_seating_order(band_parts("sax"), "sax")
     lead_at = sax_order.index("A1") if "A1" in sax_order else 0
     lead_col = sum(len(by_part[q]) for q in sax_order[:lead_at])
-    brass_start = max(lead_col - 1, 0)
+
+    def chairs_before(band, part):
+        order = jazz_seating_order(band_parts(band), band)
+        if part not in order:
+            return 1                    # no lead on the roster: the old offset
+        return sum(len(by_part[q]) for q in order[:order.index(part)])
+
+    low_start = max(lead_col - chairs_before("low", "Tbn 1"), 0)
 
     # Splitting the trumpet row keeps the part order: the first chunk sits in
     # FRONT of the second, so the lead trumpet stays in the nearer row and
     # stays lined up behind trombone 1.  Dealing every other player into each
     # row (which is what a stride does) put trumpet 1 behind trumpet 2.
     high_split = _split_evenly(high, high_rows) if high else []
+    high_start = 0
+    if high_split:
+        remaining = chairs_before("high", "Tpt 1")
+        offset = remaining
+        for chunk in high_split:        # the row that holds the lead trumpet
+            if remaining < len(chunk) or chunk is high_split[-1]:
+                offset = remaining
+                break
+            remaining -= len(chunk)
+        high_start = max(lead_col - offset, 0)
 
-    rows = [sax, [None] * brass_start + low]
+    rows = [sax, [None] * low_start + low]
     for chunk in high_split:
-        rows.append([None] * brass_start + chunk)
+        rows.append([None] * high_start + chunk)
     if not high_split:
         rows.append([])
 

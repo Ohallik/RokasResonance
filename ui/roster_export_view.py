@@ -146,14 +146,20 @@ class RosterExportDialog(ttk.Toplevel):
             default = f"{safe or 'roster'}.xlsx"
         path = filedialog.asksaveasfilename(
             parent=self, defaultextension=".xlsx",
-            initialfile=default, filetypes=[("Excel", "*.xlsx")])
+            initialfile=default,
+            filetypes=[("Excel", "*.xlsx"), ("CSV", "*.csv")])
         if not path:
             return
         subtitle = ("All classes" if self._all.get()
                     else ", ".join(chosen)) + f" — {len(rows)} students"
         try:
-            roster_export.write_roster_xlsx(rows, path, title="Roster",
-                                            subtitle=subtitle)
+            # CSV opens on any machine -- a school laptop without desktop
+            # Excel still gets a readable roster.
+            if path.lower().endswith(".csv"):
+                roster_export.write_roster_csv(rows, path, subtitle=subtitle)
+            else:
+                roster_export.write_roster_xlsx(rows, path, title="Roster",
+                                                subtitle=subtitle)
         except Exception as e:
             Messagebox.show_error(f"Could not write the file:\n{e}",
                                   title="Export failed", parent=self)

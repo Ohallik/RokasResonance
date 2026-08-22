@@ -76,12 +76,56 @@ def _split_city_state_zip(csz):
     return city, state, zc
 
 
+def _decode_export(raw):
+    """District export bytes as text, whatever the district actually saved.
+
+    Synergy and Excel between them produce UTF-8, UTF-16 ("Unicode Text"),
+    and plain Windows cp1252 -- and a browser download renamed .csv is
+    sometimes not a CSV at all.  Decoding strictly as UTF-8 made every one of
+    the others die mid-read with an error no teacher can act on.
+    """
+    if raw.startswith(b"PK\x03\x04"):
+        raise ValueError(
+            "This file is an Excel workbook that was renamed to .csv. "
+            "Open it in Excel and use Save As -> 'CSV (Comma delimited)', "
+            "or choose the CSV format when exporting from Synergy.")
+    if raw.startswith(b"\xd0\xcf\x11\xe0"):
+        raise ValueError(
+            "This file is an old-style Excel file (.xls), not a CSV. "
+            "Open it in Excel and use Save As -> 'CSV (Comma delimited)'.")
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")) or b"\x00" in raw[:400]:
+        try:
+            return raw.decode("utf-16")
+        except UnicodeError:
+            pass
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace")
+
+
 def _read_rows(source):
     """Read a Synergy export (file path OR raw CSV text) into a list of rows."""
     if os.path.exists(str(source)):
-        with open(source, encoding="utf-8-sig", newline="") as fh:
-            return list(csv.reader(fh))
-    return list(csv.reader(io.StringIO(source)))
+        with open(source, "rb") as fh:
+            text = _decode_export(fh.read())
+    elif "\n" not in str(source):
+        # One line and no such file: this is a path to a file that moved or
+        # was deleted, not roster text.  Treating it as text made a missing
+        # file "import" zero students with a message about columns.
+        raise FileNotFoundError(source)
+    else:
+        text = source
+    head = text.lstrip()[:400].lower()
+    if head.startswith("<") and ("<html" in head or "<!doctype" in head
+                                 or "<table" in head):
+        raise ValueError(
+            "This file is a web page saved with a .csv name, not a CSV. "
+            "Export the list again and choose the CSV format.")
+    # Excel's "Unicode Text" save is tab-separated; a plain CSV is commas.
+    first_line = text.lstrip("\ufeff").splitlines()[0] if text.strip() else ""
+    delim = "\t" if first_line.count("\t") > first_line.count(",") else ","
+    return list(csv.reader(io.StringIO(text), delimiter=delim))
 
 
 def summarize_sections(source):
