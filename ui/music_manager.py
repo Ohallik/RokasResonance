@@ -1221,12 +1221,8 @@ class MusicManager(ttk.Frame):
 
     def _import_program(self):
         from tkinter import filedialog
-        from llm_client import is_configured
-        if not is_configured(self.base_dir):
-            Messagebox.show_warning(
-                "Importing a program uses AI to read it, which needs an LLM configured "
-                "in Settings ▸ LLM Configuration.",
-                title="LLM Not Configured", parent=self.winfo_toplevel())
+        from ui.key_prompt import ensure_llm_ready
+        if not ensure_llm_ready(self.winfo_toplevel(), self.base_dir):
             return
         paths = filedialog.askopenfilenames(
             title="Select one or more concert programs (PDF, Publisher, or image)",
@@ -1467,14 +1463,8 @@ class MusicManager(ttk.Frame):
         self.refresh()
 
     def _import_music(self):
-        from llm_client import is_configured
-        if not is_configured(self.base_dir):
-            Messagebox.show_warning(
-                "No API key configured. Open Settings and enter your GitHub token "
-                "to use AI-powered import.",
-                title="API Key Required",
-                parent=self.winfo_toplevel()
-            )
+        from ui.key_prompt import ensure_llm_ready
+        if not ensure_llm_ready(self.winfo_toplevel(), self.base_dir):
             return
 
         paths = filedialog.askopenfilenames(
@@ -1589,13 +1579,8 @@ class MusicManager(ttk.Frame):
         ids = self._get_selected_ids()
         if not ids:
             return
-        from llm_client import is_configured
-        if not is_configured(self.base_dir):
-            Messagebox.show_warning(
-                "No LLM API key configured. Open Settings and enter a key first.",
-                title="API Key Required",
-                parent=self.winfo_toplevel()
-            )
+        from ui.key_prompt import ensure_llm_ready
+        if not ensure_llm_ready(self.winfo_toplevel(), self.base_dir):
             return
         pieces = [dict(self.db.get_sheet_music(mid)) for mid in ids
                   if self.db.get_sheet_music(mid)]

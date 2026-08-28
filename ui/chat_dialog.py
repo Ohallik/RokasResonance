@@ -878,12 +878,12 @@ class ChatDialog(ttk.Toplevel):
         if not message:
             return
 
-        from llm_client import is_configured
-        if not is_configured(self.base_dir):
+        from ui.key_prompt import ensure_llm_ready
+        if not ensure_llm_ready(self.winfo_toplevel(), self.base_dir):
             self._add_message(
                 "error",
-                "No API key configured. Open Settings and enter your GitHub token "
-                "— then Reginald can assist you properly."
+                "Reginald needs a key before he can help — paste one when "
+                "you're ready and ask again."
             )
             return
 
