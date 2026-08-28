@@ -53,9 +53,8 @@ class _KeyPrompt(ttk.Toplevel):
         body.pack(fill=BOTH, expand=True, padx=16, pady=(10, 0))
         ttk.Label(
             body,
-            text="This feature uses Claude, and Roka just needs the key that "
-                 "lets it say hello. Paste the key you were given by your "
-                 "district or director:",
+            text="This feature uses Claude, and Roka just needs your API "
+                 "key. Paste it here:",
             font=("Segoe UI", fs(9)), wraplength=380,
             justify=LEFT).pack(anchor=W)
 
@@ -72,13 +71,17 @@ class _KeyPrompt(ttk.Toplevel):
         self._show_btn.pack(side=LEFT, padx=(6, 0))
         self._entry.focus_set()
 
-        ttk.Label(
-            body,
-            text="No key yet? One takes ten minutes and about $5 at "
-                 "console.anthropic.com. Ask your director for the "
-                 "walkthrough sheet.",
-            font=("Segoe UI", fs(8)), foreground=muted_fg(), wraplength=380,
-            justify=LEFT).pack(anchor=W, pady=(4, 0))
+        hint = ttk.Frame(body)
+        hint.pack(fill=X, pady=(4, 0))
+        ttk.Label(hint,
+                  text="No key yet? One takes about ten minutes and $5.",
+                  font=("Segoe UI", fs(8)),
+                  foreground=muted_fg()).pack(side=LEFT)
+        link = ttk.Label(hint, text="Click here for the step-by-step guide.",
+                         font=("Segoe UI", fs(8), "underline"),
+                         foreground="#1c6ea4", cursor="hand2")
+        link.pack(side=LEFT, padx=(4, 0))
+        link.bind("<Button-1>", lambda e: self._open_guide())
 
         btns = ttk.Frame(self)
         btns.pack(fill=X, padx=16, pady=12)
@@ -90,6 +93,10 @@ class _KeyPrompt(ttk.Toplevel):
 
         from ui.theme import fit_window
         fit_window(self, 440, 240)
+
+    def _open_guide(self):
+        from ui.help_system import open_api_guide
+        open_api_guide(parent=self)
 
     def _toggle(self):
         self._show = not self._show

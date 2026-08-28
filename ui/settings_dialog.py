@@ -461,6 +461,16 @@ class SettingsDialog(ttk.Toplevel):
             command=self._on_backend_change,
         ).pack(side=LEFT)
 
+        cost_row = ttk.Frame(outer)
+        cost_row.pack(fill=X, pady=(8, 0))
+        ttk.Button(cost_row, text="📊 Token Cost History…",
+                   bootstyle=(INFO, OUTLINE),
+                   command=self._open_token_history).pack(side=LEFT)
+        ttk.Label(cost_row,
+                  text="What the AI features have used, by school year.",
+                  font=("Segoe UI", 8), foreground="#888").pack(
+            side=LEFT, padx=(8, 0))
+
         ttk.Separator(outer, orient=HORIZONTAL).pack(fill=X, pady=(10, 0))
 
         # ── Local API Keys section ────────────────────────────────────────
@@ -472,7 +482,7 @@ class SettingsDialog(ttk.Toplevel):
 
         saved_ak = (self._settings.get("llm") or {}).get("anthropic_api_key", "").strip()
         ak_note = "Key saved in settings below." if saved_ak else \
-            "No key saved. Get a free key at console.anthropic.com (5 RPM free tier)."
+            "No key saved. The How To button opens a plain-language walkthrough."
         ak_color = "#2a7a2a" if saved_ak else "#888"
         ttk.Label(self._local_frame, text=ak_note, font=("Segoe UI", 8),
                   foreground=ak_color, wraplength=460).pack(anchor=W, pady=(0, 4))
@@ -488,6 +498,9 @@ class SettingsDialog(ttk.Toplevel):
             anthropic_key_row, text="Show", bootstyle=(SECONDARY, OUTLINE), width=6,
             command=self._toggle_anthropic_key_visibility)
         self._anthropic_toggle_btn.pack(side=LEFT, padx=(6, 0))
+        ttk.Button(anthropic_key_row, text="How To…",
+                   bootstyle=(INFO, OUTLINE), width=8,
+                   command=self._open_api_guide).pack(side=LEFT, padx=(6, 0))
 
         ttk.Separator(self._local_frame, orient=HORIZONTAL).pack(fill=X, pady=(0, 10))
 
@@ -763,6 +776,13 @@ class SettingsDialog(ttk.Toplevel):
         self._show_key = not self._show_key
         self._key_entry.config(show="" if self._show_key else "•")
         self._toggle_btn.config(text="Hide" if self._show_key else "Show")
+
+    def _open_token_history(self):
+        _TokenHistoryDialog(self, self.base_dir)
+
+    def _open_api_guide(self):
+        from ui.help_system import open_api_guide
+        open_api_guide(parent=self)
 
     def _toggle_anthropic_key_visibility(self):
         self._show_anthropic_key = not self._show_anthropic_key
@@ -1088,3 +1108,84 @@ class SettingsDialog(ttk.Toplevel):
                     f"Connection failed:\n{err}", title="Test Failed", parent=self))
 
         threading.Thread(target=_run, daemon=True).start()
+
+
+class _TokenHistoryDialog(ttk.Toplevel):
+    """The AI features' actual usage, by school year, with a lifetime total.
+
+    Every Claude and GitHub Models response reports its exact token counts;
+    usage_log stores them in the profile database with a dollar estimate
+    stamped at the time of use.  This window is the read side: one row per
+    school year, so a teacher can watch her second year cost less than her
+    first once the library is in.
+    """
+
+    def __init__(self, parent, base_dir):
+        super().__init__(master=parent)
+        self.title("Token Cost History")
+        self.resizable(False, False)
+        self.grab_set()
+        self.lift()
+
+        hdr = ttk.Frame(self, bootstyle=INFO)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text="📊  What the AI has actually cost",
+                  font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, INFO)).pack(pady=10, padx=16, anchor=W)
+
+        import usage_log
+        rows = usage_log.summary(base_dir)
+
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True, padx=16, pady=(10, 0))
+        if not rows:
+            ttk.Label(body,
+                      text="Nothing recorded yet. Roka starts counting with "
+                           "its next AI call — import a piece or ask "
+                           "Reginald something, then look again.",
+                      font=("Segoe UI", 9), wraplength=380,
+                      justify=LEFT).pack(anchor=W, pady=8)
+        else:
+            cols = ("year", "calls", "tin", "tout", "cost")
+            tree = ttk.Treeview(body, columns=cols, show="headings",
+                                height=min(len(rows) + 1, 8),
+                                bootstyle=SECONDARY)
+            for col, text, w, anchor in (
+                    ("year", "School Year", 100, W),
+                    ("calls", "Calls", 60, E),
+                    ("tin", "Tokens In", 100, E),
+                    ("tout", "Tokens Out", 100, E),
+                    ("cost", "Est. Cost", 90, E)):
+                tree.heading(col, text=text, anchor=anchor)
+                tree.column(col, width=w, anchor=anchor, stretch=False)
+            t_calls = t_in = t_out = 0
+            t_cost = 0.0
+            for year, calls, tin, tout, cost in rows:
+                tree.insert("", "end", values=(
+                    year, calls, f"{tin:,}", f"{tout:,}", f"${cost:,.2f}"))
+                t_calls += calls
+                t_in += tin
+                t_out += tout
+                t_cost += cost
+            tree.insert("", "end", tags=("total",), values=(
+                "All years", t_calls, f"{t_in:,}", f"{t_out:,}",
+                f"${t_cost:,.2f}"))
+            tree.tag_configure("total", font=("Segoe UI", 9, "bold"))
+            tree.pack(fill=X)
+
+        ttk.Label(self,
+                  text="Costs are estimated at Anthropic's published rates "
+                       "when each call was made; the exact bill is at "
+                       "console.anthropic.com. GitHub Models calls are free "
+                       "and counted at $0. Calls made through a Claude Proxy "
+                       "are billed on the proxy's side and are not counted "
+                       "here.",
+                  font=("Segoe UI", 8), foreground="#888", wraplength=430,
+                  justify=LEFT).pack(anchor=W, padx=16, pady=(8, 0))
+
+        ttk.Button(self, text="Close", bootstyle=PRIMARY,
+                   command=self.destroy).pack(pady=12)
+
+        from ui.theme import fit_window
+        fit_window(self, 490, 420)
+

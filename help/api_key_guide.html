@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your Claude Key</title>
+</head>
+<body>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  :root {
+    --paper: #FCFBF7;
+    --ink: #26303B;
+    --muted: #5C6B7A;
+    --brass: #A8741F;
+    --brass-soft: #F4EBD9;
+    --rule: #E6E1D5;
+    --card: #F6F3EC;
+    --good: #3E7A4E;
+    --mono-bg: #EFEAE0;
+  }
+  :root:not([data-theme="light"]) { }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #20262E;
+      --ink: #E8E4DC;
+      --muted: #9FAAB6;
+      --brass: #D9A94E;
+      --brass-soft: #3A3324;
+      --rule: #3A424C;
+      --card: #2A313A;
+      --good: #7FBB8C;
+      --mono-bg: #333B45;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #20262E;
+    --ink: #E8E4DC;
+    --muted: #9FAAB6;
+    --brass: #D9A94E;
+    --brass-soft: #3A3324;
+    --rule: #3A424C;
+    --card: #2A313A;
+    --good: #7FBB8C;
+    --mono-bg: #333B45;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Sans 3", "Segoe UI", Arial, sans-serif;
+    font-size: 1.06rem;
+    line-height: 1.55;
+    margin: 0;
+    padding: 2.5rem 1.25rem 4rem;
+  }
+  main { max-width: 42rem; margin: 0 auto; }
+
+  h1, h2, h3 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 650;
+    line-height: 1.15;
+    text-wrap: balance;
+    margin: 0;
+  }
+  h1 { font-size: 2.3rem; }
+  h2 { font-size: 1.45rem; margin-top: 2.8rem; }
+  h3 { font-size: 1.08rem; font-family: "Source Sans 3", sans-serif; font-weight: 700; }
+  p { margin: 0.7rem 0 0; }
+
+  .eyebrow {
+    color: var(--brass);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 0.6rem;
+  }
+  .lede { color: var(--muted); font-size: 1.12rem; margin-top: 0.9rem; }
+
+  .reassure {
+    background: var(--brass-soft);
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+    margin-top: 1.6rem;
+  }
+  .reassure p { margin: 0.35rem 0 0; }
+  .reassure p:first-child { margin-top: 0; }
+
+  ol.steps {
+    list-style: none;
+    counter-reset: step;
+    margin: 1.4rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+  ol.steps > li {
+    counter-increment: step;
+    display: grid;
+    grid-template-columns: 2.4rem 1fr;
+    gap: 0 0.9rem;
+  }
+  ol.steps > li::before {
+    content: counter(step);
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 650;
+    font-size: 1.25rem;
+    color: var(--brass);
+    border: 2px solid var(--brass);
+    border-radius: 50%;
+    width: 2.1rem;
+    height: 2.1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 0.1rem;
+  }
+  ol.steps .do { font-weight: 700; }
+  ol.steps p { margin: 0.25rem 0 0; color: var(--muted); }
+  ol.steps p b { color: var(--ink); }
+
+  kbd, .type-this {
+    font-family: "IBM Plex Mono", Consolas, monospace;
+    font-size: 0.92em;
+    background: var(--mono-bg);
+    border-radius: 5px;
+    padding: 0.1em 0.45em;
+    white-space: nowrap;
+  }
+
+  .card {
+    background: var(--card);
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem 1.3rem;
+    margin-top: 1.2rem;
+  }
+  .card h3 { margin-bottom: 0.2rem; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 0.9rem;
+    font-variant-numeric: tabular-nums;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.5rem 0.75rem 0.5rem 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  td.money { font-weight: 700; color: var(--good); white-space: nowrap; }
+
+  .faq dt { font-weight: 700; margin-top: 1.2rem; }
+  .faq dd { margin: 0.25rem 0 0; color: var(--muted); }
+
+  .footer-note {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rule);
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  a { color: var(--brass); }
+  a:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+</style>
+
+<main>
+  <p class="eyebrow">Roka's Resonance · AI features</p>
+  <h1>Your Claude Key</h1>
+  <p class="lede">Ten minutes, one website, and about the cost of one coffee a year.
+  This page walks you through the key that turns on Roka's AI features, and
+  what they cost (spoiler: almost nothing).</p>
+
+  <div class="reassure">
+    <p><b>First, take a breath.</b> An "API key" is just a long password that lets
+    Roka talk to Claude (the AI made by Anthropic) on your behalf. That is the
+    whole thing. You are not signing a contract, installing anything, or
+    subscribing to a monthly plan.</p>
+    <p>You pay only for what you actually use, and typical Roka use is
+    <b>a few dollars per school year</b>. And if your district or a colleague
+    already gave you a key, your entire setup is <b>one paste</b>. Start
+    there.</p>
+  </div>
+
+  <h2>What the key turns on</h2>
+  <p>Five things, all inside Roka:</p>
+  <ul>
+    <li><b>Importing sheet music from photos.</b> Point your phone at a cover,
+      and the title, composer, and details fill themselves in.</li>
+    <li><b>Enriching a piece.</b> Difficulty level, a description, program
+      notes, the details you never had time to type.</li>
+    <li><b>Reginald.</b> Ask questions about your program in plain English
+      ("who still has a school clarinet?").</li>
+    <li><b>Importing old concert programs.</b> Feed it a PDF of a past program
+      and your performance history fills in.</li>
+    <li><b>Seating chart AI Assist.</b> Describe what you want in plain words
+      and it arranges the room.</li>
+  </ul>
+  <p>Everything else in Roka (inventory, checkouts, barcode scanning, repair
+  invoice scanning, uniforms, budgets, seating charts you build yourself)
+  works with <b>no key and no cost at all</b>.</p>
+
+  <h2>If you were given a key (most people)</h2>
+  <ol class="steps">
+    <li>
+      <div>
+        <span class="do">Open Roka and click any AI feature.</span>
+        <p>Try Reginald, or Import from Photos in Sheet Music. The first time,
+        Roka simply asks for your key, right there.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <span class="do">Paste the key and click Save and continue.</span>
+        <p>That is the whole setup. The feature you clicked carries on, and
+        every other AI feature works from then on too. (You can also paste it
+        under <b>Settings</b>, in the <b>LLM Configuration</b> tab, and click
+        <b>Test Connection</b> if you like seeing a green light.)</p>
+      </div>
+    </li>
+  </ol>
+
+  <h2>Getting your own key (only if nobody gave you one)</h2>
+  <p>You will need an email address, a credit or debit card (a personal card
+  is fine, this is a $5 purchase), and about ten minutes.</p>
+  <ol class="steps">
+    <li>
+      <div>
+        <span class="do">Go to <a href="https://console.anthropic.com">console.anthropic.com</a> and click Sign Up.</span>
+        <p>Use your school email or a personal one, either works. You can sign
+        up with Google to skip making a new password. If it asks whether you
+        want "Claude" or the "Console," you want the <b>Console</b>. (This is
+        separate from the Claude chatbot app, and you do not need a Claude
+        subscription.)</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <span class="do">Add credits under Billing.</span>
+        <p>In the left menu, find <b>Billing</b> (it may be under Settings).
+        Add your card and buy the smallest amount of credits, <b>$5</b>. This
+        is like putting money on a copy card: it only spends as you use it.</p>
+        <p>While you are there, make sure <b>auto-reload is off</b> if you want
+        a hard ceiling on spending. With auto-reload off, the absolute most
+        you can ever be charged is what you chose to put in.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <span class="do">Create the key under API Keys.</span>
+        <p>In the left menu, click <b>API Keys</b>, then <b>Create Key</b>.
+        Name it anything ("Roka" is fine) and click create.</p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <span class="do">Copy the key right away.</span>
+        <p>It looks like <span class="type-this">sk-ant-api03-…</span> and is
+        shown <b>only once</b>. Copy it and paste it somewhere safe for the
+        next two minutes (a sticky note file is fine, you will delete it
+        after). If you lose it, no harm done: delete that key and create a
+        new one.</p>
+      </div>
+    </li>
+  </ol>
+
+  <p>Then paste it into Roka exactly as in the section above, and delete the
+  sticky note copy.</p>
+
+  <h2>What it actually costs</h2>
+  <p>These are real-world numbers from Roka's pilot use, on the default
+  (cheapest) Claude model. Your mileage will vary a little, but not by much.</p>
+  <table>
+    <thead>
+      <tr><th>What you do</th><th>Roughly costs</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Photographing and importing one piece of sheet music</td><td class="money">about half a cent</td></tr>
+      <tr><td>Enriching a piece (difficulty, description, details)</td><td class="money">1 to 2 cents</td></tr>
+      <tr><td>Asking the seating chart AI to arrange the room</td><td class="money">1 to 2 cents</td></tr>
+      <tr><td>Asking Reginald a question</td><td class="money">about half a cent</td></tr>
+      <tr><td>A whole year of typical use (hundreds of pieces, plenty of questions)</td><td class="money">$5 to $10</td></tr>
+    </tbody>
+  </table>
+  <div class="card">
+    <h3>Sharing one key at your school</h3>
+    <p>Three or four directors at one site can share a single key: one person
+    follows Part 1, and everyone pastes the same key into their own Roka in
+    Part 2. Budget $25 to $50 for the year and you will have money left over.
+    Just remember a shared key means shared credits, so pick one person to own
+    the account.</p>
+  </div>
+
+  <h2>Common worries, answered</h2>
+  <dl class="faq">
+    <dt>Is this a subscription?</dt>
+    <dd>No. There is no monthly fee. You buy credits once and they sit there
+    until used. If you never touch an AI feature, you never spend a cent.</dd>
+    <dt>Can it run up my card?</dt>
+    <dd>Not if auto-reload is off. The card is only charged when you choose to
+    buy credits. You can also set a monthly spend limit in the Console.</dd>
+    <dt>What if my key gets out?</dt>
+    <dd>Treat it like a password: do not email it around or post it. If it
+    does leak, log into the Console, delete that key, and make a new one.
+    Takes one minute.</dd>
+    <dt>Is student information safe?</dt>
+    <dd>Roka sends only what a feature needs to do its job: the photo of the
+    music, the invoice image, or the question you typed (Reginald also sees
+    the current-year roster so it can answer questions about your program).
+    Under Anthropic's commercial terms, API data is not used to train their
+    models.</dd>
+    <dt>I heard Claude is free for teachers now. Do I still need this?</dt>
+    <dd>Yes, they are two different things. Claude for Teachers (free for
+    verified US K-12 educators who sign up by June 30, 2027) gives you the
+    Claude chat app itself, which is wonderful for lesson planning and worth
+    claiming. But Roka talks to Claude through the API, which is billed
+    separately, and the free teacher account does not include API credits.
+    Get both: the free account for your own chatting, and the $5 key for
+    Roka.</dd>
+    <dt>Do I need to be techy for any of this?</dt>
+    <dd>If you can set up a Spotify account, you can do this. The scariest
+    part is the name "API key," and you already know it is just a password.</dd>
+  </dl>
+
+  <h2>If the district buys one key for everyone</h2>
+  <p>This is the tidiest option, and it can start small with zero risk of
+  overspending. API credits are <b>prepaid</b>: the district puts a fixed
+  amount on the account, and that amount is a hard ceiling, not an estimate.
+  There is no monthly bill and no way to be charged past what was purchased.</p>
+  <p>Based on a year of real pilot use (about $5 to $10 per active teacher),
+  <b>$500 in prepaid credits comfortably covers roughly 40 music teachers for
+  a school year</b>. The district makes one Anthropic Console account, creates
+  a <b>Workspace</b> per school (each with its own spending cap), and hands
+  each site its own key. The Console shows usage per school in real time, so
+  if the credits ever run low, that is not a budget surprise, it is the
+  evidence for scaling up next year. Teachers then paste the key the first
+  time they click an AI feature, and that is their entire setup.</p>
+
+  <p class="footer-note">Prices are approximate, based on Anthropic's published
+  per-use rates as of this writing; the current numbers are always at
+  anthropic.com/pricing. Questions? Ask the colleague who shared Roka with you, or ask Reginald once
+  your key is in.</p>
+</main>
+</body>
+</html>

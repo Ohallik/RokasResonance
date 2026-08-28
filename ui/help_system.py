@@ -45,6 +45,23 @@ def help_file_path() -> str:
     return ""
 
 
+API_GUIDE_FILE = os.path.join("help", "api_key_guide.html")
+
+
+def open_api_guide(parent=None):
+    """Open the plain-language API key walkthrough in the browser.
+
+    Its own page rather than a section of the main guide, because it is the
+    one document a teacher may need BEFORE anything in Roka works -- and the
+    one most often printed or forwarded whole."""
+    for root in (_app_root(), os.path.dirname(os.path.abspath(sys.argv[0]))):
+        candidate = os.path.join(root, API_GUIDE_FILE)
+        if os.path.exists(candidate):
+            _open_url("file:///" + candidate.replace("\\", "/").lstrip("/"))
+            return
+    open_help("", parent=parent)     # fall back to the main guide
+
+
 def open_help(topic="", parent=None):
     """Open the guide at *topic* (a section id), or at the top when blank.
 

@@ -288,7 +288,10 @@ def _query_anthropic(base_dir: str, model: str, user_prompt: str,
     last_exc = None
     for attempt in range(_MAX_RETRIES):
         try:
-            return _answer(client.messages.create(**kwargs))
+            msg = client.messages.create(**kwargs)
+            import usage_log
+            usage_log.record_response(base_dir, model, msg)
+            return _answer(msg)
         except RateLimitError as e:
             last_exc = e
             delay = _retry_delay(e, attempt, model)
@@ -345,6 +348,8 @@ def _query_anthropic_with_search(base_dir: str, model: str, user_prompt: str,
     for attempt in range(_MAX_RETRIES):
         try:
             resp = client.messages.create(**kwargs)
+            import usage_log
+            usage_log.record_response(base_dir, model, resp)
             # Concatenate all text blocks (reasoning + citation text + final answer)
             return "\n".join(
                 block.text for block in resp.content if hasattr(block, "text")
@@ -406,7 +411,10 @@ def _query_with_images_anthropic(base_dir: str, model: str, user_prompt: str,
     last_exc = None
     for attempt in range(_MAX_RETRIES):
         try:
-            return _answer(client.messages.create(**kwargs))
+            msg = client.messages.create(**kwargs)
+            import usage_log
+            usage_log.record_response(base_dir, model, msg)
+            return _answer(msg)
         except RateLimitError as e:
             last_exc = e
             delay = _retry_delay(e, attempt, model)
@@ -547,6 +555,8 @@ def query(base_dir: str, user_prompt: str, system_prompt: str = None, on_retry=N
                 temperature=0.3,
                 max_tokens=max_tokens,
             )
+            import usage_log
+            usage_log.record_response(base_dir, model, response)
             return response.choices[0].message.content
 
         except RateLimitError as e:
@@ -674,6 +684,8 @@ def query_with_images(
                 temperature=0.2,
                 max_tokens=max_tokens,
             )
+            import usage_log
+            usage_log.record_response(base_dir, model, response)
             return response.choices[0].message.content
 
         except RateLimitError as e:
