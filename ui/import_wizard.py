@@ -140,6 +140,29 @@ class ImportWizard(ttk.Toplevel):
         self._charms_rep = self._file_row(box, "Charms repair log (.csv) — optional",
                                           [("CSV", "*.csv")])
 
+        # Nothing to export?  Some programs never put their instruments into
+        # CutTime, and some have no list at all.  Roka's own blank form is
+        # the way in for them: fill it in Excel, then choose it here.
+        ttk.Separator(box).pack(fill=X, pady=(12, 6))
+        ttk.Label(box, text="Or import from Excel: starting from scratch, or "
+                            "your old records are too out of date to trust? "
+                            "Get Roka's blank inventory form, fill it in "
+                            "(one instrument per row, with dropdowns for the "
+                            "instrument type and size), save it, and choose "
+                            "it below.",
+                  font=("Segoe UI", 9), wraplength=640, justify=LEFT).pack(anchor=W)
+        ttk.Button(box, text="📄 Get the blank inventory form…",
+                   bootstyle=(INFO, OUTLINE),
+                   command=self._get_blank_form).pack(anchor=W, pady=(6, 0))
+        self._roka = self._file_row(box, "Roka inventory form, filled in (.xlsx)",
+                                    [("Excel", "*.xlsx")])
+
+    def _get_blank_form(self):
+        path = offer_blank_form(self, self.db, self.base_dir)
+        if path:
+            self._roka.set(path)
+            self._status.config(text="Fill the form in, save it, then click Import.")
+
     def _file_row(self, parent, label, filetypes):
         var = tk.StringVar()
 
@@ -395,14 +418,15 @@ class ImportWizard(ttk.Toplevel):
         ct = self._cuttime.get().strip()
         ci = self._charms_inv.get().strip()
         cr = self._charms_rep.get().strip()
+        rk = self._roka.get().strip()
         rosters = [r for r in self._rosters if r["path"].get().strip()]
         incoming = self._incoming.get().strip()
-        if not (ct or ci or cr or rosters or incoming):
+        if not (ct or ci or cr or rk or rosters or incoming):
             Messagebox.show_warning("Add at least one file to import.",
                                     title="Nothing chosen", parent=self)
             return
         for label, p in (("CutTime", ct), ("Charms inventory", ci),
-                         ("Charms repair log", cr)):
+                         ("Charms repair log", cr), ("Roka inventory form", rk)):
             if p and not os.path.exists(p):
                 Messagebox.show_warning(f"{label} file not found:\n{p}",
                                         title="File not found", parent=self)
@@ -413,15 +437,27 @@ class ImportWizard(ttk.Toplevel):
         self.update_idletasks()
         lines = []
         try:
-            if ct or ci or cr:
+            if ct or ci or cr or rk:
                 s = isvc.import_inventory(self.db, cuttime_path=ct or None,
                                           charms_inv_path=ci or None,
                                           charms_repair_path=cr or None,
-                                          site_id=self.site_id)
+                                          site_id=self.site_id,
+                                          roka_path=rk or None)
                 lines.append("Inventory:")
                 lines.append(f"  • {s['added']} instruments added"
                              + (f", {s['charms_only_added']} from Charms"
-                                if s['charms_only_added'] else ""))
+                                if s['charms_only_added'] else "")
+                             + (f", {s['roka_added']} from your Roka form"
+                                if s.get('roka_added') else ""))
+                if s.get("roka_existing"):
+                    lines.append(f"  • {s['roka_existing']} rows on the Roka "
+                                 "form were already in the inventory (same "
+                                 "serial number or barcode) and were left as "
+                                 "they were")
+                if s.get("roka_unknown_school"):
+                    lines.append(f"  • {s['roka_unknown_school']} rows named a "
+                                 "school Roka does not have; they went to "
+                                 "this window's school instead")
                 if s["enriched"]:
                     lines.append(f"  • {s['enriched']} updated with Charms "
                                  "purchase details")
@@ -511,6 +547,48 @@ class ImportWizard(ttk.Toplevel):
             leftover = self.db.get_provisional_students(self.school_year)
             if leftover:
                 self.after(150, lambda: self._reconcile(leftover))
+
+
+def offer_blank_form(parent, db, base_dir):
+    """Save Roka's blank inventory form where the teacher chooses and open it
+    in Excel.  Returns the path, or None if they backed out.
+
+    Shared by the import wizard and the Equipment window so the form is the
+    same wherever it is asked for."""
+    import roka_inventory_xlsx
+    from ui.settings_dialog import load_settings
+    try:
+        program = (load_settings(base_dir).get("teacher") or {}).get(
+            "program_type", "band")
+    except Exception:
+        program = "band"
+    try:
+        schools = [dict(s)["name"] for s in db.get_sites()]
+    except Exception:
+        schools = []
+    start = os.path.join(os.path.expanduser("~"), "Downloads")
+    if not os.path.isdir(start):
+        start = os.path.expanduser("~")
+    path = filedialog.asksaveasfilename(
+        parent=parent, title="Save the blank inventory form",
+        initialdir=start, initialfile="Roka Inventory Form.xlsx",
+        defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")])
+    if not path:
+        return None
+    try:
+        roka_inventory_xlsx.write_template(path, program_type=program,
+                                           schools=schools)
+    except Exception as e:
+        Messagebox.show_error(f"Could not write the form:\n{e}",
+                              title="Blank form", parent=parent)
+        return None
+    try:
+        os.startfile(path)
+    except Exception:
+        Messagebox.show_info(f"The form is saved at:\n{path}\n\nOpen it in "
+                             "Excel, fill it in, and save.",
+                             title="Blank form", parent=parent)
+    return path
 
 
 class _ReconcileDialog(ttk.Toplevel):

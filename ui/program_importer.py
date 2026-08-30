@@ -1,6 +1,6 @@
 """
-ui/program_importer.py - Import a concert-program PDF/image to bulk-add
-performance history.
+ui/program_importer.py - Import a concert program (PDF, image, Word or
+Publisher) to bulk-add performance history.
 
 Concert programs are visually laid out (columns, decorative fonts), so we send
 rendered page images to the vision LLM, which extracts every performed piece and
@@ -119,7 +119,49 @@ def extract_program_media(path: str, max_pages: int = 10):
         img.convert("RGB").save(buf, format="PNG")
         images.append({"mime_type": "image/png",
                        "data": base64.b64encode(buf.getvalue()).decode()})
+    elif ext == ".docx":
+        # A Word program that could not be turned into a PDF (no Word on this
+        # computer): read its text straight out of the file.  No page images,
+        # so the text-only pass does the work.
+        text = extract_docx_text(path)
     return images, text
+
+
+def extract_docx_text(path: str) -> str:
+    """The text of a .docx, one line per paragraph, read without Word.
+
+    A .docx is a zip; the words live in word/document.xml.  Paragraphs become
+    lines and tabs stay tabs, which is enough for a program's "piece ... composer"
+    rows to survive.  Headers, footers and text boxes are included too, since
+    programs love a text box."""
+    import zipfile
+    import xml.etree.ElementTree as ET
+    W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    lines = []
+    with zipfile.ZipFile(path) as z:
+        names = [n for n in z.namelist()
+                 if n == "word/document.xml"
+                 or (n.startswith("word/header") and n.endswith(".xml"))
+                 or (n.startswith("word/footer") and n.endswith(".xml"))]
+        names.sort(key=lambda n: (n != "word/document.xml", n))
+        for name in names:
+            try:
+                root = ET.fromstring(z.read(name))
+            except Exception:
+                continue
+            for para in root.iter(W + "p"):
+                parts = []
+                for node in para.iter():
+                    if node.tag == W + "t":
+                        parts.append(node.text or "")
+                    elif node.tag == W + "tab":
+                        parts.append("\t")
+                    elif node.tag in (W + "br", W + "cr"):
+                        parts.append("\n")
+                line = "".join(parts).strip()
+                if line:
+                    lines.append(line)
+    return "\n".join(lines)
 
 
 def parse_program(base_dir: str, path: str, on_retry=None, max_pages=1):
@@ -130,9 +172,9 @@ def parse_program(base_dir: str, path: str, on_retry=None, max_pages=1):
     images, text = extract_program_media(path, max_pages=max_pages)
     if not images and not (text or "").strip():
         raise ValueError(
-            "Couldn't read that file. Microsoft Publisher (.pub) files can't be read "
-            "directly — in Publisher choose File ▸ Export ▸ Create PDF/XPS, then import "
-            "the PDF here."
+            "Couldn't read that file. Roka reads PDFs, images, Word (.docx) and "
+            "Publisher (.pub) programs; if this is one of those and it still won't "
+            "read, export it to PDF (File ▸ Export ▸ Create PDF/XPS) and import that."
         )
     from llm_client import query_with_images, query
     from ui.music_importer import _extract_json
@@ -252,6 +294,45 @@ def convert_publisher_to_pdf(path: str) -> str:
     return out
 
 
+def convert_word_to_pdf(path: str) -> str:
+    """Drive Microsoft Word (via COM) to export a .docx/.doc to PDF, so the
+    program is read the same way a PDF is: page images first, text as backup.
+    Requires Windows with Word installed + pywin32.  Raises RuntimeError
+    otherwise; the caller falls back to reading the .docx text directly."""
+    import tempfile
+    try:
+        import win32com.client  # from pywin32
+    except Exception:
+        raise RuntimeError("the pywin32 package isn't installed")
+    out = os.path.join(tempfile.gettempdir(),
+                       os.path.splitext(os.path.basename(path))[0] + "_rr.pdf")
+    app = doc = None
+    try:
+        app = win32com.client.DispatchEx("Word.Application")
+        app.Visible = False
+        app.DisplayAlerts = 0                      # wdAlertsNone
+        doc = app.Documents.Open(os.path.abspath(path), ReadOnly=True,
+                                 AddToRecentFiles=False)
+        # 17 = wdExportFormatPDF
+        doc.ExportAsFixedFormat(out, 17)
+    except Exception as e:
+        raise RuntimeError(f"couldn't convert the Word file automatically ({e})")
+    finally:
+        try:
+            if doc:
+                doc.Close(False)                   # wdDoNotSaveChanges
+        except Exception:
+            pass
+        try:
+            if app:
+                app.Quit()
+        except Exception:
+            pass
+    if not os.path.exists(out):
+        raise RuntimeError("Word export produced no PDF")
+    return out
+
+
 class ProgramImportDialog(ttk.Toplevel):
     def __init__(self, parent, db, base_dir, paths, mode="band", on_done=None, max_pages=1):
         super().__init__(master=parent)
@@ -306,7 +387,7 @@ class ProgramImportDialog(ttk.Toplevel):
             pass
 
     def _worker(self):
-        # COM (for Publisher conversion) must be initialised on this thread.
+        # COM (for Publisher / Word conversion) must be initialised on this thread.
         try:
             import pythoncom
             pythoncom.CoInitialize()
@@ -321,6 +402,18 @@ class ProgramImportDialog(ttk.Toplevel):
                     use_path = path
                     if path.lower().endswith(".pub"):
                         use_path = convert_publisher_to_pdf(path)
+                    elif path.lower().endswith((".docx", ".doc")):
+                        # Word makes the PDF when it is installed (so the page
+                        # images go to the AI); otherwise a .docx is still
+                        # readable as text, and only an old .doc is stuck.
+                        try:
+                            use_path = convert_word_to_pdf(path)
+                        except RuntimeError as e:
+                            if path.lower().endswith(".doc"):
+                                raise RuntimeError(
+                                    f"{e}. Open it in Word, save it as .docx "
+                                    "or PDF, and import that.")
+                            use_path = path
                     items = parse_program(self.base_dir, use_path,
                                           on_retry=lambda *a, **k: None,
                                           max_pages=self.max_pages)

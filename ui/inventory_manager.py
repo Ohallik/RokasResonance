@@ -1159,8 +1159,10 @@ class InventoryManager(ttk.Frame):
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="📦  Import Data (instruments, rosters, music)…",
                          command=self._open_import_wizard)
-        menu.add_command(label="🗄  Instrument List (CutTime, Charms, CSV)…",
+        menu.add_command(label="🗄  Instrument List (CutTime, Charms, Roka form)…",
                          command=self._import_instrument_list)
+        menu.add_command(label="📄  Get a blank inventory form (Excel)…",
+                         command=self._blank_inventory_form)
         try:
             menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
         finally:
@@ -1171,6 +1173,11 @@ class InventoryManager(ttk.Frame):
         ImportWizard(self.winfo_toplevel(), self.db, self.base_dir,
                      self.db.current_school_year(), site_id=self.site_id)
         self.refresh()
+
+    def _blank_inventory_form(self):
+        """Roka's blank inventory form, for a program starting from scratch."""
+        from ui.import_wizard import offer_blank_form
+        offer_blank_form(self.winfo_toplevel(), self.db, self.base_dir)
 
     def _import_instrument_list(self):
         """One inventory file, straight into this window's school."""
@@ -1195,7 +1202,8 @@ class InventoryManager(ttk.Frame):
             Messagebox.show_error(
                 "That file is not an instrument list Roka recognizes."
                 "\n\nCutTime exports a spreadsheet (.xlsx); Charms exports "
-                "a CSV.",
+                "a CSV; or fill in Roka's blank inventory form (Import ▸ "
+                "Get a blank inventory form).",
                 title="Could not import", parent=self.winfo_toplevel())
             return
         try:
@@ -1204,6 +1212,7 @@ class InventoryManager(ttk.Frame):
                 cuttime_path=path if kind == "cuttime" else None,
                 charms_inv_path=path if kind == "charms" else None,
                 charms_repair_path=path if kind == "charms_repairs" else None,
+                roka_path=path if kind == "roka" else None,
                 site_id=self.site_id)
         except Exception as e:
             Messagebox.show_error(f"That file could not be read.\n\n{e}",

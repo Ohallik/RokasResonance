@@ -508,9 +508,13 @@ class _UpcomingView(ttk.Frame):
         ttk.Label(head, text="🗓  Everything coming up",
                   font=("Segoe UI", fs(12), "bold")).pack(side=LEFT)
         ttk.Label(head, text="Concerts and field trips together, soonest first. "
-                            "Double-click one to open it.",
+                            "Click one to open it.",
                   font=("Segoe UI", fs(8)),
                   foreground=muted_fg()).pack(side=LEFT, padx=(10, 0))
+        # The start of the year is a list of dates on a district calendar,
+        # and typing them one dialog at a time is the slow way in.
+        ttk.Button(head, text="➕ Add several dates…", bootstyle=SUCCESS,
+                   command=self._bulk_add).pack(side=RIGHT)
 
         cols = ("when", "kind", "what", "who", "where")
         self._tree = ttk.Treeview(self, columns=cols, show="headings", height=14)
@@ -520,7 +524,10 @@ class _UpcomingView(ttk.Frame):
             self._tree.heading(c, text=txt)
             self._tree.column(c, width=fs(w), anchor=W)
         self._tree.pack(fill=BOTH, expand=True, padx=14, pady=(4, 8))
-        self._tree.bind("<Double-1>", self._open)
+        # One click.  The line IS the event; selecting it and then having to
+        # find it again in the next window was the complaint.
+        self._tree.bind("<ButtonRelease-1>", self._click)
+        self._tree.bind("<Return>", self._open)
         self._tree.tag_configure("past", foreground=muted_fg())
 
         self._empty = ttk.Label(
@@ -600,13 +607,21 @@ class _UpcomingView(ttk.Frame):
                 tags=("past",) if past else ())
         if not items:
             self._empty.config(
-                text="Nothing on the calendar yet. Add a concert or a field "
-                     "trip with the buttons above and it appears here.")
+                text="Nothing on the calendar yet. Click “Add several dates” "
+                     "to put the year's concerts and trips in at once, or add "
+                     "one at a time under Concerts and Field Trips.")
         else:
             ahead = sum(1 for x in items if not x["date"] or x["date"] >= today)
             self._empty.config(
                 text="%d coming up, %d already done."
                      % (ahead, len(items) - ahead))
+
+    def _click(self, event):
+        iid = self._tree.identify_row(event.y)
+        if not iid or self._tree.identify_region(event.x, event.y) == "heading":
+            return
+        self._tree.selection_set(iid)
+        self._open()
 
     def _open(self, _event=None):
         sel = self._tree.selection()
@@ -617,6 +632,197 @@ class _UpcomingView(ttk.Frame):
         except (ValueError, IndexError):
             return
         self._on_open(row["kind"], row["id"])
+
+    def _bulk_add(self):
+        dlg = _BulkEventsDialog(self, self._db, self._year())
+        self.wait_window(dlg)
+        if dlg.result:
+            self.refresh()
+
+
+class _BulkEventsDialog(ttk.Toplevel):
+    """Put a whole season of dates in at once.
+
+    One line per event: date, concert or field trip, what it is called,
+    where, and when it starts.  The details -- ensembles, attire, itinerary,
+    the field trip packet -- get filled in later on the event itself.  A
+    line with no date is skipped rather than saved as a plan without a day.
+    """
+
+    KINDS = ["Concert", "Field trip"]
+
+    def __init__(self, parent, db, school_year, start_rows=6):
+        super().__init__(parent.winfo_toplevel())
+        self._db = db
+        self._year = school_year
+        self.result = None
+        self.title("Add several dates")
+        self.grab_set()
+        self._rows = []
+
+        ttk.Label(self, text="➕  Add several dates",
+                  font=("Segoe UI", fs(12), "bold"),
+                  bootstyle=PRIMARY).pack(anchor=W, padx=16, pady=(14, 0))
+        ttk.Label(self, text="One line per concert or field trip. Fill in the "
+                             "date, what kind it is, a name, where it is and "
+                             "when it starts; everything else can be added "
+                             "later. Lines with no date are skipped.",
+                  font=("Segoe UI", fs(9)), foreground=muted_fg(),
+                  wraplength=fs(66) * 10, justify=LEFT).pack(
+            anchor=W, padx=16, pady=(2, 8))
+
+        bar = ttk.Frame(self)
+        bar.pack(side=BOTTOM, fill=X, padx=16, pady=12)
+        ttk.Button(bar, text="Save all", bootstyle=SUCCESS,
+                   command=self._save).pack(side=RIGHT)
+        ttk.Button(bar, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=(0, 6))
+        ttk.Button(bar, text="➕ Add a line", bootstyle=(SUCCESS, OUTLINE),
+                   command=self._add_row).pack(side=LEFT)
+        self._count = ttk.Label(bar, text="", font=("Segoe UI", fs(8)),
+                                foreground=muted_fg())
+        self._count.pack(side=LEFT, padx=(10, 0))
+
+        cols = ttk.Frame(self)
+        cols.pack(fill=X, padx=16)
+        for text, w in (("Date", 14), ("Kind", 12), ("Name", 26),
+                        ("Location", 22), ("Start time", 10)):
+            ttk.Label(cols, text=text, width=w,
+                      font=("Segoe UI", fs(9), "bold")).pack(side=LEFT,
+                                                             padx=(0, 4))
+
+        from ui.theme import scroll_body, fit_window
+        self._list = scroll_body(self, fill=BOTH, expand=True,
+                                 padx=(16, 8), pady=(2, 4))
+        for _ in range(start_rows):
+            self._add_row()
+        fit_window(self, 860, 520)
+
+    def _add_row(self):
+        row = ttk.Frame(self._list)
+        row.pack(fill=X, pady=2)
+        rec = {"row": row, "date": tk.StringVar(),
+               "kind": tk.StringVar(value=self.KINDS[0]),
+               "name": tk.StringVar(), "where": tk.StringVar(),
+               "time": tk.StringVar()}
+        # A date picker rather than a bare box: a season's worth of dates is
+        # exactly where a typed year goes wrong by one keystroke.
+        try:
+            de = ttk.DateEntry(row, dateformat="%Y-%m-%d", width=11,
+                               bootstyle=PRIMARY)
+            de.entry.delete(0, "end")            # start blank, not today
+            de.entry.configure(textvariable=rec["date"])
+            de.pack(side=LEFT, padx=(0, 4))
+        except Exception:
+            ttk.Entry(row, textvariable=rec["date"], width=14).pack(
+                side=LEFT, padx=(0, 4))
+        ttk.Combobox(row, textvariable=rec["kind"], values=self.KINDS,
+                     state="readonly", width=10).pack(side=LEFT, padx=(0, 4))
+        ttk.Entry(row, textvariable=rec["name"], width=26).pack(
+            side=LEFT, padx=(0, 4))
+        ttk.Entry(row, textvariable=rec["where"], width=22).pack(
+            side=LEFT, padx=(0, 4))
+        ttk.Entry(row, textvariable=rec["time"], width=10).pack(
+            side=LEFT, padx=(0, 4))
+
+        def remove():
+            row.destroy()
+            try:
+                self._rows.remove(rec)
+            except ValueError:
+                pass
+        ttk.Button(row, text="✕", width=2, bootstyle=(DANGER, OUTLINE, LINK),
+                   command=remove).pack(side=LEFT)
+        self._rows.append(rec)
+
+    @staticmethod
+    def _iso(text):
+        from datetime import datetime as _dt
+        t = (text or "").strip()
+        if not t:
+            return ""
+        for f in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y"):
+            try:
+                return _dt.strptime(t, f).strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+        return None
+
+    def _save(self):
+        from ttkbootstrap.dialogs import Messagebox
+        import field_trip_tools as ft
+        events, bad = [], []
+        for i, rec in enumerate(self._rows, 1):
+            date = self._iso(rec["date"].get())
+            if date == "":
+                continue                           # blank line: skipped
+            if date is None:
+                bad.append(f"line {i} ({rec['date'].get().strip()})")
+                continue
+            kind = rec["kind"].get()
+            name = rec["name"].get().strip() or kind
+            events.append({"date": date, "kind": kind, "name": name,
+                           "where": rec["where"].get().strip(),
+                           "time": rec["time"].get().strip()})
+        if bad:
+            Messagebox.show_warning(
+                "These dates could not be read (use YYYY-MM-DD):\n"
+                + "\n".join(bad), title="Check the dates", parent=self)
+            return
+        if not events:
+            Messagebox.show_warning("Nothing to save: every line is blank.",
+                                    title="Nothing entered", parent=self)
+            return
+        # 2320P asks teachers to keep trips off certain days.  Say so once,
+        # for all of them, before anything is written.
+        warn = []
+        for ev in events:
+            if ev["kind"] != "Field trip":
+                continue
+            try:
+                reasons, _ = ft.blackout_warning(ev["date"], self._year)
+            except Exception:
+                reasons = []
+            if reasons:
+                warn.append(f"{ev['date']} {ev['name']}: "
+                            + "; ".join(str(r) for r in reasons))
+        if warn:
+            if Messagebox.yesno(
+                    "The district asks teachers to avoid these dates for "
+                    "field trips:\n\n" + "\n".join(warn)
+                    + "\n\nSave them anyway?",
+                    title="Blackout dates", parent=self) != "Yes":
+                return
+        n_c = n_t = 0
+        try:
+            for ev in events:
+                if ev["kind"] == "Field trip":
+                    self._db.add_field_trip({
+                        "school_year": self._year, "name": ev["name"],
+                        "destination": ev["where"],
+                        "depart_date": ev["date"], "depart_time": ev["time"],
+                        "return_date": ev["date"],
+                        "trip_type": ft.TRIP_DAY,
+                        "funding": "curricular",
+                        "entry_fee": 0, "transport_cost": 0, "food_cost": 0,
+                        "sub_cost": 0, "other_cost": 0,
+                        "covered": 0, "approved": 0, "sub_assigned": 0,
+                        "bus_requested": 0, "elementary": 0,
+                    })
+                    n_t += 1
+                else:
+                    self._db.add_concert({
+                        "school_year": self._year, "title": ev["name"],
+                        "concert_date": ev["date"], "start_time": ev["time"],
+                        "location": ev["where"], "offsite": 0,
+                    })
+                    n_c += 1
+        except Exception as e:
+            Messagebox.show_error(f"Could not save:\n{e}", title="Not saved",
+                                  parent=self)
+            return
+        self.result = {"concerts": n_c, "trips": n_t}
+        self.destroy()
 
 
 class _PerformancesTab(_SwitcherTab):
@@ -649,9 +855,20 @@ class _PerformancesTab(_SwitcherTab):
         return FieldTripsView(self._host, self._db, self._main_db,
                               self._base_dir)
 
-    def _open_one(self, kind, _item_id):
-        """Double-clicking a line goes to the window that owns it."""
-        self._show("concerts" if kind == "concert" else "trips")
+    def _open_one(self, kind, item_id):
+        """A click on a line goes to that event, not just to its window."""
+        key = "concerts" if kind == "concert" else "trips"
+        self._show(key)
+        view = self._views.get(key)
+        if view is None or item_id is None:
+            return
+        try:
+            if kind == "concert":
+                view.focus_concert(item_id)
+            else:
+                view.focus_trip(item_id)
+        except Exception:
+            pass
 
     def refresh(self):
         # The dated list is the one that goes stale when something is added in

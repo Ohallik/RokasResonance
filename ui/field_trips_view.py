@@ -196,6 +196,7 @@ class FieldTripsView(ttk.Frame):
             w.destroy()
         for w in self._done_rows.winfo_children():
             w.destroy()
+        self._card_widgets = {}
         students = self._students()
         trips = [dict(t) for t in self.db.get_field_trips(self._year())]
 
@@ -261,6 +262,43 @@ class FieldTripsView(ttk.Frame):
                       font=("Segoe UI", fs(9)), foreground=muted_fg()
                       ).pack(anchor=W, padx=6, pady=6)
 
+    def focus_trip(self, trip_id):
+        """Go straight to one trip: unfold its card and scroll to it, or open
+        it if it has already happened.  A click on the Upcoming list lands
+        here, and the teacher has already said which trip they want."""
+        try:
+            row = self.db.get_field_trip(trip_id)
+        except Exception:
+            row = None
+        if not row:
+            return
+        t = dict(row)
+        days = ct.days_until(t.get("depart_date"))
+        if days is not None and days < 0:
+            self.refresh()
+            _PastTripDialog(self, self._year(), t, self.db, editable=True)
+            return
+        folded = getattr(self, "_folded", None)
+        if folded is None:
+            folded = self._folded = {x["id"] for x in
+                                     (dict(r) for r in
+                                      self.db.get_field_trips(self._year()))}
+        folded.discard(trip_id)
+        self.refresh()
+
+        def _scroll():
+            card = getattr(self, "_card_widgets", {}).get(trip_id)
+            if card is None:
+                return
+            try:
+                self._cards.update_idletasks()
+                total = max(self._cards.winfo_height(), 1)
+                self._cards._canvas.yview_moveto(
+                    max(0.0, (card.winfo_y() - 4) / total))
+            except Exception:
+                pass
+        self.after_idle(_scroll)
+
     def _collapsed(self, trip_id):
         return trip_id in getattr(self, "_folded", set())
 
@@ -302,6 +340,7 @@ class FieldTripsView(ttk.Frame):
         head_lbl.pack(side=LEFT)
         card.configure(labelwidget=head)
         card.pack(fill=X, padx=6, pady=6)
+        self._card_widgets[t["id"]] = card
 
         def _toggle(_e=None, i=t["id"]):
             self._toggle_collapsed(i)

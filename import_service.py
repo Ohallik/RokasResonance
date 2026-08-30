@@ -22,6 +22,7 @@ from datetime import datetime
 import synergy_import
 import cuttime_import
 import charms_import
+import roka_inventory_xlsx
 
 
 def _norm_date(s):
@@ -262,14 +263,17 @@ def _merge_csv(existing, new):
 def detect_inventory_format(path):
     """What an inventory file is, worked out from the file itself.
 
-    Returns "cuttime", "charms", "charms_repairs", "charms_xlsx" (a Charms
-    export re-saved as .xlsx, which cannot be read), or None.  A teacher
-    handed us the export their old program produced; asking them which
-    program produced it is asking a question the file already answers, and
-    a wrong answer imports the wrong columns silently.
+    Returns "roka" (Roka's own blank inventory form, filled in), "cuttime",
+    "charms", "charms_repairs", "charms_xlsx" (a Charms export re-saved as
+    .xlsx, which cannot be read), or None.  A teacher handed us the export
+    their old program produced; asking them which program produced it is
+    asking a question the file already answers, and a wrong answer imports
+    the wrong columns silently.
     """
     ext = os.path.splitext(path or "")[1].lower()
     if ext in (".xlsx", ".xlsm", ".xls"):
+        if roka_inventory_xlsx.sniff(path):
+            return "roka"
         kind = cuttime_import.sniff(path)
         if kind == "charms_shaped":
             return "charms_xlsx"
@@ -283,15 +287,45 @@ def detect_inventory_format(path):
 
 
 def import_inventory(db, cuttime_path=None, charms_inv_path=None,
-                     charms_repair_path=None, site_id=None):
-    """Import inventory from CutTime and/or Charms and recreate current loans +
-    repair history.  Returns a summary of what happened.
+                     charms_repair_path=None, site_id=None, roka_path=None):
+    """Import inventory from CutTime and/or Charms (and/or a filled-in Roka
+    inventory form) and recreate current loans + repair history.  Returns a
+    summary of what happened.
 
     ``site_id`` puts the instruments at one school, for a 5th grade teacher
-    bringing an elementary inventory across in their first year."""
+    bringing an elementary inventory across in their first year.  A Roka
+    form can name a school per row; that wins over ``site_id``."""
     summary = {"added": 0, "enriched": 0, "charms_only_added": 0,
-               "repairs": 0, "loans": 0, "loans_unmatched": 0}
+               "repairs": 0, "loans": 0, "loans_unmatched": 0,
+               "roka_added": 0, "roka_existing": 0, "roka_unknown_school": 0}
     pending_loans = []                    # (instrument_id, checkout dict)
+
+    # 0) Roka's own form: an inventory typed from scratch.  Rows already in
+    #    the inventory (same serial / barcode / asset number) are left as
+    #    they are, so a form can be re-imported after adding a few rows.
+    if roka_path:
+        sites = {}
+        try:
+            for s in db.get_sites():
+                s = dict(s)
+                sites[s["name"].strip().lower()] = s["id"]
+        except Exception:
+            pass
+        for inst in roka_inventory_xlsx.parse_roka_inventory(roka_path):
+            row = _match_instrument(db, inst)
+            if row:
+                summary["roka_existing"] += 1
+                continue
+            where = site_id
+            want = (inst.get("_site") or "").strip().lower()
+            if want:
+                if want in sites:
+                    where = sites[want]
+                else:
+                    summary["roka_unknown_school"] += 1
+            db.add_instrument(_clean(inst, where))
+            summary["added"] += 1
+            summary["roka_added"] += 1
 
     # 1) CutTime = authoritative current inventory.
     if cuttime_path:

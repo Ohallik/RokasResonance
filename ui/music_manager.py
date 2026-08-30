@@ -1225,20 +1225,22 @@ class MusicManager(ttk.Frame):
         if not ensure_llm_ready(self.winfo_toplevel(), self.base_dir):
             return
         paths = filedialog.askopenfilenames(
-            title="Select one or more concert programs (PDF, Publisher, or image)",
+            title="Select one or more concert programs (PDF, Word, Publisher, or image)",
             parent=self.winfo_toplevel(),
-            filetypes=[("Programs", "*.pdf *.pub *.png *.jpg *.jpeg *.tif *.tiff"),
-                       ("PDF", "*.pdf"), ("Publisher", "*.pub"),
+            filetypes=[("Programs", "*.pdf *.docx *.doc *.pub *.png *.jpg *.jpeg "
+                                    "*.tif *.tiff"),
+                       ("PDF", "*.pdf"), ("Word", "*.docx *.doc"),
+                       ("Publisher", "*.pub"),
                        ("Images", "*.png *.jpg *.jpeg *.tif *.tiff"),
                        ("All files", "*.*")],
         )
         paths = list(paths)
         if not paths:
             return
-        bad = [p for p in paths if p.lower().endswith((".pptx", ".docx", ".doc"))]
+        bad = [p for p in paths if p.lower().endswith((".pptx", ".ppt"))]
         if bad:
             Messagebox.show_warning(
-                "Word/PowerPoint files can't be read. Export them to PDF first, then import.",
+                "PowerPoint files can't be read. Export them to PDF first, then import.",
                 title="Unsupported File", parent=self.winfo_toplevel())
             return
 

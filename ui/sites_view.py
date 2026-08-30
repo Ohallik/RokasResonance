@@ -102,12 +102,22 @@ class SitesPanel(ttk.Frame):
                 include_inactive=show_archived)]
         except Exception:
             sites = []
+        home = ""
+        try:
+            import os as _os
+            from ui.settings_dialog import school_name
+            home = school_name(_os.path.dirname(
+                _os.path.abspath(self.db.db_path))).strip().lower()
+        except Exception:
+            pass
         for s in sites:
             archived = not s["is_active"]
+            primary = bool(home) and s["name"].strip().lower() == home
             self.tree.insert("", "end", iid=str(s["id"]),
                              tags=("archived",) if archived else (),
                              values=(
-                s["name"] + ("   (archived)" if archived else ""),
+                ("★ " if primary else "") + s["name"]
+                + ("   (archived)" if archived else ""),
                 _LEVEL_LABEL.get(s["level"], s["level"] or ""),
                 _PROGRAM_LABEL.get(s["program"], s["program"] or "—"),
                 "charged" if s["charges_fees"] else "none",

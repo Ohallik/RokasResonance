@@ -70,12 +70,17 @@ def family_for(name: str) -> str:
 FRACTIONAL_SIZES = ["1/16", "1/10", "1/8", "1/4", "1/2", "3/4", "7/8", "4/4 (full)"]
 VIOLA_SIZES = ['12"', '13"', '14"', '15"', '15.5"', '16"', '16.5"']
 BASS_SIZES = ["1/8", "1/4", "1/2", "3/4", "7/8", "4/4 (full)"]
+# Tubas too: most middle schools own 3/4 tubas and high schools full size,
+# and which one a school has is worth knowing when instruments move between
+# buildings.
+TUBA_SIZES = ["3/4", "4/4 (full)"]
 
 # Which list a given instrument should offer.
 _SIZE_CHOICES = [
     (("viola",), VIOLA_SIZES),
     (("string bass", "double bass", "upright bass", "contrabass"), BASS_SIZES),
     (("violin", "cello", "fiddle"), FRACTIONAL_SIZES),
+    (("tuba", "sousaphone"), TUBA_SIZES),
 ]
 
 

@@ -219,11 +219,14 @@
 
   <h3>The order to set things up</h3>
   <ol class="steps">
-    <li>Answer the few questions on the first run screen (your name, your
-      school, and whether you teach band, choir, orchestra or elementary). This
-      sets up your class list for you.</li>
-    <li>Bring in your existing data if you have any, from CutTime, Charms or
-      Synergy. See <a href="#import">Bringing in your old data</a>.</li>
+    <li>Answer the three questions on the first run screen: your name,
+      whether you teach band, choir, orchestra or elementary, and which
+      school(s) you are at, with one marked as your primary site. This sets up
+      a starting class list for you.</li>
+    <li>Say whether to upload your class lists and inventory now or later.
+      "Now" opens the import screen straight away; "later" means Equipment
+      (inventory) and Students (class lists) whenever you are ready. See
+      <a href="#import">Bringing in your old data</a>.</li>
     <li>Import this year's class lists so your roster is real. See
       <a href="#students">Manage students</a>.</li>
     <li>Check instruments out to students. See
@@ -303,7 +306,21 @@
     <tr><td>Charms (.csv)</td><td>Inventory plus repair history, vendors and
       purchase order details that CutTime does not export</td></tr>
     <tr><td>Synergy (.csv)</td><td>Class lists, one file per class</td></tr>
+    <tr><td>Roka inventory form (.xlsx)</td><td>An inventory typed in from
+      scratch, for a program with nothing to export</td></tr>
   </table>
+
+  <h4>Starting an inventory from nothing</h4>
+  <p>If your instruments were never in CutTime, or your last list is a
+  ten-year-old Charms record, do not import that. On the import screen (or
+  Equipment ▸ Import) click <span class="btn-ref">Get the blank inventory
+  form</span>. It saves an Excel sheet with one row per instrument and
+  dropdowns for the instrument type (which decides the accessories on the
+  check-out form), the size for strings and tubas, the condition, and your
+  schools if you have more than one. Fill it in, save it, and choose it under
+  "Roka inventory form". Rows already in your inventory (same serial number
+  or barcode) are left alone, so you can add to the sheet and import it
+  again.</p>
 
   <h4>How to export a class list from Synergy</h4>
   <ol class="steps">
@@ -568,7 +585,9 @@
       over what it found before saving.</li>
     <li><span class="btn-ref">📄 Import Program</span> reads an old concert
       program and adds everything on it to your performance history in one go.
-      This is the quick way to record years of past concerts.</li>
+      It takes a PDF, a Word document, a Publisher file, or a photo of the
+      printed program. This is the quick way to record years of past
+      concerts.</li>
   </ul>
 
   <h3>Performances</h3>

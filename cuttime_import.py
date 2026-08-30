@@ -119,8 +119,13 @@ def parse_cuttime_inventory(path):
     if not rows:
         return []
     headers = rows[0]
+    # Two shapes: the export CutTime produces ("Type", "Serial #", "Owner
+    # ID", "Year purchased"), and CutTime's own blank IMPORT sheet, which a
+    # teacher with nothing in CutTime may have filled in by hand instead
+    # ("Instrument Type*", "Serial Number", "Owner Identifier", "Year of
+    # Purchase", "Notes").  Both are read.
     col = {
-        "type": _index_of(headers, "Type"),
+        "type": _index_of(headers, "Type", "Instrument Type"),
         "make": _index_of(headers, "Make", "Brand"),
         "model": _index_of(headers, "Model"),
         "serial": _index_of(headers, "Serial #", "Serial"),
@@ -132,7 +137,8 @@ def parse_cuttime_inventory(path):
         "cond_comment": _index_of(headers, "Condition comment"),
         "value": _index_of(headers, "Current value"),
         "price": _index_of(headers, "Purchase price"),
-        "year": _index_of(headers, "Year purchased"),
+        "year": _index_of(headers, "Year purchased", "Year of Purchase"),
+        "notes": _index_of(headers, "Notes"),
         "status": _index_of(headers, "Status"),
         "a_first": _index_of(headers, "Assigned member first"),
         "a_last": _index_of(headers, "Assigned member last"),
@@ -159,6 +165,9 @@ def parse_cuttime_inventory(path):
         # CutTime's boilerplate "Imported inspection" comment isn't useful.
         if comment.lower() == "imported inspection":
             comment = ""
+        notes = cell(row, "notes")
+        if notes and notes != comment:
+            comment = f"{comment}; {notes}" if comment else notes
         rec = {
             "category": instrument_family(itype),
             "description": itype,

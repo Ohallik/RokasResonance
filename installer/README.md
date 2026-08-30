@@ -13,9 +13,10 @@ an additional distribution path you can test in parallel.
 - Bundles Python + all dependencies inside the `.exe` — end user does not need Python installed
 - User data (profiles, database, settings) stays in `%LOCALAPPDATA%\RokasResonance`, so the copy-files build and the installed build share the same data on the same machine
 
-On a brand-new machine the app runs a one-time **first-run wizard** (name / school /
-focus → classes → optional CutTime/Charms/Synergy import), so a teacher is set up
-without touching any files by hand.
+On a brand-new machine the app runs a one-time **first-run wizard** (name, what
+they teach, their school(s) with one marked primary, then "upload class lists and
+inventory now or later?"), so a teacher is set up without touching any files by
+hand.
 
 ## One-time prerequisites
 

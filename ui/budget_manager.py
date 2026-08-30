@@ -343,12 +343,12 @@ class BudgetManager(ttk.Frame):
 
     def _add_txn(self):
         _TxnDialog(self.winfo_toplevel(), self.db, self._year_var.get(),
-                   on_done=self.refresh)
+                   on_done=self.refresh, site_id=self.site_id)
 
     def _add_field_trip(self):
         _FieldTripDialog(self.winfo_toplevel(), self.db, self.base_dir,
                          self._year_var.get(), program_type=self.program_type,
-                         on_done=self.refresh)
+                         on_done=self.refresh, site_id=self.site_id)
 
     def _edit_txn(self):
         r = self._selected()
@@ -368,7 +368,7 @@ class BudgetManager(ttk.Frame):
                 title="Auto-linked", parent=self)
             return
         _TxnDialog(self.winfo_toplevel(), self.db, self._year_var.get(),
-                   txn=r, on_done=self.refresh)
+                   txn=r, on_done=self.refresh, site_id=self.site_id)
 
     def _delete_txn(self):
         r = self._selected()
@@ -477,12 +477,17 @@ class BudgetManager(ttk.Frame):
 # ── Add / edit transaction ─────────────────────────────────────────────────────
 
 class _TxnDialog(ttk.Toplevel):
-    def __init__(self, parent, db, school_year, txn=None, on_done=None):
+    def __init__(self, parent, db, school_year, txn=None, on_done=None,
+                 site_id=None):
         super().__init__(master=parent)
         self.db = db
         self.school_year = school_year
         self.txn = txn
         self.on_done = on_done
+        # The school this window is showing.  A new transaction belongs to it;
+        # without this the Save button read an attribute that was never set,
+        # and the error went to a console the shipped app does not have.
+        self.site_id = site_id
         self.title("Edit Transaction" if txn else "Add Transaction")
         self.resizable(False, False)
         self.grab_set()
@@ -596,6 +601,12 @@ class _TxnDialog(ttk.Toplevel):
         except ValueError:
             Messagebox.show_warning("Amount must be a number.", title="Invalid", parent=self)
             return
+        txn_date = _iso_date(self._date.get())
+        if not txn_date:
+            Messagebox.show_warning(
+                "Enter the date as YYYY-MM-DD (or 8/29/2026).",
+                title="Invalid date", parent=self)
+            return
         sid = None
         stu = self._stu.get().strip()
         for nm, _id in self._students:
@@ -603,7 +614,7 @@ class _TxnDialog(ttk.Toplevel):
                 sid = _id
                 break
         data = {
-            "txn_date": self._date.get().strip(),
+            "txn_date": txn_date,
             "description": self._desc.get().strip(),
             "category": self._cat.get().strip(),
             "kind": self._kind.get(),
@@ -615,14 +626,38 @@ class _TxnDialog(ttk.Toplevel):
             "invoice_no": self._invoice.get().strip(),
             "notes": self._notes.get("1.0", "end").strip(),
         }
-        if self.txn and self.txn.get("id"):
-            self.db.update_budget_transaction(self.txn["id"], data)
-        else:
-            data["site_id"] = self.site_id
-            self.db.add_budget_transaction(data)
+        try:
+            if self.txn and self.txn.get("id"):
+                self.db.update_budget_transaction(self.txn["id"], data)
+            else:
+                data["site_id"] = self.site_id
+                self.db.add_budget_transaction(data)
+        except Exception as e:
+            # Say so.  A save that fails without a word looks like a button
+            # that does nothing.
+            Messagebox.show_error(f"Could not save this transaction:\n{e}",
+                                  title="Not saved", parent=self)
+            return
         if self.on_done:
             self.on_done()
         self.destroy()
+
+
+def _iso_date(text):
+    """A typed date as YYYY-MM-DD, or "" when it is not a date.
+
+    The budget is filtered by comparing date strings, so "8/29/2026" would
+    save fine and then never appear in any school year.  Accept the ways
+    people type a date and store the one spelling the filter understands."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(t, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return ""
 
 
 # ── Field trip cost sheet ───────────────────────────────────────────────────────
@@ -634,13 +669,15 @@ class _FieldTripDialog(ttk.Toplevel):
     """Mirror the district field-trip cost form: entry fee, transportation, a
     substitute rate (editable, remembered), food, other → one Field Trip expense."""
 
-    def __init__(self, parent, db, base_dir, school_year, program_type="band", on_done=None):
+    def __init__(self, parent, db, base_dir, school_year, program_type="band",
+                 on_done=None, site_id=None):
         super().__init__(master=parent)
         self.db = db
         self.base_dir = base_dir
         self.school_year = school_year
         self.program_type = program_type
         self.on_done = on_done
+        self.site_id = site_id
         self._rates = self._load_rates()
         self._trip_ens_vars = {}
         self.title("Field Trip Costs")
@@ -850,6 +887,12 @@ class _FieldTripDialog(ttk.Toplevel):
         if total <= 0:
             Messagebox.show_warning("Enter at least one cost.", title="No Costs", parent=self)
             return
+        txn_date = _iso_date(self._date.get())
+        if not txn_date:
+            Messagebox.show_warning(
+                "Enter the date as YYYY-MM-DD (or 8/29/2026).",
+                title="Invalid date", parent=self)
+            return
         self._save_rates()
         tagged = self._tagged_ensembles()
         parts = []
@@ -862,18 +905,23 @@ class _FieldTripDialog(ttk.Toplevel):
             parts.append(f"Substitute ({self._sub_choice.get()}): {_money(self._sub_cost())}")
         if tagged:
             parts.append("Ensembles: " + ", ".join(tagged))
-        self.db.add_budget_transaction({
-            "site_id": self.site_id,
-            "txn_date": self._date.get().strip(),
-            # The Category column beside it already says Field Trip.
-            "description": self._trip.get().strip(),
-            "category": "Field Trip",
-            "kind": "expense",
-            "amount": total,
-            "funding_source": self._src.get().strip(),
-            "student_id": None,
-            "notes": "; ".join(parts),
-        })
+        try:
+            self.db.add_budget_transaction({
+                "site_id": self.site_id,
+                "txn_date": txn_date,
+                # The Category column beside it already says Field Trip.
+                "description": self._trip.get().strip(),
+                "category": "Field Trip",
+                "kind": "expense",
+                "amount": total,
+                "funding_source": self._src.get().strip(),
+                "student_id": None,
+                "notes": "; ".join(parts),
+            })
+        except Exception as e:
+            Messagebox.show_error(f"Could not save this field trip:\n{e}",
+                                  title="Not saved", parent=self)
+            return
 
         # Assign per-student trip fees to the attending ensembles
         msg = "Field trip expense saved."

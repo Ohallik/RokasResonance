@@ -248,6 +248,7 @@ class ConcertsView(ttk.Frame):
             w.destroy()
         for w in self._done_rows.winfo_children():
             w.destroy()
+        self._card_widgets = {}
         concerts = [dict(c) for c in self.db.get_concerts(self._year())]
         # A concert that has now happened puts its repertoire into the music
         # library's performance history.  Idempotent, so running it on every
@@ -366,6 +367,34 @@ class ConcertsView(ttk.Frame):
                 pass
         self.after_idle(_restore)
 
+    def focus_concert(self, concert_id):
+        """Go straight to one concert: unfold its card and scroll to it, or
+        open it if it has already happened.  This is what a click on the
+        Upcoming list means -- the teacher chose the concert there and should
+        not have to find it a second time here."""
+        try:
+            row = self.db.get_concert(concert_id)
+        except Exception:
+            row = None
+        if not row:
+            return
+        c = dict(row)
+        days = ct.days_until(c.get("concert_date"))
+        if days is not None and days < 0:
+            self.refresh()
+            _PastConcertDialog(self, self._year(), c, self.db)
+            return
+        folded = getattr(self, "_folded", None)
+        if folded is None:
+            # First open: everything else starts folded, this one open.
+            folded = self._folded = {x["id"] for x in
+                                     (dict(r) for r in
+                                      self.db.get_concerts(self._year()))}
+        folded.discard(concert_id)
+        self.refresh()
+        self.after_idle(lambda: _scroll_to_card(self._cards, concert_id,
+                                                getattr(self, "_card_widgets", {})))
+
     def _collapsed(self, concert_id):
         return concert_id in getattr(self, "_folded", set())
 
@@ -399,6 +428,7 @@ class ConcertsView(ttk.Frame):
         head_lbl.pack(side=LEFT)
         card.configure(labelwidget=head)
         card.pack(fill=X, padx=6, pady=6)
+        self._card_widgets[c["id"]] = card
 
         def _toggle(_e=None, i=c["id"]):
             self._toggle_collapsed(i)
@@ -880,6 +910,19 @@ class ConcertsView(ttk.Frame):
 
 
 # ═══════════════════════════════════════════ Past-concert viewer ═════════════
+
+def _scroll_to_card(inner, item_id, widgets):
+    """Scroll a card list so the card for ``item_id`` is at the top."""
+    card = widgets.get(item_id)
+    if card is None:
+        return
+    try:
+        inner.update_idletasks()
+        total = max(inner.winfo_height(), 1)
+        inner._canvas.yview_moveto(max(0.0, (card.winfo_y() - 4) / total))
+    except Exception:
+        pass
+
 
 class _PastConcertDialog(ttk.Toplevel):
     """Read-only look at a finished concert — when, where, who played what —

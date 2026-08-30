@@ -9,7 +9,8 @@ Acknowledgements, Upcoming Performances) plus personnel pages in score order.
 Everything lands in ordinary text boxes the teacher can restyle or move.
 
 Requires Windows + Microsoft Publisher + pywin32 (already app dependencies —
-the concert-program importer uses the same COM bridge to read .pub files).
+the concert-program importer uses the same COM bridge to read .pub and
+Word files).
 """
 
 from concert_tools import (fmt_date, ensembles_list, mark_name, marks_legend,
