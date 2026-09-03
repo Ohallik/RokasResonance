@@ -94,6 +94,7 @@ class SeatingChartView(ttk.Frame):
         self._perc = []
         self._unseated = []
         self._unresolved = []
+        self._auto_added = []
         self._image = None
         self._photo = None
         self._seat_boxes = {}
@@ -898,6 +899,7 @@ class SeatingChartView(ttk.Frame):
         self._roster = {s["id"]: s for s in roster}
         zones, side_zones, zone_cols, anchors = self._effective_placement(caps)
         self._unseated = []
+        self._auto_added = []
 
         self._jazz_rhythm = []
         if self._cfg.get("jazz_mode") and from_layout is None:
@@ -920,9 +922,44 @@ class SeatingChartView(ttk.Frame):
                 return self._roster.get(sid)
 
             rows = [[seat(sid) for sid in row] for row in rows_data]
-            self._rows = self._pad(rows, caps)
+            # The room may have changed shape since this arrangement was made
+            # — a longer row, an extra row.  Reflow instead of truncating:
+            # every seat that still exists keeps its occupant, new seats
+            # appear empty, and nobody is silently dropped.
+            while len(rows) < len(caps):
+                rows.append([])
+            bumped = []
+            if len(rows) > len(caps):
+                for row in rows[len(caps):]:
+                    bumped.extend(x for x in row if x and not x.get("reserved"))
+                rows = rows[:len(caps)]
+            fitted = []
+            for r, row in enumerate(rows):
+                cap = sc.row_capacity(caps, r)
+                bumped.extend(x for x in row[cap:] if x and not x.get("reserved"))
+                fitted.append(list(row[:cap]) + [None] * max(0, cap - len(row)))
+            self._rows = fitted
             self._perc = [self._roster.get(sid) for sid in perc_data if self._roster.get(sid)]
             self._unresolved = []
+            # Anyone this arrangement doesn't know — a student who joined the
+            # class after the chart was made, or someone bumped by a smaller
+            # room — goes into an empty seat for the teacher to swap into
+            # place.  Everyone already placed stays exactly where they are.
+            placed = ({x.get("id") for row in self._rows for x in row if x}
+                      | {q.get("id") for q in self._perc if q})
+            newcomers = ([s for s in roster if s.get("id") not in placed]
+                         + bumped)
+            if newcomers and not self._cfg.get("jazz_mode"):
+                empties = [(r, c) for r in range(len(self._rows))
+                           for c in range(len(self._rows[r]))
+                           if self._rows[r][c] is None]
+                for s in newcomers:
+                    if not empties:
+                        break
+                    r, c = empties.pop(0)
+                    self._rows[r][c] = s
+                    self._auto_added.append(s.get("name") or "?")
+            self._unseated = newcomers[len(self._auto_added):]
         else:
             built, unresolved, perc, unseated = sc.build_chart(
                 roster, self._cfg["sort_mode"], caps, concert=True,
@@ -993,6 +1030,11 @@ class SeatingChartView(ttk.Frame):
         if self._unresolved:
             pairs = "; ".join(f"{a} & {b}" for a, b in self._unresolved[:4])
             warns.append(f"⚠ Couldn't keep these apart: {pairs}.")
+        if getattr(self, "_auto_added", None):
+            who = ", ".join(self._auto_added[:6])
+            more = "…" if len(self._auto_added) > 6 else ""
+            warns.append(f"➕ New to this chart: {who}{more} — placed in empty "
+                         "seats; click two seats to swap them into place.")
         self._warn_lbl.config(text="   ".join(warns))
 
     # ─────────────────────────────────────────────────────── canvas clicks ────
@@ -1179,6 +1221,14 @@ class SeatingChartView(ttk.Frame):
                                  sc.concert_rank(i), i))
         return uniq
 
+    # Configuration settings that change WHERE people sit.  Everything else
+    # in that dialog — flip, arcs/rows, colors, name display, row sizes —
+    # changes how the SAME arrangement is drawn, and must never scrap
+    # hand-placed seating.
+    _PLACEMENT_KEYS = ("separate_percussion", "center_tuba", "bass_corner",
+                       "bass_corner_side", "close_gaps", "piano",
+                       "section_order", "section_zones")
+
     def _open_configuration(self):
         program, level = self._chart_program()
         dlg = _ConfigurationDialog(
@@ -1188,6 +1238,8 @@ class SeatingChartView(ttk.Frame):
         if dlg.result is None:
             return
         had_order = bool(self._cfg.get("section_order"))
+        before = {k: self._cfg.get(k) for k in self._PLACEMENT_KEYS}
+        keep = self._layout_ids() if self._has_arrangement() else None
         self._cfg.update(dlg.result)
         self._remember_layout()
         # Zones and section order only mean anything grouped by section.
@@ -1197,7 +1249,15 @@ class SeatingChartView(ttk.Frame):
         if (self._cfg.get("section_order")
                 or self._cfg.get("section_zones") or had_order):
             self._ensure_sections_mode()
-        self._regenerate()
+        # Flipping the room, recoloring, or resizing rows keeps every student
+        # exactly where the teacher put them; only a placement change asks
+        # for seats to be rebuilt.
+        placement_changed = any(self._cfg.get(k) != before[k]
+                                for k in self._PLACEMENT_KEYS)
+        if placement_changed or keep is None or self._cfg.get("jazz_mode"):
+            self._regenerate()
+        else:
+            self._regenerate(from_layout=keep)
 
     def _open_student_setup(self):
         roster = self._resolve_roster()
@@ -1294,6 +1354,11 @@ class SeatingChartView(ttk.Frame):
         self._chart_var.set("")
         self._update_roster_label()
         self._regenerate()
+
+    def _has_arrangement(self):
+        """Is anybody actually seated?  An empty grid has nothing to keep."""
+        return (any(x for row in (self._rows or []) for x in row)
+                or any(p for p in (self._perc or [])))
 
     def _layout_ids(self):
         def sid(x):
@@ -1615,7 +1680,13 @@ class SeatingChartView(ttk.Frame):
 
     def refresh(self):
         self._refresh_chart_list()
-        self._regenerate()
+        # Coming back to this tab must not scrap hand-placed seating.  The
+        # arrangement on screen reflows exactly as it is, picking up roster
+        # additions as newcomers in empty seats instead of starting over.
+        if self._has_arrangement() and not self._cfg.get("jazz_mode"):
+            self._regenerate(from_layout=self._layout_ids())
+        else:
+            self._regenerate()
 
 
 # ══════════════════════════════════════════════════════════════ dialogs ══════
