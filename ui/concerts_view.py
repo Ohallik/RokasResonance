@@ -20,6 +20,7 @@ from tkinter import filedialog
 from datetime import datetime
 
 from ui.theme import fs, muted_fg, subtle_fg, fit_window, scroll_body
+from ui.names import display_full
 import concert_tools as ct
 
 
@@ -1617,7 +1618,7 @@ class _HonorsDialog(ttk.Toplevel):
         self._rows = []
         for s in members:
             row = ttk.Frame(inner); row.pack(fill=X, pady=1)
-            name = f"{s.get('first_name') or ''} {s.get('last_name') or ''}".strip()
+            name = display_full(s)
             inst = (s.get("primary_instrument") or "").strip()
             ttk.Label(row, text=f"{name}" + (f"  ({inst})" if inst else ""),
                       width=34, anchor=W).pack(side=LEFT)

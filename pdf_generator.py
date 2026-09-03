@@ -8,6 +8,7 @@ import os
 import re
 from datetime import datetime
 
+from ui.names import display_person
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
 from reportlab.lib import colors
@@ -497,7 +498,9 @@ def generate_loan_form(checkout_data: dict, instrument_data: dict, output_path: 
     story = []
 
     # ── Unpack data ───────────────────────────────────────────────────────
-    student_name = str(checkout_data.get("student_name") or "")
+    # Contracts read "Jensen Kusak", not the roster's "Jensen W." — middle
+    # initials never print; set a Preferred Name to change what does.
+    student_name = display_person(str(checkout_data.get("student_name") or ""))
     grade        = str(checkout_data.get("grade")        or "")
     address      = str(checkout_data.get("address")      or "")
     city         = str(checkout_data.get("city")         or "")
@@ -781,7 +784,7 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str,
                        if c.isalnum() or c in (" ", "_", "-")
                        ).strip().replace(" ", "_")
 
-    safe_name = _safe(checkout["student_name"]) or "unknown"
+    safe_name = _safe(display_person(checkout["student_name"])) or "unknown"
     # The instrument is part of the file name: a student taking home two
     # instruments signs two contracts, and "Name_20260902.pdf" made the
     # second one overwrite the first.  The tag (or the loan id, for untagged

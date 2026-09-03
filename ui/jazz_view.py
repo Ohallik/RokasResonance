@@ -27,6 +27,7 @@ from ttkbootstrap.dialogs import Messagebox
 import jazz_rotation as jr
 import jazz_icons
 from ui.theme import muted_fg, fs
+from ui.names import display_full
 
 
 def _dumps(val):
@@ -1051,8 +1052,7 @@ class _WindsPanel(ttk.Labelframe):
         for r in self._roster:
             row = ttk.Frame(self._table)
             row.pack(fill=X, pady=1)
-            name = (r.get("preferred_name") or r.get("first_name") or "")
-            full = ("%s %s" % (name, r.get("last_name") or "")).strip()
+            full = display_full(r)
             ttk.Label(row, text=full[:19], width=18,
                       font=("Segoe UI", fs(9))).pack(side=LEFT)
             v = tk.StringVar(value=self._sc.jazz_part_label(

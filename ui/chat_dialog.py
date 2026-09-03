@@ -12,6 +12,7 @@ from ttkbootstrap.constants import *
 from collections import Counter
 from datetime import date
 from ui.theme import fs
+from ui.names import display_full, display_last_first
 
 
 # The hand-written UI reference that used to live here has been removed.
@@ -224,7 +225,7 @@ def _build_inventory_summary(db) -> str:
             lines.append("  Students (last, first — grade, guardian names):")
             for s in sorted(students, key=lambda x: ((x.get("last_name") or ""),
                                                      (x.get("first_name") or ""))):
-                name = f"{s.get('last_name') or ''}, {s.get('first_name') or ''}".strip(", ")
+                name = display_last_first(s)
                 grade = s.get("grade") or ""
                 guardians = [s[n] for n in ("parent1_name", "parent2_name")
                              if s.get(n)]
@@ -419,7 +420,7 @@ def _build_money_summary(db, school_year) -> str:
             owed = sum(float(u.get("amount") or 0) for u in unpaid)
             lines.append(f"{name}: {len(unpaid)} student(s) unpaid, ${owed:,.2f} outstanding")
             for u in unpaid[:60]:
-                who = f"{u.get('first_name') or ''} {u.get('last_name') or ''}".strip()
+                who = display_full(u)
                 lines.append(f"  {who or '?'} — ${float(u.get('amount') or 0):,.2f}")
     except Exception:
         return ""

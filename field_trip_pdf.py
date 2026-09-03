@@ -798,7 +798,8 @@ def build_permission_forms(trip, students, path, teacher_name="",
 
 def _student_name(stu):
     try:
-        first = (stu.get("preferred_name") or stu.get("first_name") or "").strip()
+        from ui.names import display_first
+        first = display_first(stu.get("first_name"), stu.get("preferred_name"))
         last = (stu.get("last_name") or "").strip()
         full = f"{first} {last}".strip()
         return full or (stu.get("name") or "").strip()

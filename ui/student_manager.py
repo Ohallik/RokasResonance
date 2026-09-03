@@ -484,8 +484,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             return
         self._dup_prompted = True
         extra = sum(len(g) - 1 for g in groups)
-        names = [f"  • {(g[0]['first_name'] or '').strip()} "
-                 f"{(g[0]['last_name'] or '').strip()}  (×{len(g)})"
+        names = [f"  • {display_full(g[0])}  (×{len(g)})"
                  for g in groups]
         shown = "\n".join(names[:15])
         if len(names) > 15:
@@ -989,7 +988,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         st = self.db.get_student(sid)
         if not st:
             return ""
-        return f"{st['first_name']} {st['last_name']}".strip()
+        return display_full(st)
 
     def _delete_student(self):
         """Remove the checked students, or the highlighted one if none are checked.
@@ -1103,7 +1102,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                 prim = self._sval(s, "primary_instrument") or ""
                 sec = self._sval(s, "secondary_instrument") or ""
                 tree.insert("", "end", iid=str(s["id"]), values=(
-                    f"{s['last_name']}, {s['first_name']}".strip(", "),
+                    display_last_first(s),
                     s["grade"] or "",
                     s["school_year"] or "",
                     prim + (f" / {sec}" if sec else ""),
@@ -1146,7 +1145,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         students usually need a fresh year).  Calls on_done(new_year) on success."""
         parent = parent or self.winfo_toplevel()
         sid = student["id"]
-        name = f"{student['first_name']} {student['last_name']}".strip()
+        name = display_full(student)
         win = ttk.Toplevel(master=parent)
         win.title("Reactivate Student")
         win.resizable(False, False)
@@ -2169,7 +2168,7 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
 
     def _mark_inactive(self):
         student = self.db.get_student(self.student_id)
-        name = f"{student['first_name']} {student['last_name']}".strip() if student else "this student"
+        name = display_full(student) if student else "this student"
         answer = Messagebox.yesno(
             f"Mark {name} as inactive?\n\nThey will be hidden from the student list "
             f"unless 'Show Inactive' is checked.",
@@ -2428,7 +2427,7 @@ class _BulkAssignDialog(_ClassOptionsMixin, ttk.Toplevel):
         for sid in self.student_ids[:limit]:
             st = self.db.get_student(sid)
             if st:
-                out.append(f"{st['first_name']} {st['last_name']}".strip())
+                out.append(display_full(st))
         listed = ", ".join(n for n in out if n)
         rest = len(self.student_ids) - limit
         if rest > 0:

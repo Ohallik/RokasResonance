@@ -16,6 +16,7 @@ from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
 
 from ui.theme import fs, muted_fg, fit_window
+from ui.names import display_person
 from ui.uniform_dialog import UniformDialog, UniformCheckoutDialog
 
 COLS = ("item_number", "garment_type", "size", "color", "condition",
@@ -242,7 +243,7 @@ class UniformManager(ttk.Frame):
             self._detail.insert("1.0", "\n".join(lines))
             for h in self.db.get_uniform_checkout_history(uid):
                 h = dict(h)
-                who = h["student_name"] or "?"
+                who = display_person(h["student_name"]) or "?"
                 out = h["date_assigned"] or "?"
                 back = h["date_returned"] or "still out"
                 self._history.insert("end", f"• {who}\n   {out} → {back}\n")

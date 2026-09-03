@@ -9,6 +9,8 @@ autofill, and the three reminder emails (families, chaperones, teachers).
 import math
 from datetime import datetime, timedelta
 
+from ui.names import display_first, display_full
+
 from concert_tools import fmt_date, parse_date, _member_of, _display_name
 
 TRAVEL_METHODS = ["School Bus", "Charter Bus", "Private Vehicles", "Walking",
@@ -774,8 +776,7 @@ def find_parent_contact(students, name, prefer=None):
                         "name": pname,
                         "phone": (s.get(f"parent{i}_phone") or "").strip(),
                         "email": (s.get(f"parent{i}_email") or "").strip(),
-                        "student": f"{(s.get('first_name') or '').strip()} "
-                                   f"{(s.get('last_name') or '').strip()}".strip(),
+                        "student": display_full(s),
                     }
     return None
 
@@ -923,8 +924,7 @@ def attending_rows(attending):
 
     rows = []
     for s in sorted(attending, key=sort_key):
-        first = ((s.get("preferred_name") or "").strip()
-                 or (s.get("first_name") or "").strip())
+        first = display_first(s.get("first_name"), s.get("preferred_name"))
         rows.append({
             "last_name": (s.get("last_name") or "").strip(),
             "first_name": first,

@@ -19,6 +19,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 
 from ui.theme import muted_fg, fs, fit_window
+from ui.names import display_last_first
 from ui.ensembles import PERIOD_OPTIONS
 
 
@@ -626,7 +627,7 @@ class _ReconcileDialog(ttk.Toplevel):
         self._vars = {}
         for s in provisional:
             v = tk.BooleanVar(value=True)     # default: deactivate the phantom
-            name = f"{s['last_name']}, {s['first_name']}".strip(", ")
+            name = display_last_first(s)
             inst = (s.get("primary_instrument") or "").strip()
             ttk.Checkbutton(inner, text=name + (f"  ({inst})" if inst else ""),
                             variable=v).pack(anchor=W, pady=1)

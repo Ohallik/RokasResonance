@@ -9,6 +9,7 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from ui.theme import muted_fg, fs, bind_copy_menu
+from ui.names import display_person
 
 
 TREEVIEW_COLS = (
@@ -729,7 +730,8 @@ class InventoryManager(ttk.Frame):
             checkout_date = loan["date_out"] or ""
         elif actives:
             status = "Checked Out"
-            checked_out_to = ", ".join(a["student_name"] or "?" for a in actives)
+            checked_out_to = ", ".join(display_person(a["student_name"]) or "?"
+                                       for a in actives)
             checkout_date = actives[0]["date_assigned"] or ""
         else:
             status = "Available"
@@ -769,7 +771,7 @@ class InventoryManager(ttk.Frame):
         history = self.db.get_checkout_history(instrument_id)
         for h in history:
             self._history_tree.insert("", "end", values=(
-                h["student_name"] or "",
+                display_person(h["student_name"]) or "",
                 h["date_assigned"] or "",
                 h["date_returned"] or "Active",
             ))
@@ -907,7 +909,8 @@ class InventoryManager(ttk.Frame):
         # An instrument can be checked out to more than one person; confirm first.
         active = self.db.get_active_checkouts_for_instrument(iid)
         if active:
-            names = ", ".join(a["student_name"] or "?" for a in active)
+            names = ", ".join(display_person(a["student_name"]) or "?"
+                              for a in active)
             if Messagebox.yesno(
                 f"This instrument is already checked out to: {names}.\n\n"
                 "Check it out to an additional person as well?",
@@ -1863,7 +1866,8 @@ class InventoryManager(ttk.Frame):
                 assigned = loan["school"] or ""
             elif actives:
                 status = "Checked Out"
-                assigned = ", ".join(a["student_name"] or "?" for a in actives)
+                assigned = ", ".join(display_person(a["student_name"]) or "?"
+                                     for a in actives)
             else:
                 status = "Available"
                 assigned = ""
@@ -2034,7 +2038,7 @@ class InventoryManager(ttk.Frame):
             is_item = not c.get("instrument_id")
             fill = st["alt_fill"] if r % 2 == 0 else None
             _row(r, [
-                c.get("student_name") or "",
+                display_person(c.get("student_name")) or "",
                 c.get("description") or "",
                 c.get("category") or "",
                 c.get("barcode") or c.get("district_no") or "",

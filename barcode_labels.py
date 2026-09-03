@@ -179,8 +179,9 @@ def export_student_barcodes(students, path):
     items, skipped = [], 0
     for s in students:
         sid = _val(s, "student_id").strip()
+        from ui.names import display_first
         last = _val(s, "last_name").strip()
-        first = _val(s, "first_name").strip()
+        first = display_first(_val(s, "first_name"), _val(s, "preferred_name"))
         grade = _val(s, "grade").strip()
         if not sid:
             skipped += 1

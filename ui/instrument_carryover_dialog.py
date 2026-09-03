@@ -29,6 +29,7 @@ from datetime import datetime
 
 import instrument_sizes as isz
 from ui.theme import fs, muted_fg
+from ui.names import display_full, display_person
 
 # Words the inventory already treats as "still district property, but not
 # usable" — those pieces must never be offered to a student.
@@ -577,8 +578,11 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
             ids |= {r.get("student_id") for r in group
                     if r.get("student_id") is not None}
             names = {n for n in ([_norm(f"{cur.get('first_name') or ''} "
-                                        f"{cur.get('last_name') or ''}")]
+                                        f"{cur.get('last_name') or ''}"),
+                                  _norm(display_full(cur))]
                                  + [_norm(r.get("student_name"))
+                                    for r in group]
+                                 + [_norm(display_person(r.get("student_name") or ""))
                                     for r in group]) if n}
             settled = [c for c in open_checkouts
                        if settled_this_year(c)
@@ -675,7 +679,10 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         ids = {i for i in (cur.get("id"), row.get("student_id")) if i is not None}
         names = {n for n in (_norm(f"{cur.get('first_name') or ''} "
                                    f"{cur.get('last_name') or ''}"),
-                             _norm(row.get("student_name"))) if n}
+                             _norm(display_full(cur)),
+                             _norm(row.get("student_name")),
+                             _norm(display_person(row.get("student_name") or "")))
+                 if n}
         for c in self._already.get(instrument_id, []):
             if c.get("student_id") in ids or _norm(c.get("student_name")) in names:
                 return c
@@ -701,7 +708,8 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                 if mine:
                     label += "  — still has it"
                 elif shared:
-                    holder = (inst.get("checked_out_to") or "someone else").strip()
+                    holder = (display_person(inst.get("checked_out_to") or "")
+                              or "someone else")
                     label = f"⚠ {label}  — already with {holder}"
                 out.append({
                     "label": label, "id": inst["id"],
@@ -743,9 +751,9 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         cb.pack(side=LEFT, padx=(2, 4))
 
         cur = row.get("_current") or {}
-        name = ((cur.get("first_name") and
-                 f"{cur['first_name']} {cur.get('last_name') or ''}".strip())
-                or (row.get("student_name") or "(unknown)").strip())
+        name = (display_full(cur)
+                or display_person(row.get("student_name") or "")
+                or "(unknown)")
         # This year's grade, not the one they were in when they borrowed it.
         grade = str(cur.get("grade") or row.get("grade") or "").strip()
         who = f"{name}" + (f"  (Gr {grade})" if grade else "")
@@ -946,10 +954,12 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
             iid = opt["id"]
             if iid in seen:
                 doubled.append(f"  • {opt['label'].lstrip('⚠ ').split('  —')[0]}"
-                               f"\n      {seen[iid]} and {row.get('student_name')}")
+                               f"\n      {seen[iid]} and "
+                               f"{display_person(row.get('student_name') or '')}")
             else:
-                seen[iid] = row.get("student_name") or "someone"
-        already_shared = [f"  • {row.get('student_name')} → "
+                seen[iid] = (display_person(row.get("student_name") or "")
+                             or "someone")
+        already_shared = [f"  • {display_person(row.get('student_name') or '')} → "
                           f"{opt['label'].split('  —')[0].lstrip('⚠ ')}"
                           for row, opt in picks if opt["shared"]]
         warn = []
@@ -977,9 +987,8 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                 # Check out against THIS year's student record, so the loan and
                 # its rental fee land on the roster the teacher is looking at.
                 sid = cur.get("id") or row.get("student_id")
-                sname = ((cur.get("first_name") and
-                          f"{cur['first_name']} {cur.get('last_name') or ''}".strip())
-                         or row.get("student_name") or "")
+                sname = (display_full(cur)
+                         or display_person(row.get("student_name") or ""))
                 if opt.get("mine"):
                     # They kept it over the summer and it never came back, so
                     # the loan is already open.  Run it on into this year and
@@ -1004,7 +1013,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                     made.append((cid, sname))
                 done += 1
             except Exception as e:
-                failed.append(f"  • {row.get('student_name')}: {e}")
+                failed.append(f"  • {display_person(row.get('student_name') or '')}: {e}")
 
         self.assigned = done + kept
         msg = f"Checked out {done} instrument(s) for {self.school_year}."
