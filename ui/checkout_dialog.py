@@ -334,6 +334,7 @@ class CheckoutDialog(ttk.Toplevel):
             self.instrument_id, student_id, student_name, date_assigned,
             due_date=due_date, rental_type=rental_type,
             charge_fee=getattr(self, "_charges_fees", True),
+            fee_per_instrument=True,
         )
         self.destroy()
 

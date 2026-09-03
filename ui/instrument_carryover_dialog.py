@@ -75,6 +75,46 @@ def _numeric_grade(value):
     return int(text) if text.isdigit() else None
 
 
+# A loan shorter than this was a try-out or a stopgap, not "their instrument",
+# so it comes up unchecked rather than checked out and billed by default.
+MIN_DAYS_TO_CARRY = 30
+
+
+def _days_held(row, year_end):
+    """How long the student kept this instrument last year.  An open loan ran
+    to the end of the year (and beyond); None when a date is unparseable."""
+    out = (row.get("date_assigned") or "")[:10]
+    back = ((row.get("date_returned") or "").strip()[:10]) or year_end
+    try:
+        return (datetime.strptime(back, "%Y-%m-%d")
+                - datetime.strptime(out, "%Y-%m-%d")).days
+    except ValueError:
+        return None
+
+
+def _flag_and_drop_short_stints(rows, year_end):
+    """Stamp _short_days on returned loans held under MIN_DAYS_TO_CARRY, and
+    drop the ones that are mere echoes.
+
+    A days-long overlap beside a real loan of the same kind is a data echo —
+    a summer re-checkout recorded on the wrong unit — not a second
+    instrument, so it is not listed at all.  A short stint that is the
+    student's ONLY loan of that kind stays listed — unchecked — for the
+    teacher to judge."""
+    for r in rows:
+        r["_short_days"] = None
+        if (r.get("date_returned") or "").strip():
+            days = _days_held(r, year_end)
+            if days is not None and days < MIN_DAYS_TO_CARRY:
+                r["_short_days"] = days
+    real_kinds = {(r.get("_who"), isz.base_type(r.get("description") or ""))
+                  for r in rows if r["_short_days"] is None}
+    return [r for r in rows
+            if r.get("_short_days") is None
+            or (r.get("_who"), isz.base_type(r.get("description") or ""))
+            not in real_kinds]
+
+
 def _year_end_holdings(rows):
     """One row per instrument a student was actually holding by June, rather
     than one per check-out event.
@@ -87,7 +127,13 @@ def _year_end_holdings(rows):
     "slot" that was free when it started, and keeping the last of each slot."""
     groups = {}
     for r in rows:
-        who = r.get("student_id") or _norm(r.get("student_name"))
+        # A child imported twice ("Aayush Vaswani" one year, "Aayush C.
+        # Vaswani" the next) has two student rows.  When the caller has
+        # already resolved both spellings to one person on THIS year's
+        # roster (stamped as _who), that identity is what groups — otherwise
+        # the same kid appears twice, once per spelling.
+        who = (r.get("_who") or r.get("student_id")
+               or _norm(r.get("student_name")))
         groups.setdefault((who, isz.base_type(r.get("description") or "")),
                           []).append(r)
 
@@ -95,8 +141,26 @@ def _year_end_holdings(rows):
     for group in groups.values():
         group.sort(key=lambda r: ((r.get("date_assigned") or ""),
                                   (r.get("checkout_id") or 0)))
+        # The same physical instrument recorded twice — a summer re-checkout
+        # under a second student row, a double entry — is ONE instrument:
+        # keep the loan still open, else the latest.
+        by_inst = {}
+        for r in group:
+            iid = r.get("instrument_id")
+            prev = by_inst.get(iid)
+            if prev is None:
+                by_inst[iid] = r
+                continue
+            r_key = (not (r.get("date_returned") or "").strip(),
+                     r.get("date_assigned") or "")
+            p_key = (not (prev.get("date_returned") or "").strip(),
+                     prev.get("date_assigned") or "")
+            if r_key >= p_key:
+                by_inst[iid] = r
         slots = []                      # [(date that slot came free, row)]
         for r in group:
+            if by_inst.get(r.get("instrument_id")) is not r:
+                continue
             out = r.get("date_assigned") or ""
             back = (r.get("date_returned") or "").strip()
             for i, (free_from, _held) in enumerate(slots):
@@ -143,6 +207,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         self.prior_year = db.previous_school_year(self.school_year)
         self.assigned = 0
         self._year_start = db.school_year_bounds(self.school_year)[0]
+        self._prior_year_end = db.school_year_bounds(self.prior_year)[1]
 
         self.title("Carry Over Instrument Assignments")
         self.resizable(True, True)
@@ -222,9 +287,19 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                    command=lambda: self._set_all(True)).pack(side=LEFT, padx=(0, 4))
         ttk.Button(tools, text="Uncheck All", bootstyle=(SECONDARY, OUTLINE),
                    command=lambda: self._set_all(False)).pack(side=LEFT, padx=4)
-        ttk.Label(tools, text="String players who have grown get a ⬆ button on "
-                              "their own row.",
-                  font=("Segoe UI", 8), foreground=muted_fg()).pack(side=LEFT, padx=(12, 4))
+        ttk.Label(tools, text="Show:", font=("Segoe UI", 9)).pack(
+            side=LEFT, padx=(14, 2))
+        self._filter_var = tk.StringVar(value="All periods")
+        self._filter_combo = ttk.Combobox(
+            tools, textvariable=self._filter_var, state="readonly", width=12,
+            values=["All periods"])
+        self._filter_combo.pack(side=LEFT)
+        self._filter_combo.bind("<<ComboboxSelected>>",
+                                lambda e: self._apply_period_filter())
+        ttk.Label(tools, text="☀ = kept it over the summer — already in their "
+                              "hands.  ⬆ = string player who can size up.",
+                  font=("Segoe UI", 8), foreground=muted_fg()).pack(
+            side=LEFT, padx=(12, 4))
         self._count_lbl = ttk.Label(tools, text="", font=("Segoe UI", 9, "bold"))
         self._count_lbl.pack(side=RIGHT)
 
@@ -246,8 +321,8 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         # Column headings, aligned with the row grid below.
         head = ttk.Frame(self)
         head.pack(fill=X, padx=16, pady=(6, 0))
-        for text, w in (("", 3), ("Student", 26), ("Had last year", 34),
-                        ("Assign this year", 44)):
+        for text, w in (("", 3), ("Student", 26), ("Per", 4),
+                        ("Had last year", 34), ("Assign this year", 44)):
             ttk.Label(head, text=text, font=("Segoe UI", 8, "bold"),
                       foreground=muted_fg(), width=w, anchor=W).pack(side=LEFT, padx=2)
 
@@ -305,10 +380,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                  f"keeps two is billed for both. Students who graduated or did "
                  f"not continue are not listed at all.")
 
-        # One row per instrument they finished the year with, not one per
-        # check-out event: repairs and swaps would otherwise each become a
-        # separate instrument to hand out and a separate fee to pay.
-        rows = _year_end_holdings([dict(r) for r in prior])
+        rows = [dict(r) for r in prior]
 
         # Who is on THIS year's roster.  Resolved by identity rather than by the
         # student id stored on the checkout: that id is last year's row, and a
@@ -381,11 +453,23 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                 match = only(by_given, (_given_name(first), last))
                 confidence = "given" if match else None
 
-            grade = _numeric_grade(match.get("grade")) if match else None
             r["_current"] = dict(match) if match else None
             r["_match_confidence"] = confidence
+            r["_who"] = f"cur:{match['id']}" if match else None
+
+        # One row per instrument they finished the year with, not one per
+        # check-out event: repairs and swaps would otherwise each become a
+        # separate instrument to hand out and a separate fee to pay.  Done
+        # AFTER matching, so two spellings of one child collapse into one.
+        rows = _year_end_holdings(rows)
+
+        for r in rows:
+            match = r.get("_current")
+            grade = _numeric_grade(match.get("grade")) if match else None
             r["_past_top"] = (top_grade if match and top_grade and grade
                               and grade > top_grade else None)
+
+        rows = _flag_and_drop_short_stints(rows, self._prior_year_end)
 
         keep_rows = [r for r in rows if r["_current"]]
         # Only assignments that resolve to a current roster entry are listed.
@@ -397,17 +481,51 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         # Anything this student already holds this year — so running the screen
         # twice can't check the same horn out twice or bill the fee twice.
         self._already = {}
+        open_checkouts = []
         try:
             for c in self.db.get_open_instrument_checkouts():
                 c = dict(c)
+                open_checkouts.append(c)
                 self._already.setdefault(c.get("instrument_id"), []).append(c)
         except Exception:
             pass
 
+        # Rows the teacher has already dealt with this year are CLEARED from
+        # the list rather than shown unchecked: working a period at a time
+        # means reopening this screen often, and rereading twenty settled
+        # names to find the three left is how one gets missed.
+        inst_desc = {}
+        try:
+            for i in self.db.get_instruments_with_status(include_inactive=True):
+                d = dict(i)
+                inst_desc[d.get("id")] = d.get("description") or ""
+        except Exception:
+            pass
+        keep_rows, already_done = self._clear_settled(
+            keep_rows, open_checkouts, inst_desc)
+
+        # Class period, for the sort and the filter: asking a room "who still
+        # needs an instrument?" goes period by period.
+        for r in keep_rows:
+            r["_periods"] = self._periods_of(r)
+        keep_rows.sort(key=lambda r: (
+            min((self._period_key(p) for p in r["_periods"]), default=99),
+            _norm((r.get("_current") or {}).get("last_name")
+                  or r.get("last_name") or ""),
+            _norm((r.get("_current") or {}).get("first_name")
+                  or r.get("first_name") or "")))
+
         for row in keep_rows:
             self._add_row(row, self._options_for(row, available, in_use))
+        self._refresh_period_filter()
 
-        if not keep_rows:
+        if not keep_rows and already_done:
+            self._intro.config(
+                text=(f"All {already_done} instrument(s) that could carry into "
+                      f"{self.school_year} have already been checked out this "
+                      "year. Nothing is left to do here."))
+            self._apply_btn.config(state="disabled")
+        elif not keep_rows:
             self._intro.config(
                 text=(f"No students from {self.prior_year} are on the "
                       f"{self.school_year} roster, so there is nothing to carry "
@@ -415,12 +533,134 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                       "class lists) first — carry-over only offers students it "
                       "can confirm are still in your program."))
             self._apply_btn.config(state="disabled")
-        elif dropped:
-            self._intro.config(
-                text=self._intro.cget("text")
-                + f"  ({dropped} instrument(s) belonged to students who are not "
-                  f"on the {self.school_year} roster — graduated or not "
-                  "continuing — and are not listed.)")
+        else:
+            extras = []
+            if dropped:
+                extras.append(f"{dropped} instrument(s) belonged to students "
+                              f"who are not on the {self.school_year} roster "
+                              "— graduated or not continuing — and are not "
+                              "listed")
+            if already_done:
+                extras.append(f"{already_done} already checked out this year "
+                              "and cleared from this list")
+            if extras:
+                self._intro.config(text=self._intro.cget("text")
+                                   + "  (" + "; ".join(extras) + ".)")
+        self._update_count()
+
+    def _clear_settled(self, rows, open_checkouts, inst_desc):
+        """Drop rows whose student already has this year's instrument of that
+        kind checked out, and say how many were cleared.
+
+        Counted per (student, instrument kind) rather than per exact
+        instrument, because the re-checkout may have been a different physical
+        instrument of the same type.  A student carrying two tubas with only
+        one re-checked-out keeps exactly one tuba row; the row whose very
+        instrument was settled is the one cleared first."""
+        marker = f"{self.db.CARRIED_NOTE} {self.school_year}"
+
+        def settled_this_year(c):
+            return ((c.get("date_assigned") or "") >= self._year_start
+                    or marker in (c.get("notes") or ""))
+
+        groups = {}
+        for r in rows:
+            groups.setdefault((r.get("_who"),
+                               isz.base_type(r.get("description") or "")),
+                              []).append(r)
+
+        cleared = 0
+        keep = []
+        for (_who, btype), group in groups.items():
+            cur = group[0].get("_current") or {}
+            ids = {i for i in (cur.get("id"),) if i is not None}
+            ids |= {r.get("student_id") for r in group
+                    if r.get("student_id") is not None}
+            names = {n for n in ([_norm(f"{cur.get('first_name') or ''} "
+                                        f"{cur.get('last_name') or ''}")]
+                                 + [_norm(r.get("student_name"))
+                                    for r in group]) if n}
+            settled = [c for c in open_checkouts
+                       if settled_this_year(c)
+                       and (c.get("student_id") in ids
+                            or _norm(c.get("student_name")) in names)
+                       and isz.base_type(inst_desc.get(c.get("instrument_id"))
+                                         or "") == btype]
+            if settled:
+                settled_ids = {c.get("instrument_id") for c in settled}
+                group.sort(
+                    key=lambda r: r.get("instrument_id") not in settled_ids)
+                n = min(len(settled), len(group))
+                cleared += n
+                group = group[n:]
+            keep.extend(group)
+        return keep, cleared
+
+    def _registry_classes(self):
+        if getattr(self, "_cached_classes", None) is None:
+            try:
+                from class_registry import load_classes
+                self._cached_classes = load_classes(self.base_dir or ".",
+                                                    self._program_type())
+            except Exception:
+                self._cached_classes = []
+        return self._cached_classes
+
+    def _periods_of(self, row):
+        """The class periods this student is in, as short strings.  From the
+        roster first; a student whose import had no period column falls back
+        to the periods of the classes they belong to."""
+        cur = row.get("_current") or {}
+        periods = [p.strip() for p in (cur.get("class_periods") or "").split(",")
+                   if p.strip()]
+        if periods:
+            return periods
+        found = []
+        try:
+            from class_registry import csv_has_class
+            for k in self._registry_classes():
+                if csv_has_class(cur.get("ensembles"), k.get("label") or ""):
+                    found.extend(k.get("periods") or [])
+        except Exception:
+            pass
+        seen, out = set(), []
+        for p2 in found:
+            if p2 not in seen:
+                seen.add(p2)
+                out.append(p2)
+        return out
+
+    @staticmethod
+    def _period_key(p):
+        text = str(p or "").strip()
+        return int(text) if text.isdigit() else 98
+
+    def _refresh_period_filter(self):
+        periods = sorted({p for r in self._rows
+                          for p in (r["data"].get("_periods") or [])},
+                         key=self._period_key)
+        values = ["All periods"] + [f"Period {p}" for p in periods]
+        if any(not r["data"].get("_periods") for r in self._rows):
+            values.append("No period")
+        self._filter_combo.config(values=values)
+        if self._filter_var.get() not in values:
+            self._filter_var.set("All periods")
+
+    def _visible(self, entry):
+        want = self._filter_var.get()
+        if want in ("", "All periods"):
+            return True
+        pers = entry["data"].get("_periods") or []
+        if want == "No period":
+            return not pers
+        return want.replace("Period", "").strip() in pers
+
+    def _apply_period_filter(self):
+        for r in self._rows:
+            r["frame"].pack_forget()
+        for r in self._rows:
+            if self._visible(r):
+                r["frame"].pack(fill=X, pady=1)
         self._update_count()
 
     def _held_by(self, row, instrument_id):
@@ -512,6 +752,9 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         lbl = ttk.Label(f, text=who, width=26, anchor=W,
                   font=("Segoe UI", 9))
         lbl.pack(side=LEFT, padx=2)
+        pers = row.get("_periods") or []
+        ttk.Label(f, text=("/".join(pers) if pers else "—"), width=4, anchor=W,
+                  font=("Segoe UI", 9), foreground=muted_fg()).pack(side=LEFT)
 
         # How this student was recognized on the new roster.  Shown because the
         # teacher is the only one who can spot a wrong pairing, and the fee
@@ -530,6 +773,11 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         tag = row.get("barcode") or row.get("district_no") or row.get("serial_no") or ""
         if tag:
             had += f"  #{tag}"
+        # ☀ = the loan never closed: the instrument went home for the summer
+        # and is already in the student's hands, so nobody should be hunting
+        # the shelves for it.
+        if self._held_by(row, row.get("instrument_id")):
+            had = "☀ " + (had or "(unknown)")
         ttk.Label(f, text=had or "(unknown)", width=34, anchor=W,
                   font=("Segoe UI", 9), foreground=muted_fg()).pack(side=LEFT, padx=2)
 
@@ -570,17 +818,17 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
             note = ("no additional instruments available"
                     if free_labels else "none free — sharing only")
 
-        # Already carried over — a second run must not check the same horn out
-        # twice or bill the rental fee twice, so the row starts unchecked.  A
-        # loan begun this year says so by its date; one that simply ran on from
-        # the summer says so by the note carry-over left on it.
-        held = self._held_by(row, prior_id)
-        done = bool(held and ((held.get("date_assigned") or "") >= self._year_start
-                              or f"Carried over to {self.school_year}"
-                              in (held.get("notes") or "")))
-        if done:
+        # A loan that lasted only days last year was a try-out or a stopgap,
+        # not "their instrument".  Listed, because the teacher may know
+        # better, but never checked (or billed) by default — and Check All
+        # walks past it too.
+        short = row.get("_short_days")
+        done = False
+        if short is not None:
             keep.set(False)
-            note = "already assigned this year"
+            done = True
+            note = (f"only had it {short} day(s) last year — check to renew "
+                    "anyway")
 
         # Still on the roster, but a grade above where the program ends: most
         # likely a leftover row for someone who has moved up to the high
@@ -593,7 +841,7 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
 
         entry = {
             "data": row, "keep": keep, "choice": choice,
-            "done": done or bool(past),
+            "done": done or bool(past), "frame": f,
             "options": options, "combo": combo, "sizeup_btn": None,
         }
 
@@ -617,8 +865,11 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
 
     def _set_all(self, value):
         for r in self._rows:
-            # Rows already assigned this year stay off: Check All is a
-            # convenience, not a reason to bill somebody twice.
+            # Only the rows in front of her: Check All while showing period 4
+            # is about period 4.  Short-loan rows stay off either way — a
+            # convenience button is not a reason to bill somebody by accident.
+            if not self._visible(r):
+                continue
             if r.get("done") and value:
                 continue
             if str(r["combo"].cget("state")) != "disabled":
@@ -626,8 +877,13 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         self._update_count()
 
     def _update_count(self):
-        n = sum(1 for r in self._rows if r["keep"].get())
-        self._count_lbl.config(text=f"{n} of {len(self._rows)} to assign")
+        vis = [r for r in self._rows if self._visible(r)]
+        n = sum(1 for r in vis if r["keep"].get())
+        text = f"{n} of {len(vis)} to assign"
+        hidden = len(self._rows) - len(vis)
+        if hidden:
+            text += f"  ·  {hidden} hidden by the period filter"
+        self._count_lbl.config(text=text)
 
     def _bigger_option(self, row, options):
         """The smallest free instrument of the same kind that is genuinely
@@ -667,7 +923,9 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
     def _apply(self):
         picks = []
         for r in self._rows:
-            if not r["keep"].get():
+            # A row hidden by the period filter is not assigned: what you see
+            # is what you get, especially with everything checked by default.
+            if not self._visible(r) or not r["keep"].get():
                 continue
             i = r["combo"].current()
             if i is None or i < 0 or i >= len(r["options"]):
@@ -729,7 +987,8 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                     # loan on an instrument that never came back to the shelf.
                     cid = opt["mine"].get("checkout_id")
                     self.db.carry_checkout_into_year(
-                        cid, self.school_year, due)
+                        cid, self.school_year, due, new_start_date=today,
+                        student_id=sid, student_name=sname)
                     if charge and sid:
                         self.db.add_rental_fee(sid, today, "school_year",
                                                per_instrument=True)
@@ -762,17 +1021,21 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         self.destroy()
 
     def _offer_contracts(self, made):
-        """One instrument contract per student, in a folder of your choosing.
+        """Instrument contracts for everything just assigned.
 
-        Separate files rather than one long PDF: each one is going to a
-        different family, and splitting a stack afterwards is the job nobody
-        wants.  Named for the student so the right attachment is obvious.
-        """
-        if Messagebox.yesno(
-                f"Print an instrument contract for each of these "
-                f"{len(made)} student(s)?\n\nOne PDF each, named for the "
-                f"student, ready to email home.",
-                title="Contracts?", parent=self) != "Yes":
+        Separate PDFs — one per instrument, named for student and instrument
+        — are what gets attached to each family's email.  One combined PDF is
+        what gets sent to the printer once instead of twenty times.  The
+        teacher picks either, or both."""
+        choice = Messagebox.show_question(
+            f"Print instrument contracts for these {len(made)} loan(s)?\n\n"
+            "Separate PDFs are for emailing home — one per instrument, named "
+            "for the student. One combined PDF prints the whole stack at "
+            "once.",
+            title="Contracts?", parent=self,
+            buttons=["Skip:secondary", "Separate PDFs:info",
+                     "One Combined PDF:info", "Both:primary"])
+        if choice not in ("Separate PDFs", "One Combined PDF", "Both"):
             return
         from tkinter import filedialog
         folder = filedialog.askdirectory(
@@ -781,18 +1044,42 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         if not folder:
             return
         import os
+        import shutil
+        import tempfile
         from pdf_generator import generate_form_for_checkout
+        separate = choice in ("Separate PDFs", "Both")
+        combined = choice in ("One Combined PDF", "Both")
+        gen_dir = folder if separate else tempfile.mkdtemp()
         made_paths, failed = [], []
         for cid, name in made:
             try:
                 made_paths.append(generate_form_for_checkout(
-                    self.db, cid, self.base_dir or ".", out_dir=folder))
+                    self.db, cid, self.base_dir or ".", out_dir=gen_dir))
             except Exception as e:
                 failed.append(f"  \u2022 {name}: {e}")
-        note = f"{len(made_paths)} contract(s) saved to:\n{folder}"
+        notes = []
+        if separate and made_paths:
+            notes.append(f"{len(made_paths)} contract(s) saved to:\n{folder}")
+        if combined and made_paths:
+            try:
+                from pypdf import PdfWriter
+                writer = PdfWriter()
+                for path in made_paths:
+                    writer.append(path)
+                combo = os.path.join(
+                    folder, "Instrument_Contracts_"
+                            f"{datetime.today().strftime('%Y%m%d')}.pdf")
+                with open(combo, "wb") as fh:
+                    writer.write(fh)
+                notes.append(f"Combined PDF for printing:\n{combo}")
+            except Exception as e:
+                failed.append(f"  \u2022 combined PDF: {e}")
+        if not separate:
+            shutil.rmtree(gen_dir, ignore_errors=True)
+        note = "\n\n".join(notes) if notes else "No contracts could be made."
         if failed:
             note += "\n\nCouldn't print:\n" + "\n".join(failed[:6])
-        Messagebox.show_info(note, title="Contracts Printed", parent=self)
+        Messagebox.show_info(note, title="Contracts", parent=self)
         try:
             os.startfile(folder)          # Windows: show her the stack
         except Exception:

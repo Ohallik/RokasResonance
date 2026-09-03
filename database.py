@@ -924,6 +924,50 @@ class Database:
             except Exception:
                 pass
 
+        # Data healing that runs on every profile, not just new ones.
+        self._repair_carried_start_dates()
+
+    def _repair_carried_start_dates(self):
+        """One-time healing for loans carried into a year before v0.26.
+
+        Carry-over used to leave date_assigned untouched, so a summer
+        keeper's renewed contract still said last January -- and the loan
+        stayed filed under the OLD year's assignments, where next year's
+        carry-over would no longer find it.  Any open loan whose carried-note
+        year has a start date before that year moves to that September 1st,
+        keeping the original date in the note.  Loans carried from now on get
+        the real assignment date, so this finds nothing to do on them."""
+        import re
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT id, notes, date_assigned FROM checkouts "
+                    "WHERE (date_returned IS NULL OR TRIM(date_returned)='') "
+                    "AND notes LIKE ?",
+                    (f"%{self.CARRIED_NOTE} %",)).fetchall()
+                for r in rows:
+                    m = re.search(
+                        re.escape(self.CARRIED_NOTE) + r" (\d{4})-\d{4}",
+                        r["notes"] or "")
+                    if not m:
+                        continue
+                    year_start = f"{m.group(1)}-07-01"
+                    began = (r["date_assigned"] or "").strip()
+                    if began and began >= year_start:
+                        continue
+                    notes = (r["notes"] or "").strip()
+                    if began and "(began " not in notes:
+                        marker = m.group(0)
+                        notes = notes.replace(
+                            marker, f"{marker} (began {began})", 1)
+                    conn.execute(
+                        "UPDATE checkouts SET date_assigned=?, notes=? "
+                        "WHERE id=?",
+                        (f"{m.group(1)}-09-01", notes, r["id"]))
+                conn.commit()
+        except Exception:
+            pass
+
     # ─── Sites (the schools this teacher is posted to) ─────────────────────────
 
     def _school_from_settings(self):
@@ -1880,7 +1924,8 @@ KEEPING IT
     CARRIED_NOTE = "Carried over to"
 
     def carry_checkout_into_year(self, checkout_id: int, school_year: str,
-                                 due_date: str = ""):
+                                 due_date: str = "", new_start_date: str = "",
+                                 student_id=None, student_name: str = ""):
         """Run an open loan on into a new school year.
 
         A student who kept their instrument over the summer never handed it
@@ -1891,19 +1936,41 @@ KEEPING IT
         with, so nobody is billed for the same instrument twice."""
         marker = f"{self.CARRIED_NOTE} {school_year}"
         with self._connect() as conn:
-            row = conn.execute("SELECT notes FROM checkouts WHERE id=?",
-                               (checkout_id,)).fetchone()
+            row = conn.execute(
+                "SELECT notes, date_assigned FROM checkouts WHERE id=?",
+                (checkout_id,)).fetchone()
             if row is None:
                 return
             notes = (row["notes"] or "").strip()
             if marker not in notes:
+                began = (row["date_assigned"] or "").strip()
+                if new_start_date and began and began < new_start_date:
+                    marker += f" (began {began})"
                 notes = f"{notes}; {marker}" if notes else marker
+            sets, vals = ["notes=?"], [notes]
             if due_date:
-                conn.execute("UPDATE checkouts SET notes=?, due_date=? WHERE id=?",
-                             (notes, due_date, checkout_id))
-            else:
-                conn.execute("UPDATE checkouts SET notes=? WHERE id=?",
-                             (notes, checkout_id))
+                sets.append("due_date=?")
+                vals.append(due_date)
+            # The contract a family signs in September should say September,
+            # not the January the horn originally went home; the original
+            # date is kept in the note above.  Moving the date also files the
+            # loan under the year it now belongs to, so NEXT year's
+            # carry-over still sees it.
+            year_begins = f"{str(school_year)[:4]}-07-01"
+            if new_start_date and (row["date_assigned"] or "") < year_begins:
+                sets.append("date_assigned=?")
+                vals.append(new_start_date)
+            # The loan follows the child onto this year's roster row, so the
+            # fee, the "Instrument Out?" column and next year's carry-over
+            # all look at the record the teacher is looking at.
+            if student_id:
+                sets.append("student_id=?")
+                vals.append(student_id)
+                if student_name:
+                    sets.append("student_name=?")
+                    vals.append(student_name)
+            conn.execute("UPDATE checkouts SET " + ", ".join(sets) +
+                         " WHERE id=?", vals + [checkout_id])
 
     # ─── Uniforms / attire ──────────────────────────────────────────────────────
     #
@@ -2652,16 +2719,49 @@ KEEPING IT
         return [s for s, _ in seen.values()]
 
     def find_student_by_name(self, first_name: str, last_name: str, school_year: str = None):
+        """The student a typed name means.
+
+        Prefers the active roster, newest year first: a checkout made in
+        September must land on THIS year's record, not the row an old import
+        left behind, because the rental fee and next year's carry-over follow
+        whichever row is returned.  A missing middle initial is forgiven --
+        rosters say "Jensen W. Kusak" while teachers type "Jensen Kusak" --
+        but only when the shorter name still lands on exactly one student.
+        Fees silently skipped because a typed name found nobody were how
+        first-day checkouts ended up unbilled."""
+        first = (first_name or "").strip().lower()
+        last = (last_name or "").strip().lower()
         with self._connect() as conn:
             if school_year:
                 return conn.execute(
                     "SELECT * FROM students WHERE LOWER(first_name)=? AND LOWER(last_name)=? AND school_year=?",
-                    (first_name.lower(), last_name.lower(), school_year)
+                    (first, last, school_year)
                 ).fetchone()
-            return conn.execute(
-                "SELECT * FROM students WHERE LOWER(first_name)=? AND LOWER(last_name)=?",
-                (first_name.lower(), last_name.lower())
-            ).fetchone()
+            rows = conn.execute(
+                "SELECT * FROM students WHERE LOWER(last_name)=? "
+                "ORDER BY COALESCE(is_active,1) DESC, school_year DESC",
+                (last,)
+            ).fetchall()
+        exact = [r for r in rows if (r["first_name"] or "").strip().lower() == first]
+        if exact:
+            return exact[0]
+
+        def given(name):
+            parts = [w for w in (name or "").strip().lower().split() if len(w) > 1]
+            return parts[0] if parts else (name or "").strip().lower()
+
+        want = given(first)
+        if not want:
+            return None
+        close = [r for r in rows if given(r["first_name"]) == want]
+        if not close:
+            return None
+        # Trust the loose match only when the best year has exactly one taker:
+        # handing one sibling the other's checkout (and fee) is worse than
+        # asking the teacher to pick from the list.
+        top = (close[0]["school_year"], close[0]["is_active"])
+        best = [r for r in close if (r["school_year"], r["is_active"]) == top]
+        return best[0] if len(best) == 1 else None
 
     # ─── Provisional / "incoming" students ──────────────────────────────────────
 
@@ -3074,7 +3174,22 @@ KEEPING IT
                 name, amount = n, float(t["default_amount"] or amount)
                 break
         if per_instrument:
-            self.add_student_fee(student_id, name, year, amount)
+            # One fee per instrument actually in the student's hands, and no
+            # more.  Billing is reconciled against their OPEN loans, so running
+            # a checkout screen twice cannot double-bill, while the second
+            # tuba a student really takes still gets its own line.
+            with self._connect() as conn:
+                n_open = conn.execute(
+                    "SELECT COUNT(*) FROM checkouts WHERE student_id=? AND "
+                    "instrument_id IS NOT NULL AND "
+                    "(date_returned IS NULL OR TRIM(date_returned)='')",
+                    (student_id,)).fetchone()[0]
+                n_fees = conn.execute(
+                    "SELECT COUNT(*) FROM student_fees WHERE student_id=? AND "
+                    "fee_type=? AND school_year=?",
+                    (student_id, name, year)).fetchone()[0]
+            if n_fees < max(n_open, 1):
+                self.add_student_fee(student_id, name, year, amount)
         else:
             self.ensure_student_fee(student_id, name, year, amount)
 

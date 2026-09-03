@@ -758,6 +758,7 @@ class BulkCheckoutDialog(ttk.Toplevel):
         checkout_id = self.db.checkout_instrument(
             self._instrument["id"], student_id, student_name,
             date_assigned, due_date=due_date, rental_type=rental_type,
+            fee_per_instrument=True,
         )
 
         # Generate form if requested

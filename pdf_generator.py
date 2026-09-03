@@ -776,12 +776,22 @@ def generate_form_for_checkout(db, checkout_id: int, base_dir: str,
     except Exception:
         pass
 
-    safe_name = "".join(
-        c for c in (checkout["student_name"] or "unknown")
-        if c.isalnum() or c in (" ", "_", "-")
-    ).strip().replace(" ", "_")
+    def _safe(text):
+        return "".join(c for c in (text or "")
+                       if c.isalnum() or c in (" ", "_", "-")
+                       ).strip().replace(" ", "_")
+
+    safe_name = _safe(checkout["student_name"]) or "unknown"
+    # The instrument is part of the file name: a student taking home two
+    # instruments signs two contracts, and "Name_20260902.pdf" made the
+    # second one overwrite the first.  The tag (or the loan id, for untagged
+    # pieces) keeps two identical tubas apart.
+    inst_d = dict(instrument)
+    safe_desc = _safe(inst_d.get("description"))
+    tag = _safe(str(inst_d.get("barcode") or inst_d.get("district_no")
+                    or inst_d.get("serial_no") or "")) or f"c{checkout_id}"
     date_str  = datetime.today().strftime("%Y%m%d")
-    filename  = f"{safe_name}_{date_str}.pdf"
+    filename  = "_".join(p for p in (safe_name, safe_desc, tag, date_str) if p) + ".pdf"
     # A caller printing a stack of contracts at once (carry-over) passes the
     # folder it asked the teacher for; everyone else gets the profile's own.
     out_dir   = out_dir or os.path.join(base_dir, "checkout_forms")

@@ -1129,7 +1129,12 @@ class _FeesDialog(ttk.Toplevel):
         types = [t["name"] for t in self.db.get_fee_types()]
         self._fee_combo["values"] = types
         if types and not self._fee_var.get():
-            self._fee_var.set(types[0])
+            # Open on the fee checkouts actually bill -- the instrument
+            # rental -- rather than whichever fee sorts first alphabetically.
+            rental = next((t for t in types
+                           if t.lower().startswith("instrument rental")
+                           and "school year" in t.lower()), None)
+            self._fee_var.set(rental or types[0])
         self._reload_list()
 
     def _fee_amount(self):
