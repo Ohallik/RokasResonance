@@ -1715,10 +1715,8 @@ class AgendasView(ttk.Frame):
                 n = int(label.split()[0].lstrip("#"))
             except (ValueError, IndexError):
                 return
-            rec = spine.soe_line(n, self._book)
-            kind = "assessment" if rec and rec.get("assessment") else ""
             section.setdefault("items", []).append(
-                spine._item(spine.soe_label(n, self._book), kind=kind))
+                spine._item(spine.soe_label(n, self._book)))
             self._save_day()
             self._render()
         ttk.Button(bar, text="➕ Add", bootstyle=(SUCCESS, OUTLINE),
