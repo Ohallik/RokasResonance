@@ -494,13 +494,20 @@
   opens the repair center.</p>
 
   <ul>
+    <li><b>One Open Repairs list.</b> Everything that needs attention lives in
+      a single view; a 🚚 marks what is already at the shop, so nobody hunts
+      the closet for a horn that is at BandWright.</li>
     <li><span class="btn-ref">📋 Upload Invoice</span> reads a repair invoice PDF
-      and matches the lines to your instruments. Check what it found before you
-      accept it.</li>
+      and matches the lines to your instruments — actual cost with tax, repair
+      date, invoice number. It <b>closes the open repair you logged when the
+      instrument went out</b>, keeping your notes, so nothing is typed twice.
+      One question at the end asks whether everything it finished goes back to
+      “Good.”</li>
     <li><span class="btn-ref">➕ Add Repair</span> records a repair by hand.</li>
-    <li><span class="btn-ref">🚚 Mark Out for Repair</span> flags an instrument as
-      away at the shop, so it is not offered to a student.</li>
-    <li><span class="btn-ref">✅ Mark Repaired</span> brings it back.</li>
+    <li><span class="btn-ref">🚚 Mark Out for Repair</span> records where it
+      went and when; the row gets the truck.</li>
+    <li><span class="btn-ref">✅ Mark Repaired</span> brings it back by hand
+      (no invoice, or a repair you did yourself).</li>
     <li><span class="btn-ref">📊 Export This View</span> saves whatever list you
       are looking at.</li>
   </ul>
@@ -596,7 +603,10 @@
 
   <h3>Adding music</h3>
   <ul>
-    <li><span class="btn-ref">Add Music</span> types one piece in by hand.</li>
+    <li><span class="btn-ref">Add Music</span> types one piece in by hand. For
+      choir, the voicing field is a row of checkboxes — a piece you own as SSA
+      and SAB and SATB is ONE entry with all three checked, and the voicing
+      filter finds it under any of them.</li>
     <li><span class="btn-ref">Import Music</span> reads photographs or PDFs. You
       can photograph a stack of folder covers laid out on a table, or single
       score pages, and it pulls out titles, composers and arrangers. Always look
@@ -1326,8 +1336,6 @@
       back to the suggestion.</li>
     <li><span class="btn-ref">📷 Paste Image</span> puts a picture on the board,
       for example a fingering chart or a rhythm to clap.</li>
-    <li><span class="btn-ref">🎯 Assessments…</span> notes what you are assessing
-      that day.</li>
     <li>Classes with a percussion rotation show today's rotation beside the
       agenda, so the section can see where they are without asking.</li>
     <li>The banner shows how long until this class next performs, counted from
@@ -1356,11 +1364,27 @@
       does not mean leaving the projector.</li>
   </ul>
 
-  <h3>Arranging the day</h3>
+  <h3>Writing the day</h3>
+  <p>Each section is one text box you type in like a document:</p>
   <ul>
-    <li>The ▲ and ▼ on each line move it up or down, pictures
-      included.</li>
+    <li><b>Enter</b> starts a new line — every line gets its own checkbox on
+      the screen.</li>
+    <li><b>Tab</b> indents a line into a bulleted detail under the line above
+      (no checkbox) — the fine print beneath a to-do. Shift-Tab undoes it.</li>
+    <li>Select text and use the small <b>B / I / U / 🖍</b> bar for bold,
+      italic, underline and the highlighter; it projects exactly as typed.</li>
+    <li><b>Right-click a line</b> for its color, its period (P1 only / P2
+      only), or to indent it.</li>
+    <li>Reordering is cut and paste, like any document. Pictures keep their
+      own rows (with ▲▼) and can sit between runs of text.</li>
+    <li>The <b>▾ chevron</b> on a section header folds it away while you work
+      on another — same as the field-trip cards.</li>
   </ul>
+
+  <p>On the projector, the class name is gone from the top bar (the clock,
+  date, section toggle and timer have the room), and both the plan and the
+  projection scroll <b>past</b> the last line, so the end of the agenda can
+  ride up the board where the whole room reads it.</p>
 
   <p>District no school days are already known, so holidays are skipped.</p>
 
