@@ -45,20 +45,26 @@ def confirm_and_clear_needs_repair(parent, db, instrument_id):
 
 class RepairDialog(ttk.Toplevel):
     def __init__(self, parent, db, instrument_id: int, repair_id=None,
-                 prefill_data: dict = None, title_suffix: str = ""):
+                 prefill_data: dict = None, title_suffix: str = "",
+                 suppress_condition_prompt: bool = False):
         super().__init__(master=parent)
         self.db = db
         self.instrument_id = instrument_id
         self.repair_id = repair_id
         self.saved = False
+        # A bulk flow (invoice review) asks about instrument condition ONCE at
+        # the end for everything, instead of one popup per horn here.
+        self._suppress_condition_prompt = suppress_condition_prompt
         # Reviewing a scanned invoice: the work is already done, so Est. Cost
         # is noise — it's only shown when adding/editing a repair by hand.
-        self._invoice_review = bool(prefill_data) and not repair_id
+        self._invoice_review = bool(prefill_data)
         # The legacy 'location' column is no longer shown (it duplicated the
         # shop); preserve whatever an existing record has so edits don't lose it.
         self._orig_location = ""
 
-        if repair_id:
+        if repair_id and prefill_data:
+            title = "Close Out Repair (from invoice)"
+        elif repair_id:
             title = "Edit Repair Record"
         elif prefill_data:
             title = "Review Repair Record"
@@ -76,6 +82,11 @@ class RepairDialog(ttk.Toplevel):
 
         if repair_id:
             self._load_repair(repair_id)
+            if prefill_data:
+                # An invoice closing the repair she logged when it went out:
+                # keep her words, add what the invoice knows (cost, dates,
+                # invoice #), and never make her retype either.
+                self._overlay_prefill(prefill_data)
         elif prefill_data:
             self._prefill(prefill_data)
 
@@ -183,6 +194,24 @@ class RepairDialog(ttk.Toplevel):
         self._notes_text.grid(row=row_num, column=1, pady=4, sticky=W)
 
 
+    def _overlay_prefill(self, data: dict):
+        """Merge parsed-invoice facts onto a loaded open repair."""
+        # The invoice's own facts always win — they ARE the record of the work.
+        for key in ("date_repaired", "act_cost", "invoice_number"):
+            val = str(data.get(key) or "").strip()
+            if val:
+                self._vars[key].set(val)
+        # The shop only fills in when she left it blank.
+        if not (self._vars["assigned_to"].get() or "").strip():
+            self._vars["assigned_to"].set(str(data.get("assigned_to") or "").strip())
+        if not (self._vars["description"].get() or "").strip():
+            self._vars["description"].set(str(data.get("description") or "").strip())
+        notes = str(data.get("notes") or "").strip()
+        if notes:
+            existing = self._notes_text.get("1.0", "end").strip()
+            self._notes_text.delete("1.0", "end")
+            self._notes_text.insert("1.0", (existing + "\n" + notes).strip())
+
     def _prefill(self, data: dict):
         """Pre-populate form fields from a dict (e.g. parsed invoice data)."""
         for key, var in self._vars.items():
@@ -261,12 +290,21 @@ class RepairDialog(ttk.Toplevel):
         if not self._validate(data):
             return
         if self.repair_id:
+            # Invoice review hides the Est. Cost field — an update must not
+            # blank the estimate the teacher recorded when it went out.
+            if "est_cost" not in self._vars:
+                existing = next((r for r in self.db.get_repairs(self.instrument_id)
+                                 if r["id"] == self.repair_id), None)
+                if existing is not None:
+                    data["est_cost"] = existing["est_cost"]
             self.db.update_repair(self.repair_id, data)
         else:
             self.db.add_repair(data)
         self.saved = True
         # If this record marks the repair complete (a repaired date) and it was
-        # the instrument's last open repair, offer to update its condition.
-        if (data.get("date_repaired") or "").strip():
+        # the instrument's last open repair, offer to update its condition —
+        # unless a bulk flow will ask once for everything at the end.
+        if ((data.get("date_repaired") or "").strip()
+                and not self._suppress_condition_prompt):
             confirm_and_clear_needs_repair(self, self.db, self.instrument_id)
         self.destroy()

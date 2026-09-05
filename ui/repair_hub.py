@@ -16,9 +16,11 @@ from datetime import datetime
 
 PRIORITY_LABELS = {3: "Urgent", 2: "High", 1: "Normal", 0: "Low"}
 
+# One list for everything open: what still needs attention and what is
+# already at the shop live together, the 🚚 marking what's out — splitting
+# them made the teacher answer the same questions in two windows.
 VIEWS = [
-    ("needs", "Needs Repair"),
-    ("out",   "Out for Repair"),
+    ("open", "Open Repairs"),
     ("history", "Repair History"),
     ("cost",  "Cost Analysis"),
 ]
@@ -54,7 +56,7 @@ class RepairHub(ttk.Toplevel):
         super().__init__(master=parent)
         self.inv = inventory_manager
         self.db = inventory_manager.db
-        self._view = tk.StringVar(value="needs")
+        self._view = tk.StringVar(value="open")
         self._sort_state = {}
 
         self.title("Repair Center — Roka's Resonance")
@@ -167,32 +169,33 @@ class RepairHub(ttk.Toplevel):
         self._configure_columns(cost)
         self.tree.delete(*self.tree.get_children())
 
-        is_repair_view = view in ("needs", "out")
-        self._edit_btn.config(state=NORMAL if view in ("needs", "out", "history") else DISABLED)
+        is_repair_view = view == "open"
+        self._edit_btn.config(state=NORMAL if view in ("open", "history") else DISABLED)
         self._done_btn.config(state=NORMAL if is_repair_view else DISABLED)
-        self._out_btn.config(state=NORMAL if view == "needs" else DISABLED)
+        self._out_btn.config(state=NORMAL if is_repair_view else DISABLED)
 
         if cost:
             self._load_cost()
         elif view == "history":
             self._load_history(self.db.get_all_repairs())
-        elif view == "out":
-            rows = [r for r in self.db.get_instruments_needing_repair()
-                    if (r["shop"] or "").strip()]
-            self._load_needs(rows)
-        else:  # needs — instruments with an open repair OR flagged on the
+        else:  # open — instruments with an open repair OR flagged on the
                # instrument itself (condition = 'Needs Repair') but not yet logged
             rows = list(self.db.get_instruments_needing_repair())
             rows += list(self.db.get_instruments_marked_needs_repair())
             self._load_needs(rows)
 
     def _load_needs(self, rows):
-        """One row per instrument (tag = 'inst:<id>')."""
+        """One row per instrument (tag = 'inst:<id>').  The 🚚 is what says
+        "already at the shop — don't go looking for it in the closet"."""
+        n_out = 0
         for r in rows:
             n_open = r["open_count"] or 0
             needed = r["needs"] or ""
             if n_open > 1:
                 needed = f"({n_open}) {needed}"
+            shop = (r["shop"] or "").strip()
+            if shop:
+                n_out += 1
             self.tree.insert("", "end", tags=(f"inst:{r['id']}",), values=(
                 PRIORITY_LABELS.get(int(r["max_priority"] or 0), ""),
                 r["instrument_desc"] or "",
@@ -200,10 +203,13 @@ class RepairHub(ttk.Toplevel):
                 r["barcode"] or r["district_no"] or "",
                 needed,
                 r["last_reported"] or "",
-                (r["shop"] or "").strip(),
-                "Needs Repair",
+                shop,
+                ("🚚 At the shop" if shop else "Needs Repair"),
             ))
-        self._summary_lbl.config(text=f"{len(rows)} instrument(s)")
+        text = f"{len(rows)} instrument(s)"
+        if n_out:
+            text += f"  ·  🚚 {n_out} at the shop"
+        self._summary_lbl.config(text=text)
 
     def _load_history(self, rows):
         """One row per repair record (tag = 'rep:<id>')."""

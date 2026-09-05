@@ -1444,19 +1444,50 @@ class InventoryManager(ttk.Frame):
                 return
 
         saved_count = 0
+        touched = []
         from ui.repair_dialog import RepairDialog
         for i, match in enumerate(matches, 1):
+            # An invoice usually CLOSES a repair the teacher already logged
+            # when the instrument went to the shop — update that open record
+            # (her notes + the invoice's cost and dates) instead of creating a
+            # duplicate she then has to close by hand in another window.
+            open_rows = [dict(r) for r in
+                         self.db.get_open_repairs_for_instrument(match["instrument_id"])]
+            rid = open_rows[0]["id"] if open_rows else None
             suffix = f"{i} of {len(matches)}  —  {match['instrument_label']}"
             dlg = RepairDialog(
                 self.winfo_toplevel(), self.db,
                 instrument_id=match["instrument_id"],
-                repair_id=None,
+                repair_id=rid,
                 prefill_data=match["prefill"],
                 title_suffix=suffix,
+                suppress_condition_prompt=True,
             )
             self.wait_window(dlg)
             if dlg.saved:
                 saved_count += 1
+                touched.append((match["instrument_id"], match["instrument_label"]))
+
+        # ONE question at the end, not one popup per horn: anything the
+        # invoice just closed out that is still marked "Needs Repair" can go
+        # back to Good in a single yes.
+        fixable = []
+        for iid, label in dict.fromkeys(touched):
+            inst = self.db.get_instrument(iid)
+            if (inst and (inst["condition"] or "").strip().lower() == "needs repair"
+                    and not self.db.get_open_repairs_for_instrument(iid)):
+                fixable.append((iid, label))
+        if fixable:
+            names = "\n".join(f"  • {label}" for _i, label in fixable[:12])
+            more = "\n  …" if len(fixable) > 12 else ""
+            if Messagebox.yesno(
+                    f"{len(fixable)} instrument(s) now have no open repairs but "
+                    f"are still marked \u201cNeeds Repair\u201d:\n\n{names}{more}\n\n"
+                    "Set their condition back to \u201cGood\u201d?",
+                    title="Back in Service?",
+                    parent=self.winfo_toplevel()) == "Yes":
+                for iid, _label in fixable:
+                    self.db.clear_needs_repair_if_done(iid)
 
         self.refresh()
         if self._selected_id:
