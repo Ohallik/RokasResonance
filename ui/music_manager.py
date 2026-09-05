@@ -159,7 +159,10 @@ class _WorksCatalogAdapter:
             params.append(genre)
 
         if voicing:
-            where_parts.append("voicing=?")
+            # Membership, not equality — one piece may hold several voicings.
+            where_parts.append(
+                "(', ' || REPLACE(REPLACE(COALESCE(voicing,''), ', ', ','), "
+                "',', ', ') || ', ') LIKE ('%, ' || ? || ', %')")
             params.append(voicing)
 
         # works has no location column — ignore that filter
@@ -197,7 +200,16 @@ class _WorksCatalogAdapter:
                 "SELECT DISTINCT voicing FROM works "
                 "WHERE voicing IS NOT NULL AND voicing != '' ORDER BY voicing"
             ).fetchall()
-        return [r[0] for r in rows]
+        # Split multi-voicing values so the filter offers "SAB", never
+        # "SSA, SAB, SATB" as one unpickable lump.
+        out, seen = [], set()
+        for r in rows:
+            for part in str(r[0]).split(","):
+                p2 = part.strip()
+                if p2 and p2.lower() not in seen:
+                    seen.add(p2.lower())
+                    out.append(p2)
+        return sorted(out)
 
     def get_distinct_locations(self) -> list:
         return []

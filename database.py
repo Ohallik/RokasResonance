@@ -4202,7 +4202,11 @@ KEEPING IT
             params.append(genre)
 
         if voicing:
-            where_parts.append("sm.voicing=?")
+            # A piece can hold several voicings ("SSA, SAB, SATB") — filter by
+            # MEMBERSHIP, so picking SAB finds it and SSA never matches SSAA.
+            where_parts.append(
+                "(', ' || REPLACE(REPLACE(COALESCE(sm.voicing,''), ', ', ','), "
+                "',', ', ') || ', ') LIKE ('%, ' || ? || ', %')")
             params.append(voicing)
 
         if location:
@@ -4283,7 +4287,16 @@ KEEPING IT
                 "WHERE is_active=1 AND voicing IS NOT NULL AND voicing != '' "
                 "ORDER BY voicing"
             ).fetchall()
-        return [r[0] for r in rows]
+        # Split multi-voicing values ("SSA, SAB, SATB") so the filter offers
+        # each arrangement on its own.
+        out, seen = [], set()
+        for r in rows:
+            for part in str(r[0]).split(","):
+                p2 = part.strip()
+                if p2 and p2.lower() not in seen:
+                    seen.add(p2.lower())
+                    out.append(p2)
+        return sorted(out)
 
     def get_distinct_languages(self) -> list:
         with self._connect() as conn:

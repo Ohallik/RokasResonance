@@ -185,10 +185,12 @@ class MusicDialog(ttk.Toplevel):
             row2.pack(fill=X, pady=2)
             self._field(row2, "Genre", "genre", widget="combobox",
                         options=CHOIR_GENRE_OPTIONS, side=LEFT, width=18)
-            self._field(row2, "Voicing", "voicing", widget="combobox",
-                        options=VOICING_OPTIONS, side=LEFT, width=18)
             self._field(row2, "Difficulty", "difficulty", widget="combobox",
                         options=DIFFICULTY_OPTIONS, side=LEFT, width=14)
+
+            row2v = ttk.Frame(cls)
+            row2v.pack(fill=X, pady=2)
+            self._voicing_field(row2v)
 
             row2b = ttk.Frame(cls)
             row2b.pack(fill=X, pady=2)
@@ -273,6 +275,51 @@ class MusicDialog(ttk.Toplevel):
             w = ttk.Entry(f, textvariable=var, width=width)
             w.pack(anchor=W)
         return w
+
+    def _voicing_field(self, parent):
+        """Voicings as CHECKBOXES — check every arrangement you have.
+
+        One title often exists as SSA and SAB and SATB at once, and a choir
+        teacher who owns all three files them as ONE piece.  Stored
+        comma-separated ("SSA, SAB, SATB").  A voicing an import wrote that
+        isn't in the list is kept, never silently dropped."""
+        f = ttk.Frame(parent)
+        f.pack(side=LEFT, padx=6, pady=1, fill=X)
+        ttk.Label(f, text="Voicing(s) — check every arrangement of this piece "
+                          "you have", font=("Segoe UI", 8)).pack(anchor=W)
+        var = tk.StringVar()
+        self._vars["voicing"] = var
+        self._voicing_vars = {}
+        self._voicing_extra = []
+        self._voicing_syncing = False
+        grid = ttk.Frame(f)
+        grid.pack(anchor=W)
+        for i, opt in enumerate(VOICING_OPTIONS):
+            v = tk.BooleanVar(value=False)
+            self._voicing_vars[opt] = v
+            ttk.Checkbutton(grid, text=opt, variable=v,
+                            command=self._voicing_to_var).grid(
+                row=i // 6, column=i % 6, sticky=W, padx=(0, 12), pady=2)
+        var.trace_add("write", self._voicing_from_var)
+
+    def _voicing_to_var(self):
+        picked = [o for o in VOICING_OPTIONS if self._voicing_vars[o].get()]
+        self._voicing_syncing = True
+        try:
+            self._vars["voicing"].set(", ".join(picked + self._voicing_extra))
+        finally:
+            self._voicing_syncing = False
+
+    def _voicing_from_var(self, *_):
+        if getattr(self, "_voicing_syncing", False):
+            return
+        raw = self._vars["voicing"].get()
+        parts = [p2.strip() for p2 in raw.split(",") if p2.strip()]
+        lookup = {o.lower(): o for o in VOICING_OPTIONS}
+        self._voicing_extra = [p2 for p2 in parts if p2.lower() not in lookup]
+        picked = {lookup[p2.lower()] for p2 in parts if p2.lower() in lookup}
+        for opt, v in self._voicing_vars.items():
+            v.set(opt in picked)
 
     # ───────────────────────────────────────────────────── File Browse ─────
 
