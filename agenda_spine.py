@@ -308,8 +308,12 @@ def next_assessment(d, schedule):
 def _item(text, done=False, note="", kind=""):
     """One agenda line.  ``kind`` marks special rendering:
         ""          normal (checkbox + text)
-        "assessment"  a test line — highlighted blue + bold (checkbox kept)
-        "missing"     the "Missing:" names line — no checkbox
+        "static"    fixed text — no checkbox
+        "missing"   a legacy "Missing:" names line — no checkbox
+    Items may also carry: ``indent`` (1 = detail line under the line above —
+    bulleted, no checkbox), ``runs`` (rich-text spans [[start, end, tag]] with
+    tag in b/i/u/hl), ``color``, ``section`` (period tag), ``image``/``img_w``,
+    and ``id``.
     """
     return {"text": text, "done": done, "note": note, "kind": kind}
 
@@ -532,31 +536,13 @@ def build_default_day(d, ctx):
     sections.append({"title": "Warm Up", "kind": "warmup",
                      "items": [_item("") for _ in range(4)]})
 
-    # ── Assessments (teacher-defined only).  We no longer seed any suggested
-    #    schedule — the only thing tracked is due dates the teacher enters
-    #    themselves.  The view passes its saved list; absent that, none.
-    assessments = ctx.get("assessments") or []
-    assess_items = []
-    for ref, due in assessments_visible(d, assessments):
-        label = ref
-        if ref.startswith("#"):
-            try:
-                label = soe_label(int(ref[1:]), book)
-            except (ValueError, TypeError):
-                pass
-        assess_items.append(_item(f"{label} (due {due.strftime('%b %d')})",
-                                  kind="assessment"))
-        assess_items.append(_item("Missing: ", kind="missing"))
-
-    if is_adv:
-        # No band book for Advanced — assessments (when dated) get their own small
-        # section, otherwise nothing (keep the day minimal).
-        if assess_items:
-            sections.append({"title": "Assessments", "kind": "",
-                             "items": assess_items})
-    else:
+    # ── Assessment auto-lines are GONE (Sept 2026).  The tracker highlighted
+    #    book lines that were never tests, demanded a full date with a year,
+    #    and put nothing genuinely useful on the agenda — test lines are typed
+    #    (and formatted) by the teacher like any other line.
+    if not is_adv:
         # Band book — a sticky carry-forward page the teacher typed (we never
-        # auto-assume a page), plus any dated assessment + its Missing list.
+        # auto-assume a page).
         bb = []
         intro_days = ctx.get("intro_days")
         if intro_days is None:
@@ -567,7 +553,6 @@ def build_default_day(d, ctx):
         elif is_entry and in_intro_period(d, cal, year_start, intro_days):
             # First ~2 weeks: trying each instrument before committing.
             bb.append(_item("Instrument exploration (trying each instrument)"))
-        bb.extend(assess_items)
         if not bb:
             bb.append(_item(""))
         sections.append({"title": "Band book", "kind": "bandbook", "items": bb})

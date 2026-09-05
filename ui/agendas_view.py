@@ -77,10 +77,6 @@ HDR_FG = "#ffffff"
 BAN_BG = "#FFF3BF"
 BAN_FG = "#5C4A00"
 DIVIDER = "#E0C048"
-# Assessment-line highlight (the light-blue emphasis she uses for test lines).
-ASSESS_BG = "#dbeafe"
-ASSESS_FG = "#0b3d6b"
-
 # Countdown-timer presets she uses (label, seconds).
 TIMER_PRESETS = [("30 sec", 30), ("1 min", 60), ("2 min", 120),
                  ("3 min", 180), ("5 min", 300), ("10 min", 600)]
@@ -136,8 +132,6 @@ def _plan_colors(color, kind):
         return ("#ffffff", "#333333")          # dark chip so white is visible
     if color in ("black", "blue", "red"):
         return (_TEXT_HEX[color], "#ffffff")
-    if kind == "assessment":
-        return (ASSESS_FG, ASSESS_BG)
     return ("#1a1a1a", "#ffffff")
 
 
@@ -147,9 +141,26 @@ def _present_colors(color, kind, bg):
         return _HL
     if color in _TEXT_HEX:
         return (_TEXT_HEX[color], bg)
-    if kind == "assessment":
-        return (ASSESS_FG, ASSESS_BG)
     return (_auto_fg(bg), bg)
+
+
+def _fix_bi(txt):
+    """Where bold and italic overlap, apply the combined font: Tk shows only
+    ONE tag's font, so the overlap needs its own."""
+    try:
+        txt.tag_remove("bi", "1.0", "end")
+        bb = txt.tag_ranges("b")
+        ib = txt.tag_ranges("i")
+        for a1, b1 in zip(bb[::2], bb[1::2]):
+            for a2, b2 in zip(ib[::2], ib[1::2]):
+                s = a1 if txt.compare(a1, ">=", a2) else a2
+                e = b1 if txt.compare(b1, "<=", b2) else b2
+                if txt.compare(s, "<", e):
+                    txt.tag_add("bi", s, e)
+        txt.tag_raise("bi")
+        txt.tag_raise("hl")
+    except Exception:
+        pass
 
 
 def _perc_icon(widget, station):
@@ -367,9 +378,6 @@ class AgendasView(ttk.Frame):
         self._section_bar.pack(side=LEFT)
         ttk.Button(bar, text="🖥 Present", bootstyle=SUCCESS,
                    command=self._open_present).pack(side=RIGHT, padx=8, pady=6)
-        if not self._is_jazz:
-            ttk.Button(bar, text="🎯 Assessments…", bootstyle=(INFO, OUTLINE),
-                       command=self._open_assessments).pack(side=RIGHT, padx=2, pady=6)
         ttk.Button(bar, text="↺ Reset Day", bootstyle=(SECONDARY, OUTLINE),
                    command=self._reset_day).pack(side=RIGHT, padx=2, pady=6)
         ttk.Button(bar, text="⧉ Copy Previous Day", bootstyle=(PRIMARY, OUTLINE),
@@ -420,8 +428,12 @@ class AgendasView(ttk.Frame):
         self._canvas.pack(side=LEFT, fill=BOTH, expand=True, padx=(10, 0), pady=8)
         self._inner = ttk.Frame(self._canvas)
         self._win = self._canvas.create_window((0, 0), window=self._inner, anchor="nw")
-        self._inner.bind("<Configure>",
-                         lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
+        def _plan_region(_e=None):
+            box = self._canvas.bbox("all")
+            if box:
+                self._canvas.configure(
+                    scrollregion=(box[0], box[1], box[2], box[3] + 250))
+        self._inner.bind("<Configure>", _plan_region)
         self._canvas.bind("<Configure>",
                           lambda e: self._canvas.itemconfig(self._win, width=e.width))
         self._canvas.bind("<Enter>", lambda e: self._canvas.bind_all(
@@ -480,7 +492,6 @@ class AgendasView(ttk.Frame):
                 "reminders": self._last_reminders(),
                 "year_start": start, "year_end": end,
                 "calendar": self._calendar(),
-                "assessments": self._load_assessments(),   # None => seed default
                 "intro_days": self._intro_days(),
                 "band_page": self._page_label_for(self._date),
                 "concerts": self._concerts()}
@@ -495,48 +506,10 @@ class AgendasView(ttk.Frame):
         except (TypeError, ValueError):
             return spine.INTRO_SCHOOL_DAYS
 
-    # ── teacher-defined assessments (per group, per year; None if uncustomized)
-
-    def _assess_key(self):
-        return f"agenda_assessments_{self._group}"
-
-    def _load_assessments(self):
-        raw = self.db.get_program_setting(self._assess_key())
-        if not raw:
-            return None
-        try:
-            data = json.loads(raw)
-        except Exception:
-            return None
-        out = []
-        for r in data:
-            ref = (r.get("ref") or "").strip()
-            if not ref:
-                continue
-            # due may be blank (dateless assessments — kept in the list but not
-            # auto-surfaced on the agenda until the teacher assigns a date).
-            out.append({"ref": ref, "due": _parse_date(r.get("due"))})
-        return out
-
-    def _save_assessments(self, items):
-        payload = [{"ref": i["ref"],
-                    "due": i["due"].isoformat() if i.get("due") else ""}
-                   for i in items if i.get("ref")]
-        self.db.set_program_setting(self._assess_key(), json.dumps(payload))
-        self.refresh()
-
-    def _default_assessments(self):
-        """No suggested schedule is seeded for any class anymore; assessments are
-        entirely teacher-entered (the app only tracks due dates they add)."""
-        # No suggested schedule is seeded for any class. Assessments are entirely
-        # teacher-entered — the app only tracks due dates the teacher adds.
-        return []
-
-    def _open_assessments(self):
-        items = self._load_assessments()
-        if items is None:                    # seed from the suggested list
-            items = self._default_assessments()
-        _AssessmentsDialog(self, items)
+    # ── assessments tracker: REMOVED (Sept 2026).  It highlighted book
+    #    lines that were never tests, wanted a year typed on every due
+    #    date, and put nothing genuinely useful on the agenda.  Test lines
+    #    are typed (and formatted) by the teacher like any other line.
 
     # ── sticky band-book page: carry the last page you set forward until you
     #    change it again; before any is set, assume NO page (start empty) ──
@@ -1125,8 +1098,14 @@ class AgendasView(ttk.Frame):
         cont = ttk.Frame(parent)
         cont.pack(fill=X, pady=4)
 
+        folded = si in getattr(self, "_folded", set())
         head = _tk(tk.Frame, cont, bg=HDR_BG)
         head.pack(fill=X)
+        fold = _tk(tk.Label, head, text="▸" if folded else "▾", bg=HDR_BG,
+                   fg=HDR_FG, cursor="hand2",
+                   font=("Segoe UI", fs(12), "bold"))
+        fold.pack(side=LEFT, padx=(8, 0))
+        fold.bind("<Button-1>", lambda e, i=si: self._toggle_fold(i))
         title_var = tk.StringVar(value=section.get("title", ""))
         ent = _tk(tk.Entry, head, textvariable=title_var, bg=HDR_BG, fg=HDR_FG,
                   insertbackground=HDR_FG,
@@ -1142,20 +1121,41 @@ class AgendasView(ttk.Frame):
             relief="flat", bd=0, cursor="hand2", activebackground=HDR_BG,
             activeforeground="#ffffff", font=("Segoe UI", fs(8)),
             command=lambda: self._remove_section(si)).pack(side=RIGHT, padx=6)
+        if folded:
+            n = len([i for i in section.get("items", [])
+                     if (i.get("text") or "").strip() or i.get("image")])
+            _tk(tk.Label, head, text=f"({n} line{'s' if n != 1 else ''})",
+                bg=HDR_BG, fg="#dce9f7",
+                font=("Segoe UI", fs(8))).pack(side=RIGHT, padx=4)
+            return
 
         body = ttk.Frame(cont, padding=(6, 2))
         body.pack(fill=X)
-        last_ref = None                         # assessment above a Missing line
+        # Consecutive text lines merge into ONE box you type in like a
+        # document: Enter = new to-do line, Tab = indented detail line (no
+        # checkbox), select text for B/I/U/🖍, right-click a line for its
+        # color or period.  Images and locked lines keep their own rows, in
+        # order, so a picture can still sit between two runs of text.
+        if kind != "rhythms":
+            self._section_toolbar(body, section)
+        run = []
         for item in section.get("items", []):
             if kind == "rhythms" and not item.get("image"):
                 continue                       # Rhythms is images only
             if not self._item_visible(item):
                 continue                       # another section's item
-            if item.get("kind") == "assessment":
-                last_ref = self._assess_ref(item.get("text", ""))
-            self._render_item(body, section, item,
-                              missing_ref=last_ref
-                              if item.get("kind") == "missing" else None)
+            if item.get("image") or item.get("kind") in ("static", "missing"):
+                if run:
+                    self._render_text_block(body, section, run)
+                    run = []
+                if item.get("image"):
+                    self._render_image_item(body, section, item)
+                else:
+                    self._render_item(body, section, item)
+                continue
+            run.append(item)
+        if kind != "rhythms":
+            self._render_text_block(body, section, run)
 
         if kind == "bandbook":
             self._bandbook_picker(body, section)
@@ -1167,11 +1167,324 @@ class AgendasView(ttk.Frame):
 
         tools = ttk.Frame(body)
         tools.pack(fill=X, pady=(3, 0))
-        if kind != "rhythms":
-            ttk.Button(tools, text="＋ item", bootstyle=(SUCCESS, OUTLINE, LINK),
-                       command=lambda: self._add_item(section)).pack(side=LEFT)
         ttk.Button(tools, text="📷 Paste Image", bootstyle=(INFO, OUTLINE, LINK),
                    command=lambda: self._paste_image(section)).pack(side=LEFT, padx=8)
+
+    # ── document-style text blocks ──────────────────────────────────────────
+
+    _FMT_TAGS = ("b", "i", "u", "hl")
+
+    def _toggle_fold(self, si):
+        # Session-only, like folding a field-trip card: a way of clearing the
+        # desk, not a property of the day.
+        folded = getattr(self, "_folded", None)
+        if folded is None:
+            folded = self._folded = set()
+        folded.symmetric_difference_update({si})
+        self._render()
+
+    def _section_toolbar(self, parent, section):
+        bar = ttk.Frame(parent)
+        bar.pack(fill=X, pady=(2, 0))
+
+        def fmt_btn(label, tag, font):
+            _tk(tk.Button, bar, text=label, font=font, relief="groove", bd=1,
+                cursor="hand2", takefocus=0, padx=6,
+                command=lambda: self._apply_to_focused(tag)).pack(side=LEFT,
+                                                                  padx=1)
+        fmt_btn("B", "b", ("Segoe UI", fs(9), "bold"))
+        fmt_btn("I", "i", ("Segoe UI", fs(9), "italic"))
+        fmt_btn("U", "u", ("Segoe UI", fs(9), "underline"))
+        fmt_btn("🖍", "hl", ("Segoe UI", fs(9)))
+        ttk.Label(bar, text="select text, then a button · Enter = new line · "
+                            "Tab = detail line · right-click a line for "
+                            "color / period",
+                  font=("Segoe UI", fs(8)), foreground=muted_fg()
+                  ).pack(side=LEFT, padx=8)
+
+    def _apply_to_focused(self, tag):
+        txt = getattr(self, "_last_text", None)
+        if txt is None or not txt.winfo_exists():
+            return
+        self._apply_format(txt, tag)
+
+    def _apply_format(self, txt, tag):
+        try:
+            s, e = txt.index("sel.first"), txt.index("sel.last")
+        except tk.TclError:
+            return
+        # Toggle: if the whole selection already carries it, take it off.
+        covered = True
+        idx = s
+        while txt.compare(idx, "<", e):
+            if tag not in txt.tag_names(idx):
+                covered = False
+                break
+            idx = txt.index(f"{idx} +1c")
+        if covered:
+            txt.tag_remove(tag, s, e)
+        else:
+            txt.tag_add(tag, s, e)
+        _fix_bi(txt)
+        section = getattr(txt, "_section", None)
+        if section is not None:
+            self._commit_text_block(txt, section)
+
+    def _render_text_block(self, parent, section, run):
+        base = fs(10)
+        txt = _tk(tk.Text, parent, wrap="word", relief="solid", bd=1,
+                  height=max(1, len(run)), font=("Segoe UI", base),
+                  bg="#ffffff", fg="#1a1a1a", insertbackground="#1a1a1a",
+                  undo=True, padx=6, pady=4)
+        txt.pack(fill=X, pady=1)
+        txt.tag_configure("b", font=("Segoe UI", base, "bold"))
+        txt.tag_configure("i", font=("Segoe UI", base, "italic"))
+        txt.tag_configure("bi", font=("Segoe UI", base, "bold", "italic"))
+        txt.tag_configure("u", underline=True)
+        txt.tag_configure("hl", background=_HL[1], foreground=_HL[0])
+        for key, hexv in _TEXT_HEX.items():
+            txt.tag_configure(f"lc:{key}", foreground=hexv)
+        txt.tag_configure("lc:white", foreground="#ffffff",
+                          background="#333333")
+        txt.tag_configure("lc:hl", background=_HL[1], foreground=_HL[0])
+        txt.tag_configure("per", foreground="#7a7a7a")
+
+        for n, item in enumerate(run):
+            if n:
+                txt.insert("end", "\n")
+            line_start = txt.index("end-1c")
+            sl = int(line_start.split(".")[0])
+            off = 1 if item.get("indent") else 0
+            txt.insert("end", ("\t" if off else "") + (item.get("text") or ""))
+            for s, e, tag in (item.get("runs") or []):
+                try:
+                    txt.tag_add(tag, f"{sl}.{int(s) + off}",
+                                f"{sl}.{int(e) + off}")
+                except Exception:
+                    pass
+            color = (item.get("color") or "").strip()
+            if color:
+                txt.tag_add(f"lc:{color}", f"{sl}.0", f"{sl}.end")
+        _fix_bi(txt)
+        txt._section = section
+        txt._run_items = list(run)
+        txt.bind("<FocusOut>",
+                 lambda e, t=txt, s=section: self._commit_text_block(t, s))
+        txt.bind("<FocusIn>", lambda e, t=txt: setattr(self, "_last_text", t))
+        txt.bind("<Button-3>",
+                 lambda e, t=txt, s=section: self._text_context_menu(e, t, s))
+        txt.bind("<Tab>", lambda e, t=txt: self._tab_indent(t, 1))
+        txt.bind("<Shift-Tab>", lambda e, t=txt: self._tab_indent(t, -1))
+        txt.bind("<KeyRelease>", lambda e, t=txt: self._autosize(t))
+        txt.bind("<Configure>", lambda e, t=txt: self._autosize(t))
+        self.after_idle(lambda t=txt: self._autosize(t))
+        return txt
+
+    @staticmethod
+    def _autosize(txt):
+        try:
+            if not txt.winfo_exists():
+                return
+            n = txt.count("1.0", "end", "displaylines")
+            n = n[0] if isinstance(n, tuple) else (n or 1)
+            txt.configure(height=max(1, int(n)))
+        except Exception:
+            pass
+
+    def _tab_indent(self, txt, delta):
+        ln = int(txt.index("insert").split(".")[0])
+        first = txt.get(f"{ln}.0", f"{ln}.1")
+        if delta > 0 and first != "\t":
+            txt.insert(f"{ln}.0", "\t")
+        elif delta < 0 and first == "\t":
+            txt.delete(f"{ln}.0", f"{ln}.1")
+        self._autosize(txt)
+        return "break"
+
+    def _parse_text_block(self, txt):
+        """The widget's lines, as [{text, indent, runs}] in order."""
+        out = []
+        last = int(txt.index("end-1c").split(".")[0])
+        for ln in range(1, last + 1):
+            raw = txt.get(f"{ln}.0", f"{ln}.end")
+            indent = 1 if raw.startswith("\t") else 0
+            text = raw[1:] if indent else raw
+            runs = []
+            for tag in self._FMT_TAGS:
+                ranges = txt.tag_ranges(tag)
+                for a, b in zip(ranges[::2], ranges[1::2]):
+                    s_l, s_c = (int(x) for x in str(a).split("."))
+                    e_l, e_c = (int(x) for x in str(b).split("."))
+                    if e_l < ln or s_l > ln:
+                        continue
+                    cs = s_c if s_l == ln else 0
+                    ce = e_c if e_l == ln else len(raw)
+                    cs, ce = max(0, cs - indent), max(0, ce - indent)
+                    if ce > cs:
+                        runs.append([cs, ce, tag])
+            color = ""
+            for t in txt.tag_names(f"{ln}.0"):
+                if t.startswith("lc:"):
+                    color = t[3:]
+                    break
+            entry = {"text": text, "indent": indent, "runs": runs,
+                     "color": color}
+            out.append(entry)
+        return out
+
+    def _commit_text_block(self, txt, section):
+        """Parse the box back into the section's items.
+
+        Lines keep their identity (and their done-checkmarks) by exact text
+        first, then by order; hidden lines (another period's) and everything
+        special (images, locked lines) stay exactly where they were."""
+        if not txt.winfo_exists():
+            return
+        run_items = list(getattr(txt, "_run_items", []))
+        parsed = self._parse_text_block(txt)
+
+        pool = list(run_items)
+        new_items = []
+        for pl in parsed:
+            hit = next((o for o in pool
+                        if (o.get("text") or "") == pl["text"]), None)
+            it = dict(hit) if hit else {"text": "", "done": False, "note": "",
+                                        "kind": ""}
+            if hit:
+                pool.remove(hit)
+            it["text"] = pl["text"]
+            it["runs"] = pl["runs"]
+            if pl["indent"]:
+                it["indent"] = 1
+            else:
+                it.pop("indent", None)
+            if pl["color"]:
+                it["color"] = pl["color"]
+            elif hit is None:
+                it.pop("color", None)
+            new_items.append(it)
+        # second pass: unmatched old lines hand their identity over in order,
+        # so an edited line keeps its checkmark
+        fresh = [x for x in new_items if not x.get("id")]
+        for x in fresh:
+            if not pool:
+                break
+            old = pool.pop(0)
+            x["id"] = old.get("id")
+            if not (x.get("color") or "").strip() and old.get("color"):
+                x.pop("color", None)
+            x.setdefault("section", old.get("section")) if old.get("section")                 else None
+        # nothing changed?  don't touch the model (or the present screen)
+        def _sig(items):
+            return [((i.get("text") or ""), int(bool(i.get("indent"))),
+                     [list(r) for r in (i.get("runs") or [])],
+                     (i.get("color") or "")) for i in items]
+        if _sig(new_items) == _sig(run_items):
+            return
+
+        items = section.get("items", [])
+        run_set = {id(x) for x in run_items}
+        idxs = [i for i, x in enumerate(items) if id(x) in run_set]
+        if idxs:
+            lo, hi = idxs[0], idxs[-1]
+            region = items[lo:hi + 1]
+        else:
+            lo, hi = len(items), len(items) - 1
+            region = []
+        pred, prev_vis = {}, None
+        for x in region:
+            if id(x) in run_set:
+                prev_vis = x.get("id")
+            else:
+                pred[id(x)] = prev_vis
+        out = [x for x in region
+               if id(x) not in run_set and pred[id(x)] is None]
+        for ni in new_items:
+            out.append(ni)
+            out += [x for x in region
+                    if id(x) not in run_set and pred.get(id(x)) is not None
+                    and pred[id(x)] == ni.get("id")]
+        seen = {id(x) for x in out}
+        out += [x for x in region
+                if id(x) not in seen and id(x) not in run_set]
+        section["items"] = items[:lo] + out + items[hi + 1:]
+        self._ensure_ids(self._day)
+        txt._run_items = [x for x in out if x in new_items or id(x) in
+                          {id(y) for y in new_items}]
+        txt._run_items = new_items
+        self._save_day()
+
+    def _line_index(self, txt, event):
+        return int(txt.index(f"@{event.x},{event.y}").split(".")[0])
+
+    def _text_context_menu(self, event, txt, section):
+        ln = self._line_index(txt, event)
+        menu = tk.Menu(txt, tearoff=0)
+        if txt.tag_ranges("sel"):
+            for label, tag in (("Bold", "b"), ("Italic", "i"),
+                               ("Underline", "u"), ("Highlight 🖍", "hl")):
+                menu.add_command(
+                    label=label,
+                    command=lambda t=tag: self._apply_format(txt, t))
+            menu.add_separator()
+        cm = tk.Menu(menu, tearoff=0)
+        for label, val in ITEM_COLORS:
+            cm.add_command(label=label,
+                           command=lambda v=val, l=ln:
+                           self._set_line_color(txt, section, l, v))
+        menu.add_cascade(label="Line color", menu=cm)
+        if self._taggable_periods():
+            pm = tk.Menu(menu, tearoff=0)
+            pm.add_command(label="All sections",
+                           command=lambda l=ln:
+                           self._set_line_period(txt, section, l, ""))
+            for per in self._taggable_periods():
+                pm.add_command(label=f"P{per} only",
+                               command=lambda v=per, l=ln:
+                               self._set_line_period(txt, section, l, v))
+            menu.add_cascade(label="Show in period", menu=pm)
+        menu.add_separator()
+        menu.add_command(label="Indent — detail line (no checkbox)",
+                         command=lambda l=ln: self._menu_indent(txt, l))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _menu_indent(self, txt, ln):
+        first = txt.get(f"{ln}.0", f"{ln}.1")
+        if first == "\t":
+            txt.delete(f"{ln}.0", f"{ln}.1")
+        else:
+            txt.insert(f"{ln}.0", "\t")
+        section = getattr(txt, "_section", None)
+        if section is not None:
+            self._commit_text_block(txt, section)
+
+    def _line_item(self, txt, section, ln):
+        """The model item behind line ``ln`` (committing first)."""
+        self._commit_text_block(txt, section)
+        items = getattr(txt, "_run_items", [])
+        return items[ln - 1] if 0 < ln <= len(items) else None
+
+    def _set_line_color(self, txt, section, ln, val):
+        item = self._line_item(txt, section, ln)
+        if item is None:
+            return
+        if val:
+            item["color"] = val
+        else:
+            item.pop("color", None)
+        self._save_day()
+        self._render()
+
+    def _set_line_period(self, txt, section, ln, val):
+        item = self._line_item(txt, section, ln)
+        if item is None:
+            return
+        if val:
+            item["section"] = val
+        else:
+            item.pop("section", None)
+        self._save_day()
+        self._render()
 
     def _taggable_periods(self):
         """The periods an item can be limited to -- only real, named ones,
@@ -1997,8 +2310,15 @@ class _PresentWindow(ttk.Toplevel):
         self._canvas.pack(side=LEFT, fill=BOTH, expand=True)
         self._body = _tk(tk.Frame, self._canvas, bg="#ffffff")
         self._bwin = self._canvas.create_window((0, 0), window=self._body, anchor="nw")
-        self._body.bind("<Configure>",
-                        lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
+        # Blank space below the last line, so it can ride UP the board where
+        # the whole room can read it instead of hugging the floor.
+        def _region(_e=None):
+            box = self._canvas.bbox("all")
+            if box:
+                pad = max(300, int(self._canvas.winfo_height() * 0.6))
+                self._canvas.configure(
+                    scrollregion=(box[0], box[1], box[2], box[3] + pad))
+        self._body.bind("<Configure>", _region)
         self._canvas.bind("<Configure>",
                           lambda e: self._canvas.itemconfig(self._bwin, width=e.width))
         self._canvas.bind_all("<MouseWheel>",
@@ -2013,7 +2333,10 @@ class _PresentWindow(ttk.Toplevel):
         self._clock = ttk.Label(hdr, text="", font=("Segoe UI", fs(26), "bold"),
                                 bootstyle=(INVERSE, DARK))
         self._clock.pack(side=LEFT, padx=(18, 10), pady=6)
-        self._title = ttk.Label(hdr, text="", font=("Segoe UI", fs(14), "bold"),
+        # The class name is GONE from this bar on purpose: a long one
+        # ("Intermediate Band") squeezed the timer clean off a SmartBoard.
+        # The date is short; everyone in the room knows whose class it is.
+        self._title = ttk.Label(hdr, text="", font=("Segoe UI", fs(12)),
                                  bootstyle=(INVERSE, DARK))
         self._title.pack(side=LEFT, padx=6)
         self._present_section_toggle(hdr)     # P1/P2 switch, right in present
@@ -2118,8 +2441,7 @@ class _PresentWindow(ttk.Toplevel):
         self._stage.configure(bg=bg)
         self._body.configure(bg=bg)
         self._banner_host.configure(bg=bg)
-        self._title.config(text=self.view._display_label() + "  ·  " +
-                           self.view._date.strftime("%A, %b %d"))
+        self._title.config(text=self.view._date.strftime("%A, %b %d"))
         for w in self._banner_host.winfo_children():
             w.destroy()
         for w in self._body.winfo_children():
@@ -2318,6 +2640,13 @@ class _PresentWindow(ttk.Toplevel):
         fg, lbg = _present_colors(color, kind, bg)
         row = _tk(tk.Frame, parent, bg=bg)
         row.pack(fill=X, pady=1, anchor=W)
+        if item.get("indent"):
+            # A detail line (Tab in the editor): bulleted under its to-do,
+            # no check box of its own.
+            _tk(tk.Label, row, text="", bg=bg, width=4).pack(side=LEFT)
+            self._rich_text(row, item, "◦  " + (item.get("text") or ""), bg,
+                            fg, lbg, size=14, offset=3)
+            return
         if kind in ("missing", "static"):
             # Fixed text, no check box (missing names, or a song's locked
             # personnel dropped under the piece), indented under the checkboxes.
@@ -2327,150 +2656,48 @@ class _PresentWindow(ttk.Toplevel):
                 justify=LEFT).pack(side=LEFT)
             return
         self._big_check(row, item, bg).pack(side=LEFT, padx=(0, 2))
-        weight = "bold" if kind == "assessment" else "normal"
-        _tk(tk.Label, row, text=item["text"], bg=lbg, fg=fg,
-            font=("Segoe UI", fs(16), weight), wraplength=1050,
-            justify=LEFT, padx=(6 if lbg != bg else 0)).pack(side=LEFT, padx=8)
+        self._rich_text(row, item, item.get("text", ""), bg, fg, lbg, size=16)
 
-
-# ══════════════════════════════════════════════════ assessments editor ══════
-
-class _AssessmentsDialog(ttk.Toplevel):
-    """Teacher-defined assessments: which lines are tested and each due date.
-    Every teacher's set (and count) differs, so this is fully editable; the due
-    dates are for the current school year and are set fresh each year."""
-
-    def __init__(self, view, items):
-        super().__init__(view.winfo_toplevel())
-        self.view = view
-        self.title(f"Assessments — {view._cfg['label']}")
-        self.geometry("600x640")
-        self._rows = []                       # [(frame, ref_var, due_var), ...]
-
-        ttk.Label(self, text="Your assessments and their due dates. Each line "
-                  "appears on the agenda about 2 weeks before it's due. Dates "
-                  "are for THIS school year — set them fresh each year. Leave the "
-                  "date blank to keep an assessment on your list without putting "
-                  "it on the agenda.",
-                  wraplength=560, bootstyle=SECONDARY, justify=LEFT
-                  ).pack(fill=X, padx=14, pady=(14, 8))
-
-        cols = ttk.Frame(self)
-        cols.pack(fill=X, padx=14)
-        ttk.Label(cols, text="Book line / ref", width=34,
-                  font=("Segoe UI", fs(9), "bold")).pack(side=LEFT)
-        ttk.Label(cols, text="Due date (YYYY-MM-DD)",
-                  font=("Segoe UI", fs(9), "bold")).pack(side=LEFT)
-
-        box = ttk.Frame(self)
-        box.pack(fill=BOTH, expand=True, padx=14, pady=(2, 6))
-        canvas = tk.Canvas(box, highlightthickness=0)
-        sb = ttk.Scrollbar(box, orient=VERTICAL, command=canvas.yview)
-        canvas.configure(yscrollcommand=sb.set)
-        sb.pack(side=RIGHT, fill=Y)
-        canvas.pack(side=LEFT, fill=BOTH, expand=True)
-        self._list = ttk.Frame(canvas)
-        win = canvas.create_window((0, 0), window=self._list, anchor="nw")
-        self._list.bind("<Configure>",
-                        lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
-
-        for it in items:
-            due = it.get("due")
-            self._add_row(it.get("ref", ""), due.isoformat() if due else "")
-
-        addbar = ttk.Frame(self)
-        addbar.pack(fill=X, padx=14, pady=(0, 4))
-        ttk.Button(addbar, text="＋ Add row", bootstyle=(SUCCESS, OUTLINE),
-                   command=lambda: self._add_row("", "")).pack(side=LEFT)
-        # "Add from book page" only for ensembles with a Standard of Excellence
-        # book (Entry/Intermediate).  Advanced has no line book — free-text refs.
-        self._pg = tk.StringVar()
-        self._ln = tk.StringVar()
-        if view._book:
-            ttk.Label(addbar, text="  or from book page:").pack(side=LEFT)
-            pgc = ttk.Combobox(addbar, textvariable=self._pg, width=5,
-                               state="readonly",
-                               values=[str(p) for p in spine.soe_pages(view._book)])
-            pgc.pack(side=LEFT, padx=2)
-            self._lnc = ttk.Combobox(addbar, textvariable=self._ln, width=24,
-                                     state="readonly", values=[])
-            self._lnc.pack(side=LEFT, padx=2)
-            pgc.bind("<<ComboboxSelected>>", self._fill_lines)
-            ttk.Button(addbar, text="Add line", bootstyle=(SUCCESS, OUTLINE, LINK),
-                       command=self._add_from_line).pack(side=LEFT, padx=2)
-
-        btns = ttk.Frame(self)
-        btns.pack(fill=X, padx=14, pady=(6, 12))
-        ttk.Button(btns, text="Save", bootstyle=SUCCESS,
-                   command=self._save).pack(side=RIGHT)
-        ttk.Button(btns, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
-                   command=self.destroy).pack(side=RIGHT, padx=6)
-        ttk.Button(btns, text="Use suggested schedule",
-                   bootstyle=(INFO, OUTLINE, LINK),
-                   command=self._reset_suggested).pack(side=LEFT)
-
-    def _add_row(self, ref, due):
-        row = ttk.Frame(self._list)
-        row.pack(fill=X, pady=1)
-        rv = tk.StringVar(value=ref)
-        dv = tk.StringVar(value=due)
-        ttk.Entry(row, textvariable=rv, width=36).pack(side=LEFT, padx=(0, 4))
-        ttk.Entry(row, textvariable=dv, width=14).pack(side=LEFT)
-        rec = (row, rv, dv)
-        ttk.Button(row, text="✕", width=2, bootstyle=(DANGER, OUTLINE, LINK),
-                   command=lambda: self._del_row(rec)).pack(side=LEFT, padx=4)
-        self._rows.append(rec)
-
-    def _del_row(self, rec):
-        rec[0].destroy()
-        try:
-            self._rows.remove(rec)
-        except ValueError:
-            pass
-
-    def _fill_lines(self, _e=None):
-        try:
-            lines = spine.soe_lines_on_page(int(self._pg.get()), self.view._book)
-        except (ValueError, TypeError):
-            lines = []
-        labels = [f"#{r['n']} {r['title']}" for r in lines]
-        self._lnc.config(values=labels)
-        self._ln.set(labels[0] if labels else "")
-
-    def _add_from_line(self):
-        ref = self._ln.get().strip()
-        if ref:
-            self._add_row(ref, "")
-
-    def _reset_suggested(self):
-        for rec in list(self._rows):
-            self._del_row(rec)
-        for it in self.view._default_assessments():
-            due = it.get("due")
-            self._add_row(it["ref"], due.isoformat() if due else "")
-
-    def _save(self):
-        items, bad = [], []
-        for _row, rv, dv in self._rows:
-            ref, ds = rv.get().strip(), dv.get().strip()
-            if not ref:
-                continue                       # a date with no line — skip
-            due = None
-            if ds:                             # blank date is allowed (dateless)
-                due = _parse_date(ds)
-                if not due:
-                    bad.append(ref)
-                    continue
-            items.append({"ref": ref, "due": due})
-        if bad:
-            Messagebox.show_warning(
-                "These rows need a valid date (YYYY-MM-DD) or a blank date: "
-                + ", ".join(bad),
-                title="Check due dates", parent=self)
+    def _rich_text(self, row, item, text, bg, fg, lbg, size=16, offset=0):
+        """One projected line.  Plain lines stay ordinary labels; a line with
+        formatting renders through a read-only Text so bold / italic /
+        underline / highlighter show exactly as typed."""
+        runs = item.get("runs") or []
+        if not runs:
+            _tk(tk.Label, row, text=text, bg=lbg, fg=fg,
+                font=("Segoe UI", fs(size)), wraplength=1050,
+                justify=LEFT, padx=(6 if lbg != bg else 0)).pack(side=LEFT,
+                                                                 padx=8)
             return
-        self.view._save_assessments(items)
-        self.destroy()
+        t = _tk(tk.Text, row, wrap="word", relief="flat", bd=0, height=1,
+                font=("Segoe UI", fs(size)), bg=lbg, fg=fg,
+                highlightthickness=0, padx=(6 if lbg != bg else 0), pady=0)
+        t.tag_configure("b", font=("Segoe UI", fs(size), "bold"))
+        t.tag_configure("i", font=("Segoe UI", fs(size), "italic"))
+        t.tag_configure("bi", font=("Segoe UI", fs(size), "bold", "italic"))
+        t.tag_configure("u", underline=True)
+        t.tag_configure("hl", background=_HL[1], foreground=_HL[0])
+        t.insert("1.0", text)
+        for s, e, tag in runs:
+            try:
+                t.tag_add(tag, f"1.{int(s) + offset}", f"1.{int(e) + offset}")
+            except Exception:
+                pass
+        _fix_bi(t)
+        t.config(state="disabled", cursor="arrow")
+        t.pack(side=LEFT, padx=8, fill=X, expand=True)
+
+        def _size(_e=None):
+            try:
+                if not t.winfo_exists():
+                    return
+                n = t.count("1.0", "end", "displaylines")
+                n = n[0] if isinstance(n, tuple) else (n or 1)
+                t.configure(height=max(1, int(n)))
+            except Exception:
+                pass
+        t.bind("<Configure>", _size)
+        t.after_idle(_size)
 
 
 # ─────────────────────────────────────────────────────────────── helpers ─────
