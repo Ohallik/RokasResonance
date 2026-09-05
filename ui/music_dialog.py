@@ -219,6 +219,18 @@ class MusicDialog(ttk.Toplevel):
             self._field(row3, "Time Signature", "time_signature", widget="combobox",
                         options=TIME_SIGNATURE_OPTIONS, side=LEFT, width=10)
 
+            # Crossover: a band or orchestra library can hold sung pieces
+            # (Vocal Jazz, a combined Band/Choir number).  The voicing
+            # checkboxes appear the moment the Ensemble says the piece is
+            # vocal, and stay out of the way otherwise.  The value survives
+            # while hidden, so switching Ensemble back and forth loses
+            # nothing.
+            self._voicing_row = ttk.Frame(cls)
+            self._voicing_field(self._voicing_row)
+            self._vars["ensemble_type"].trace_add(
+                "write", self._sync_voicing_visibility)
+            self._sync_voicing_visibility()
+
         # ── Location ────────────────────────────────────────────────────
         self._section(parent, "Location")
         loc_frame = ttk.Frame(parent)
@@ -275,6 +287,18 @@ class MusicDialog(ttk.Toplevel):
             w = ttk.Entry(f, textvariable=var, width=width)
             w.pack(anchor=W)
         return w
+
+    _VOCAL_ENSEMBLES = {"choir", "vocal jazz", "band/choir/orchestra"}
+
+    def _sync_voicing_visibility(self, *_):
+        if self._mode == "choir" or not hasattr(self, "_voicing_row"):
+            return
+        ens = self._vars.get("ensemble_type")
+        vocal = bool(ens) and ens.get().strip().lower() in self._VOCAL_ENSEMBLES
+        if vocal:
+            self._voicing_row.pack(fill=X, pady=2)
+        else:
+            self._voicing_row.pack_forget()
 
     def _voicing_field(self, parent):
         """Voicings as CHECKBOXES — check every arrangement you have.
