@@ -743,12 +743,18 @@ def main():
     # under an "application id"; without one set, a Python app inherits the
     # interpreter's identity and the taskbar shows something that is not ours.
     # This has to happen BEFORE the first window exists.
-    try:
-        import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "RokasResonance.Roka.SeatingAndInventory.1")
-    except Exception:
-        pass
+    # Only for the INSTALLED build: the installer's shortcuts carry this same
+    # id, and Windows draws the taskbar button from the matching shortcut.  A
+    # source run (run.bat) has no such shortcut, and an id nothing answers to
+    # leaves a BLANK taskbar button — grouping under python.exe instead lets
+    # the window's own Roka icon show.
+    if getattr(sys, "frozen", False):
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "RokasResonance.Roka.SeatingAndInventory.1")
+        except Exception:
+            pass
 
     _icon_png, _icon_ico = _roka_icon_paths()
 
