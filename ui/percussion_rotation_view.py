@@ -211,7 +211,35 @@ class PercussionRotationView(ttk.Frame):
         self._placeholder.pack(fill=BOTH, expand=True)
 
         # The actual content frame (packed when a group is selected)
-        self._content = ttk.Frame(parent)
+        # The whole right-hand pane scrolls: on a short screen the roster
+        # editor at the bottom used to be clipped below the window edge, with
+        # no way to reach the player you wanted to remove.
+        self._content_wrap = ttk.Frame(parent)
+        _cv = tk.Canvas(self._content_wrap, highlightthickness=0)
+        _csb = ttk.Scrollbar(self._content_wrap, orient=VERTICAL,
+                             command=_cv.yview)
+        _cv.configure(yscrollcommand=_csb.set)
+        _csb.pack(side=RIGHT, fill=Y)
+        _cv.pack(side=LEFT, fill=BOTH, expand=True)
+        self._content = ttk.Frame(_cv)
+        _cwin = _cv.create_window((0, 0), window=self._content, anchor="nw")
+        self._content.bind(
+            "<Configure>",
+            lambda e: _cv.configure(scrollregion=_cv.bbox("all")))
+        _cv.bind("<Configure>", lambda e: _cv.itemconfig(_cwin, width=e.width))
+
+        def _pane_wheel(ev):
+            # The two treeviews scroll themselves; the pane only scrolls when
+            # the wheel is over everything else.
+            w = _cv.winfo_containing(ev.x_root, ev.y_root)
+            while w is not None:
+                if isinstance(w, ttk.Treeview):
+                    return
+                w = getattr(w, "master", None)
+            _cv.yview_scroll(int(-ev.delta / 120), "units")
+        _cv.bind("<Enter>",
+                 lambda e: _cv.bind_all("<MouseWheel>", _pane_wheel))
+        _cv.bind("<Leave>", lambda e: _cv.unbind_all("<MouseWheel>"))
 
         # -- Header row: section name + composition summary --
         self._section_lbl = ttk.Label(self._content, text="",
@@ -437,11 +465,11 @@ class PercussionRotationView(ttk.Frame):
 
     def _show_placeholder(self, show):
         if show:
-            self._content.pack_forget()
+            self._content_wrap.pack_forget()
             self._placeholder.pack(fill=BOTH, expand=True)
         else:
             self._placeholder.pack_forget()
-            self._content.pack(fill=BOTH, expand=True)
+            self._content_wrap.pack(fill=BOTH, expand=True)
 
     def _on_group_selected(self):
         sel = self._groups_tree.selection()
