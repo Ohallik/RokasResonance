@@ -40,9 +40,12 @@ for _json_data in ("soe_book1_lines.json", "soe_book2_lines.json",
 
 # ttkbootstrap ships themes as package data files — pull them in.
 datas += collect_data_files("ttkbootstrap")
+# python-docx ships its default document template as package data.
+datas += collect_data_files("docx")
 
 # Modules that PyInstaller's static analysis tends to miss.
 hiddenimports = [
+    "docx",
     "tkinter",
     "tkinter.filedialog",
     "tkinter.messagebox",

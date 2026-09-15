@@ -382,6 +382,8 @@ class AgendasView(ttk.Frame):
                    command=self._reset_day).pack(side=RIGHT, padx=2, pady=6)
         ttk.Button(bar, text="⧉ Copy Previous Day", bootstyle=(PRIMARY, OUTLINE),
                    command=self._copy_previous_day).pack(side=RIGHT, padx=2, pady=6)
+        ttk.Button(bar, text="📄 Export…", bootstyle=(INFO, OUTLINE),
+                   command=self._export_agenda).pack(side=RIGHT, padx=2, pady=6)
         # Packed combo-first on purpose: with side=RIGHT the first widget
         # packed sits furthest right, so packing the label first put it on the
         # wrong side of the box it labels.
@@ -780,6 +782,219 @@ class AgendasView(ttk.Frame):
         self.refresh()
 
     # ─────────────────────────────────────────────────────────────── render ───
+
+    # ── export: a day for a sub, a week for OneNote ─────────────────────────
+
+    def _export_agenda(self):
+        """Choose dates, periods and a format; write PDF or Word."""
+        secs = self._class_sections()
+        win = ttk.Toplevel(master=self.winfo_toplevel())
+        win.title("Export Agenda")
+        win.resizable(False, False)
+        win.grab_set()
+        hdr = ttk.Frame(win, bootstyle=INFO)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text=f"📄  Export — {self._cfg['label']}",
+                  font=("Segoe UI", fs(12), "bold"),
+                  bootstyle=(INVERSE, INFO)).pack(pady=10, padx=16, anchor=W)
+        body = ttk.Frame(win)
+        body.pack(fill=BOTH, expand=True, padx=18, pady=10)
+
+        ttk.Label(body, text="Days:", font=("Segoe UI", fs(9), "bold")).pack(anchor=W)
+        dmode = tk.StringVar(value="day")
+        ttk.Radiobutton(body, text=f"Just this day  ({self._date.isoformat()})",
+                        value="day", variable=dmode).pack(anchor=W, padx=10, pady=1)
+        ttk.Radiobutton(body, text="This week (school days)",
+                        value="week", variable=dmode).pack(anchor=W, padx=10, pady=1)
+        rrow = ttk.Frame(body)
+        rrow.pack(fill=X, padx=10, pady=1)
+        ttk.Radiobutton(rrow, text="From", value="range",
+                        variable=dmode).pack(side=LEFT)
+        from_var = tk.StringVar(value=self._date.isoformat())
+        to_var = tk.StringVar(value=self._date.isoformat())
+        ttk.Entry(rrow, textvariable=from_var, width=11).pack(side=LEFT, padx=4)
+        ttk.Label(rrow, text="to").pack(side=LEFT)
+        ttk.Entry(rrow, textvariable=to_var, width=11).pack(side=LEFT, padx=4)
+
+        sec_vars = []
+        if len(secs) >= 2:
+            ttk.Label(body, text="Periods:", font=("Segoe UI", fs(9), "bold")
+                      ).pack(anchor=W, pady=(10, 0))
+            srow = ttk.Frame(body)
+            srow.pack(fill=X, padx=10)
+            for sec in secs:
+                v = tk.BooleanVar(value=True)
+                ttk.Checkbutton(srow, text=sec["label"], variable=v).pack(
+                    side=LEFT, padx=(0, 10))
+                sec_vars.append((sec, v))
+
+        ttk.Label(body, text="Format:", font=("Segoe UI", fs(9), "bold")).pack(
+            anchor=W, pady=(10, 0))
+        fmt_var = tk.StringVar(value="pdf")
+        ttk.Radiobutton(body, text="PDF — for printing or pasting into OneNote",
+                        value="pdf", variable=fmt_var).pack(anchor=W, padx=10, pady=1)
+        ttk.Radiobutton(body, text="Word (.docx) — editable, for adding notes "
+                                   "for a sub", value="docx",
+                        variable=fmt_var).pack(anchor=W, padx=10, pady=1)
+        ttk.Label(body, text="One page per day (and per period). Checkboxes "
+                             "come out empty, ready to tick.",
+                  font=("Segoe UI", fs(8)), foreground=muted_fg()).pack(
+            anchor=W, pady=(8, 0))
+
+        def run():
+            cal = self._calendar()
+            mode = dmode.get()
+            try:
+                if mode == "day":
+                    dates = [self._date]
+                elif mode == "week":
+                    monday = self._date - timedelta(days=self._date.weekday())
+                    dates = [monday + timedelta(days=i) for i in range(5)]
+                else:
+                    d1 = date.fromisoformat(from_var.get().strip())
+                    d2 = date.fromisoformat(to_var.get().strip())
+                    if d2 < d1:
+                        d1, d2 = d2, d1
+                    if (d2 - d1).days > 62:
+                        raise ValueError("that range is over two months")
+                    dates = [d1 + timedelta(days=i)
+                             for i in range((d2 - d1).days + 1)]
+            except ValueError as e:
+                Messagebox.show_warning(
+                    f"Check the dates (YYYY-MM-DD): {e}",
+                    title="Dates", parent=win)
+                return
+            if cal:
+                dates = [d for d in dates if scal.is_school_day(cal, d)]
+            else:
+                dates = [d for d in dates if d.weekday() < 5]
+            if not dates:
+                Messagebox.show_warning("No school days in that range.",
+                                        title="Nothing to export", parent=win)
+                return
+            sids = None
+            if sec_vars:
+                sids = [s["sid"] for s, v in sec_vars if v.get()]
+                if not sids:
+                    Messagebox.show_warning("Pick at least one period.",
+                                            title="Periods", parent=win)
+                    return
+            fmt = fmt_var.get()
+            import re as _re
+            base = _re.sub(r"[^A-Za-z0-9]+", "", self._cfg["label"]) or "Agenda"
+            tag = (dates[0].isoformat() if len(dates) == 1
+                   else f"{dates[0].isoformat()}_to_{dates[-1].isoformat()}")
+            ext = ".pdf" if fmt == "pdf" else ".docx"
+            from tkinter import filedialog
+            path = filedialog.asksaveasfilename(
+                parent=win, title="Save agenda export",
+                defaultextension=ext,
+                initialfile=f"Agenda_{base}_{tag}{ext}",
+                filetypes=([("PDF", "*.pdf")] if fmt == "pdf"
+                           else [("Word document", "*.docx")]))
+            if not path:
+                return
+            win.destroy()
+            try:
+                pages = self._export_pages(dates, sids)
+                import agenda_export
+                if fmt == "pdf":
+                    agenda_export.write_pdf(pages, path)
+                else:
+                    agenda_export.write_docx(pages, path)
+            except Exception as e:
+                Messagebox.show_error(f"Couldn't export:\n{e}",
+                                      title="Export failed", parent=self)
+                return
+            try:
+                os.startfile(path)
+            except Exception:
+                pass
+
+        btns = ttk.Frame(win)
+        btns.pack(fill=X, padx=16, pady=12)
+        ttk.Button(btns, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=win.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btns, text="Export", bootstyle=INFO,
+                   command=run).pack(side=RIGHT, padx=4)
+        from ui.theme import fit_window
+        fit_window(win, 480, 440)
+
+    def _export_pages(self, dates, sids):
+        """Page payloads for agenda_export, one per (day, period).
+
+        Walks dates (and section toggles) by flipping the view's own state,
+        then puts everything back exactly as it was."""
+        keep = (self._date, self._day, self._saved)
+        orig_sid = self._section_id()
+        pages = []
+        try:
+            for d in dates:
+                self._date = d
+                self._load_day()
+                for sid in (sids or [None]):
+                    if sid is not None:
+                        self._apply_section(sid)
+                    pages.append(self._export_page_data(d))
+        finally:
+            if sids and orig_sid is not None:
+                self._apply_section(orig_sid)
+            self._date, self._day, self._saved = keep
+            self._render()
+        return pages
+
+    def _export_page_data(self, d):
+        sec = self._section_record()
+        period = (f"Period {sec['period']}"
+                  if sec and str(sec.get("period") or "").strip() else "")
+        day = self._day or {}
+        perc_head, perc_rows = "", []
+        try:
+            if self._is_jazz:
+                asg, _bench = self._jazz_rotation()
+                if asg:
+                    perc_head = f"Rhythm section — warm-up day {self._jazz_day()}"
+                    perc_rows = [(seat, ", ".join(names) if names else "—")
+                                 for seat, names in asg]
+            elif self._percussion:
+                g = self._linked_perc_group()
+                if g:
+                    asg, dnum, cyc = self._perc_assignments(g)
+                    if asg:
+                        perc_head = f"Percussion — day {dnum} of {cyc}"
+                        perc_rows = [(n, s) for n, s in asg]
+        except Exception:
+            perc_head, perc_rows = "", []
+        sections = []
+        for s in day.get("sections", []):
+            items = []
+            for it in s.get("items", []):
+                if not self._item_visible(it):
+                    continue
+                if it.get("kind") == "missing":
+                    continue
+                if it.get("image"):
+                    p = self._image_abspath(it["image"])
+                    if os.path.exists(p):
+                        items.append({"image": p,
+                                      "img_w": int(it.get("img_w") or 380)})
+                    continue
+                if not (it.get("text") or "").strip():
+                    continue
+                items.append({"text": it.get("text") or "",
+                              "runs": it.get("runs") or [],
+                              "indent": 1 if it.get("indent") else 0,
+                              "static": it.get("kind") == "static",
+                              "color": it.get("color") or ""})
+            if items:
+                sections.append({"title": s.get("title", ""), "items": items})
+        return {"label": self._cfg["label"], "date": d, "period": period,
+                "reminders": [x for x in day.get("reminders", [])
+                              if str(x).strip()],
+                "announcements": [x for x in day.get("announcements", [])
+                                  if str(x).strip()],
+                "perc_head": perc_head, "perc_rows": perc_rows,
+                "sections": sections}
 
     def _render(self):
         try:
