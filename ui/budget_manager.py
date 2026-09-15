@@ -418,8 +418,14 @@ class BudgetManager(ttk.Frame):
         _CategoryDialog(self.winfo_toplevel(), self.db, on_done=self.refresh)
 
     def _open_fees(self):
-        _FeesDialog(self.winfo_toplevel(), self.db, self.program_type,
-                    self._year_var.get(), site_id=self.site_id)
+        dlg = _FeesDialog(self.winfo_toplevel(), self.db, self.program_type,
+                          self._year_var.get(), site_id=self.site_id,
+                          on_change=self.refresh)
+        # Belt and braces: whatever happened inside, the ledger behind it is
+        # current again the moment the window closes.
+        dlg.bind("<Destroy>",
+                 lambda e: self.refresh() if e.widget is dlg else None,
+                 add="+")
 
     def _export(self):
         try:
@@ -1043,7 +1049,8 @@ class _CategoryDialog(ttk.Toplevel):
 # ── Student fees ────────────────────────────────────────────────────────────────
 
 class _FeesDialog(ttk.Toplevel):
-    def __init__(self, parent, db, program_type, school_year, site_id=None):
+    def __init__(self, parent, db, program_type, school_year, site_id=None,
+                 on_change=None):
         super().__init__(master=parent)
         self.db = db
         self.program_type = program_type
@@ -1063,6 +1070,8 @@ class _FeesDialog(ttk.Toplevel):
         self._fee_var = tk.StringVar()
         self._checked = set()   # fee-row ids checked for bulk actions
         self._sort = ("name", False)   # (column, reversed)
+        self._on_change = on_change    # tells the Budget ledger money moved
+        self._dupes_dismissed = False
         self.title("Student Fees — Roka's Resonance")
         self.resizable(True, True)
         self.grab_set()
@@ -1202,10 +1211,14 @@ class _FeesDialog(ttk.Toplevel):
             r["_insts"] = inst_map.get(r["student_id"], "")
             r["_pers"] = [p.strip() for p in
                           (r.get("class_periods") or "").split(",") if p.strip()]
-        # The period filter offers only periods that actually appear.
-        pers = sorted({p for r in rows for p in r["_pers"]},
-                      key=lambda x: (0, int(x)) if x.isdigit() else (1, x))
-        vals = ["All"] + pers
+        # Every period 0-7, always — the filter has to fit whoever is
+        # using it, not this profile's schedule — plus any oddball value a
+        # roster import wrote.
+        from ui.ensembles import PERIOD_OPTIONS
+        extra = sorted({p for r in rows for p in r["_pers"]
+                        if p not in PERIOD_OPTIONS},
+                       key=lambda x: (0, int(x)) if x.isdigit() else (1, x))
+        vals = ["All"] + list(PERIOD_OPTIONS) + extra
         self._period_combo.config(values=vals)
         if self._period_var.get() not in vals:
             self._period_var.set("All")
@@ -1246,80 +1259,240 @@ class _FeesDialog(ttk.Toplevel):
         self._count.config(text=f"{len(rows)} student(s) • {n_unpaid} unpaid "
                                 f"• {len(self._checked)} selected")
 
-    def _reconcile(self):
+    def _changed(self):
+        """Tell the Budget ledger behind this window that money moved."""
+        cb = getattr(self, "_on_change", None)
+        if cb:
+            try:
+                cb()
+            except Exception:
+                pass
+
+    @staticmethod
+    def _scroll_list(win, height=300):
+        """A scrollable checkbox list with a visible bar and a working
+        mouse wheel — nobody gets charged from below the fold again."""
+        box = ttk.Frame(win)
+        box.pack(fill=BOTH, expand=True, padx=14)
+        cv = tk.Canvas(box, highlightthickness=0, height=height)
+        sb = ttk.Scrollbar(box, orient=VERTICAL, command=cv.yview)
+        cv.configure(yscrollcommand=sb.set)
+        sb.pack(side=RIGHT, fill=Y)
+        cv.pack(side=LEFT, fill=BOTH, expand=True)
+        lst = ttk.Frame(cv)
+        w = cv.create_window((0, 0), window=lst, anchor="nw")
+        lst.bind("<Configure>",
+                 lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cv.bind("<Configure>", lambda e: cv.itemconfig(w, width=e.width))
+        cv.bind("<Enter>", lambda e: cv.bind_all(
+            "<MouseWheel>", lambda ev: cv.yview_scroll(
+                int(-ev.delta / 120), "units")))
+        cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
+        return box, lst
+
+    def _fix_duplicates(self, dupes):
+        """Same student, two open loans on one horn (or on two inventory rows
+        sharing a serial).  Dealt with before Missing fees, because phantom
+        loans inflate the instrument counts and over-bill."""
+        from ui.names import display_person
+        win = ttk.Toplevel(master=self)
+        win.title("Possible duplicate checkouts")
+        win.grab_set()
+        ttk.Label(win, text=(
+            "These look double-entered: one student with two open loans on "
+            "the same instrument, or on two inventory rows sharing a serial "
+            "number. Checked rows are treated as the copies and checked back "
+            "in today — the oldest loan in each group is kept. If a student "
+            "really holds both, uncheck those rows."),
+            wraplength=580, justify=LEFT, font=("Segoe UI", 9)
+        ).pack(anchor=W, padx=14, pady=(12, 6))
+        box, lst = self._scroll_list(win)
+        picks = []
+        for grp in dupes:
+            first = grp[0]
+            who = display_person(first.get("student_name") or "") or "?"
+            serial = (first.get("serial_no") or "").strip()
+            head = f"{who} — {first.get('description') or ''}"
+            if serial:
+                head += f"  (serial {serial})"
+            ttk.Label(lst, text=head,
+                      font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(6, 0))
+            tag0 = (first.get("barcode") or first.get("district_no")
+                    or first.get("serial_no") or first.get("instrument_id"))
+            ttk.Label(lst, text=(f"keep: checked out "
+                                 f"{first.get('date_assigned') or '?'}  #{tag0}"),
+                      font=("Segoe UI", 8), foreground="#666"
+                      ).pack(anchor=W, padx=18)
+            for extra in grp[1:]:
+                v = tk.BooleanVar(value=True)
+                tag = (extra.get("barcode") or extra.get("district_no")
+                       or extra.get("serial_no") or extra.get("instrument_id"))
+                ttk.Checkbutton(
+                    lst, variable=v,
+                    text=(f"duplicate — check it back in  (out "
+                          f"{extra.get('date_assigned') or '?'},  #{tag})")
+                ).pack(anchor=W, padx=18)
+                picks.append((v, extra))
+
+        def fix():
+            today = datetime.today().strftime("%Y-%m-%d")
+            n = 0
+            for v, extra in picks:
+                if v.get():
+                    self.db.checkin_instrument(
+                        extra["checkout_id"], today,
+                        "Duplicate checkout — cleaned up from Missing fees")
+                    n += 1
+            self._dupes_dismissed = True
+            win.destroy()
+            if n:
+                self._changed()
+                self._reload_list()
+            self._reconcile()
+
+        def keep_all():
+            self._dupes_dismissed = True
+            win.destroy()
+            self._reconcile()
+
+        b = ttk.Frame(win)
+        b.pack(fill=X, padx=14, pady=12)
+        ttk.Button(b, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=win.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(b, text="They're all real — continue",
+                   bootstyle=(SECONDARY, OUTLINE),
+                   command=keep_all).pack(side=RIGHT, padx=4)
+        ttk.Button(b, text="Fix checked & continue", bootstyle=WARNING,
+                   command=fix).pack(side=RIGHT, padx=4)
+        from ui.theme import fit_window
+        fit_window(win, 660, 480)
+
+    def _reconcile(self, include_cleared=False):
         """Students holding more school instruments than fee rows.
 
-        The first-day checkouts ran under the old one-fee-per-year rule, so a
-        student renting two instruments got billed once.  Shown for the
-        teacher to judge, never auto-billed: a fee she deleted or waived on
-        purpose stays deleted."""
+        Duplicate checkouts are screened first (they inflate the counts).
+        Shown for the teacher to judge, never auto-billed; unchecked students
+        can be CLEARED so they stop coming up, and brought back any time with
+        “Show cleared”."""
         fee = self._fee_var.get()
         if not fee:
             Messagebox.show_warning("Pick a fee first.", title="No Fee", parent=self)
             return
-        rows = self.db.get_fee_reconciliation(fee, self.school_year)
+        dupes = self.db.find_duplicate_open_checkouts()
+        if dupes and not self._dupes_dismissed:
+            self._fix_duplicates(dupes)
+            return
+        rows = self.db.get_fee_reconciliation(fee, self.school_year,
+                                              include_cleared=include_cleared)
+        n_hidden = 0
+        if not include_cleared:
+            n_hidden = len(self.db.get_fee_reconciliation(
+                fee, self.school_year, include_cleared=True)) - len(rows)
         if not rows:
-            Messagebox.show_info(
-                f"Everyone holding a school instrument has a matching "
-                f"“{fee}” row for {self.school_year}. Nothing is missing.",
-                title="All accounted for", parent=self)
+            msg = (f"Everyone holding a school instrument has a matching "
+                   f"“{fee}” row for {self.school_year}. Nothing is missing.")
+            if n_hidden:
+                msg += (f"\n\n({n_hidden} student(s) you cleared earlier "
+                        "aren't counted.)")
+            Messagebox.show_info(msg, title="All accounted for", parent=self)
             return
         win = ttk.Toplevel(master=self)
         win.title("Missing fees")
         win.grab_set()
         ttk.Label(win, text=(
-            f"These students are holding more school instruments than they "
-            f"have “{fee}” rows for {self.school_year}. Checked students get "
-            "the missing fee(s) added as unpaid. Uncheck anyone you have "
-            "handled on purpose."),
-            wraplength=560, justify=LEFT, font=("Segoe UI", 9)
-        ).pack(anchor=W, padx=14, pady=(12, 6))
-        box = ttk.Frame(win)
-        box.pack(fill=BOTH, expand=True, padx=14)
-        canvas = tk.Canvas(box, highlightthickness=0, height=300)
-        sb = ttk.Scrollbar(box, orient=VERTICAL, command=canvas.yview)
-        canvas.configure(yscrollcommand=sb.set)
-        sb.pack(side=RIGHT, fill=Y)
-        canvas.pack(side=LEFT, fill=BOTH, expand=True)
-        lst = ttk.Frame(canvas)
-        cw = canvas.create_window((0, 0), window=lst, anchor="nw")
-        lst.bind("<Configure>",
-                 lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
+            f"{len(rows)} student(s) are holding more school instruments than "
+            f"they have “{fee}” rows for {self.school_year}. Checked students "
+            "get the missing fee(s) added as unpaid — the button counts them, "
+            "so scroll and look everyone over before applying."),
+            wraplength=580, justify=LEFT, font=("Segoe UI", 9)
+        ).pack(anchor=W, padx=14, pady=(12, 4))
+        tools = ttk.Frame(win)
+        tools.pack(fill=X, padx=14, pady=(0, 4))
         picks = []
+
+        def recount(*_a):
+            n = sum(1 for v, _r in picks if v.get())
+            apply_btn.config(text=f"Add missing fees ({n})")
+
+        def set_all(val):
+            for v, _r in picks:
+                v.set(val)
+            recount()
+
+        ttk.Button(tools, text="Check all", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: set_all(True)).pack(side=LEFT, padx=2)
+        ttk.Button(tools, text="Uncheck all", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: set_all(False)).pack(side=LEFT, padx=2)
+        if n_hidden or include_cleared:
+            show_var = tk.BooleanVar(value=include_cleared)
+
+            def flip():
+                win.destroy()
+                self._reconcile(include_cleared=show_var.get())
+
+            ttk.Checkbutton(tools, variable=show_var, command=flip,
+                            text=("Show cleared students too"
+                                  if not include_cleared else
+                                  "Showing cleared students")
+                            ).pack(side=LEFT, padx=12)
+        box, lst = self._scroll_list(win)
         for r in rows:
-            v = tk.BooleanVar(value=True)
+            v = tk.BooleanVar(value=not r.get("cleared"))
             missing = r["open_count"] - r["fee_count"]
-            ttk.Checkbutton(
-                lst, variable=v,
-                text=(f"{display_last_first(r)}  —  {r['instruments']}   "
-                      f"({r['fee_count']} fee(s) / {r['open_count']} instruments"
-                      f" → add {missing})")).pack(anchor=W, pady=2)
-            picks.append((v, r, missing))
+            txt = (f"{display_last_first(r)}  —  {r['instruments']}   "
+                   f"({r['fee_count']} fee(s) / {r['open_count']} instruments"
+                   f" → add {missing})")
+            if r.get("cleared"):
+                txt += "   [cleared earlier]"
+            ttk.Checkbutton(lst, variable=v, text=txt,
+                            command=recount).pack(anchor=W, pady=2)
+            picks.append((v, r))
         amount = self._fee_amount()
 
         def apply():
+            chosen = [r for v, r in picks if v.get()]
+            unchecked = [r for v, r in picks
+                         if not v.get() and not r.get("cleared")]
             n = 0
-            for v, r, missing in picks:
-                if not v.get():
-                    continue
-                for _ in range(missing):
-                    self.db.add_student_fee(r["id"], fee, self.school_year, amount)
+            names = []
+            for r in chosen:
+                for _ in range(r["open_count"] - r["fee_count"]):
+                    self.db.add_student_fee(r["id"], fee, self.school_year,
+                                            amount)
                     n += 1
+                names.append(display_last_first(r))
+                if r.get("cleared"):
+                    self.db.clear_fee_reconcile_skips([r["id"]], fee,
+                                                      self.school_year)
             win.destroy()
+            if unchecked:
+                if Messagebox.yesno(
+                        f"Also clear the {len(unchecked)} unchecked "
+                        f"student(s) so they stop coming up for “{fee}” this "
+                        "year?\n\n(“Show cleared” in Missing fees brings "
+                        "them back.)",
+                        title="Clear the rest?", parent=self) == "Yes":
+                    self.db.add_fee_reconcile_skips(
+                        [r["id"] for r in unchecked], fee, self.school_year)
             self._reload_list()
+            if n:
+                self._changed()
+            listed = "; ".join(names[:12]) + ("…" if len(names) > 12 else "")
             Messagebox.show_info(
-                f"Added {n} fee(s), unpaid, at {_money(amount)} each.",
+                f"Added {n} fee(s), unpaid, at {_money(amount)} each"
+                + (f":\n{listed}" if names else "."),
                 title="Fees added", parent=self)
 
         b = ttk.Frame(win)
         b.pack(fill=X, padx=14, pady=12)
         ttk.Button(b, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
                    command=win.destroy).pack(side=RIGHT, padx=4)
-        ttk.Button(b, text="Add missing fees", bootstyle=SUCCESS,
-                   command=apply).pack(side=RIGHT, padx=4)
+        apply_btn = ttk.Button(b, text="Add missing fees (0)",
+                               bootstyle=SUCCESS, command=apply)
+        apply_btn.pack(side=RIGHT, padx=4)
+        recount()
         from ui.theme import fit_window
-        fit_window(win, 640, 470)
+        fit_window(win, 680, 540)
 
     def _on_click(self, event):
         if self.tree.identify("region", event.x, event.y) != "cell":
@@ -1368,6 +1541,7 @@ class _FeesDialog(ttk.Toplevel):
         today = datetime.today().strftime("%Y-%m-%d") if status == "paid" else None
         for fid in ids:
             self.db.set_student_fee_status(fid, status, today)
+        self._changed()
         self._checked.clear()
         self._reload_list()
 
@@ -1375,6 +1549,7 @@ class _FeesDialog(ttk.Toplevel):
         ids = self._sel_ids()
         for fid in ids:
             self.db.delete_student_fee(fid)
+        self._changed()
         self._checked.clear()
         self._reload_list()
 

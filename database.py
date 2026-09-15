@@ -924,6 +924,18 @@ class Database:
             except Exception:
                 pass
 
+            # Students the teacher told Missing-fees to stop suggesting for a
+            # given fee + year (her "clear" list).
+            try:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS fee_reconcile_skips ("
+                    "student_id INTEGER NOT NULL, fee_type TEXT NOT NULL, "
+                    "school_year TEXT NOT NULL, "
+                    "UNIQUE(student_id, fee_type, school_year))")
+                conn.commit()
+            except Exception:
+                pass
+
         # Data healing that runs on every profile, not just new ones.
         self._repair_carried_start_dates()
 
@@ -3920,7 +3932,66 @@ KEEPING IT
             out.setdefault(r["student_id"], []).append(label)
         return {k: ", ".join(v) for k, v in out.items()}
 
-    def get_fee_reconciliation(self, fee_type: str, school_year: str):
+    def add_fee_reconcile_skips(self, student_ids, fee_type, school_year):
+        """Stop suggesting these students in Missing fees, for this fee and
+        year.  Their call to reverse — see clear_fee_reconcile_skips."""
+        with self._connect() as conn:
+            for sid in student_ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO fee_reconcile_skips "
+                    "(student_id, fee_type, school_year) VALUES (?, ?, ?)",
+                    (sid, fee_type, school_year))
+
+    def clear_fee_reconcile_skips(self, student_ids, fee_type, school_year):
+        with self._connect() as conn:
+            for sid in student_ids:
+                conn.execute(
+                    "DELETE FROM fee_reconcile_skips WHERE student_id=? "
+                    "AND fee_type=? AND school_year=?",
+                    (sid, fee_type, school_year))
+
+    def get_fee_reconcile_skips(self, fee_type, school_year):
+        with self._connect() as conn:
+            return {r["student_id"] for r in conn.execute(
+                "SELECT student_id FROM fee_reconcile_skips "
+                "WHERE fee_type=? AND school_year=?",
+                (fee_type, school_year))}
+
+    def find_duplicate_open_checkouts(self):
+        """Open loans that look double-entered: the SAME student out twice on
+        one physical instrument, or on two inventory rows sharing a serial
+        number (a duplicated inventory import).  Returns groups of checkout
+        dicts, oldest first — the oldest is presumed real, the rest are the
+        suspected copies.  These inflate the instrument counts, so Missing
+        fees deals with them before billing anyone."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT c.id AS checkout_id, c.student_id, c.student_name,
+                          c.date_assigned, i.id AS instrument_id,
+                          i.description, i.serial_no, i.barcode, i.district_no
+                     FROM checkouts c JOIN instruments i ON i.id = c.instrument_id
+                    WHERE (c.date_returned IS NULL OR TRIM(c.date_returned)='')
+                    ORDER BY c.date_assigned, c.id""").fetchall()
+        by_serial, by_inst = {}, {}
+        for r in rows:
+            who = r["student_id"] or f"n:{(r['student_name'] or '').strip().lower()}"
+            serial = (r["serial_no"] or "").strip().lower()
+            if serial:
+                by_serial.setdefault((who, serial), []).append(dict(r))
+            by_inst.setdefault((who, r["instrument_id"]), []).append(dict(r))
+        out, seen = [], set()
+        for grp in list(by_serial.values()) + list(by_inst.values()):
+            if len(grp) < 2:
+                continue
+            ids = tuple(sorted(x["checkout_id"] for x in grp))
+            if ids in seen:
+                continue
+            seen.add(ids)
+            out.append(grp)
+        return out
+
+    def get_fee_reconciliation(self, fee_type: str, school_year: str,
+                               include_cleared: bool = False):
         """Students holding more school instruments than they have rows of
         this fee — the leftovers of the old one-fee-per-year rule.  Waived
         rows count as handled (the teacher decided), and students at a school
@@ -3944,10 +4015,15 @@ KEEPING IT
                    HAVING open_count > fee_count
                     ORDER BY s.last_name, s.first_name""",
                 (fee_type, school_year)).fetchall()
+        skips = self.get_fee_reconcile_skips(fee_type, school_year)
         for r in rows:
             if not self._student_site_charges_fees(r["id"]):
                 continue
+            cleared = r["id"] in skips
+            if cleared and not include_cleared:
+                continue
             d = dict(r)
+            d["cleared"] = cleared
             d["instruments"] = inst_map.get(r["id"], "")
             out.append(d)
         return out
