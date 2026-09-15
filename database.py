@@ -3750,8 +3750,7 @@ KEEPING IT
                 # says Instrument Rental Fees and the Student column says
                 # Charlie Zhang.  What is left worth saying is which rental it
                 # is, so that is all this says.
-                "description": (_fee_description(ftype) if paid
-                                else _fee_description(ftype) + "  (unpaid)"),
+                "description": _fee_description(ftype),
                 "category": cat, "kind": "income",
                 "amount": float(f["amount"] or 0), "funding_source": "Fee",
                 "use_type": fee_use.get(ftype, "Curricular"),

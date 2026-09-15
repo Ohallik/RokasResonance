@@ -264,16 +264,23 @@ class BudgetManager(ttk.Frame):
     def _fill(self, rows):
         self.tree.delete(*self.tree.get_children())
         for i, r in enumerate(rows):
+            pending = (r.get("source") == "fee"
+                       and r.get("fee_status") != "paid")
             tags = []
-            if r.get("kind") == "income":
+            if pending:
+                # Red is money out, green is money in — this is money that
+                # hasn't arrived yet, so it gets its own amber look.  First in
+                # the tag list, because the first tag's colors win.
+                tags.append("pending")
+            elif r.get("kind") == "income":
                 tags.append("income")
             if r.get("source") == "repair":
                 tags.append("repair")
-            if r.get("source") == "fee" and r.get("fee_status") != "paid":
-                tags.append("pending")
             amt = _money(r.get("amount"))
             if r.get("kind") == "expense":
                 amt = "(" + amt + ")"
+            if pending:
+                amt += "  (unpaid)"
             self.tree.insert("", "end", iid=str(i), tags=tuple(tags), values=(
                 r.get("txn_date") or "",
                 (r.get("kind") or "").title(),
@@ -286,7 +293,8 @@ class BudgetManager(ttk.Frame):
                 r.get("student_name") or "",
                 amt,
             ))
-        self.tree.tag_configure("pending", foreground="#8a8a8a")
+        self.tree.tag_configure("pending", foreground="#9a6a00",
+                                background="#fff3cd")
         self._autosize_columns()
 
     def _build_summary(self, rows):
