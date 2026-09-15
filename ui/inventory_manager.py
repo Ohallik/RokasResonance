@@ -593,6 +593,7 @@ class InventoryManager(ttk.Frame):
                     continue
             visible.append(row)
 
+        self._visible_rows = visible
         self._populate_tree(visible)
         n = len(visible)
         total = len(self._all_rows)
@@ -1304,6 +1305,227 @@ class InventoryManager(ttk.Frame):
                 self._load_repairs(self._selected_id)
 
     def _generate_form(self):
+        """Loan forms — one instrument, or the whole day's stack at once.
+
+        Fifty entry-band checkouts in an afternoon should not mean fifty
+        trips through this button, so scope (selected / current view / today /
+        one period) and packaging (separate files, one combined PDF, or both)
+        are chosen once.  A student with two instruments gets two forms —
+        one per loan — always."""
+        from datetime import datetime as _dt
+        today = _dt.today().strftime("%Y-%m-%d")
+
+        sel_iid = None
+        sel = self.tree.selection()
+        if sel:
+            try:
+                sel_iid = int(sel[0])
+            except (ValueError, TypeError):
+                sel_iid = None
+
+        def open_cks(rows):
+            out = []
+            for row in rows:
+                if row["status"] != "Checked Out":
+                    continue
+                out += [dict(c) for c in
+                        self.db.get_active_checkouts_for_instrument(row["id"])]
+            return out
+
+        all_rows = list(self._all_rows)
+        view_cks = open_cks(getattr(self, "_visible_rows", all_rows))
+        all_cks = open_cks(all_rows)
+        today_cks = [c for c in all_cks
+                     if (c.get("date_assigned") or "")[:10] == today]
+        sel_cks = ([dict(c) for c in
+                    self.db.get_active_checkouts_for_instrument(sel_iid)]
+                   if sel_iid is not None else [])
+
+        _stu = {}
+
+        def student_of(c):
+            sid = c.get("student_id")
+            if not sid:
+                return None
+            if sid not in _stu:
+                r = self.db.get_student(sid)
+                _stu[sid] = dict(r) if r else None
+            return _stu[sid]
+
+        def in_period(c, per):
+            s = student_of(c)
+            if not s:
+                return False
+            return per in [p.strip() for p in
+                           (s.get("class_periods") or "").split(",")
+                           if p.strip()]
+
+        def per_cks(per):
+            return [c for c in all_cks if in_period(c, per)]
+
+        win = ttk.Toplevel(master=self.winfo_toplevel())
+        win.title("Generate Loan Forms")
+        win.resizable(False, False)
+        win.grab_set()
+        hdr = ttk.Frame(win, bootstyle=PRIMARY)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text="📄  Generate Loan Forms",
+                  font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, PRIMARY)).pack(pady=10, padx=16, anchor=W)
+        body = ttk.Frame(win)
+        body.pack(fill=BOTH, expand=True, padx=18, pady=10)
+
+        ttk.Label(body, text="Forms for:",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W)
+        scope = tk.StringVar(value="selected" if sel_cks
+                             else ("today" if today_cks else "view"))
+        rb = lambda text, val, ok=True: ttk.Radiobutton(
+            body, text=text, value=val, variable=scope,
+            state=("normal" if ok else "disabled")).pack(anchor=W, padx=10,
+                                                         pady=1)
+        rb(f"The selected instrument  ({len(sel_cks)} form(s))", "selected",
+           bool(sel_cks))
+        rb(f"Every checked-out instrument in the current view  "
+           f"({len(view_cks)})", "view", bool(view_cks))
+        rb(f"Everything checked out today  ({len(today_cks)})", "today",
+           bool(today_cks))
+        prow = ttk.Frame(body)
+        prow.pack(fill=X, padx=10, pady=1)
+        ttk.Radiobutton(prow, text="Everyone in period:", value="period",
+                        variable=scope).pack(side=LEFT)
+        from ui.ensembles import PERIOD_OPTIONS
+        period_var = tk.StringVar(value=PERIOD_OPTIONS[1]
+                                  if len(PERIOD_OPTIONS) > 1
+                                  else PERIOD_OPTIONS[0])
+        pcount = ttk.Label(prow, text="", font=("Segoe UI", 8),
+                           foreground=muted_fg())
+        pcb = ttk.Combobox(prow, textvariable=period_var, state="readonly",
+                           width=4, values=PERIOD_OPTIONS)
+        pcb.pack(side=LEFT, padx=(6, 6))
+        pcount.pack(side=LEFT)
+
+        def _pn(_e=None):
+            pcount.config(text=f"({len(per_cks(period_var.get()))} form(s))")
+        pcb.bind("<<ComboboxSelected>>", _pn)
+        _pn()
+
+        ttk.Label(body, text="As:", font=("Segoe UI", 9, "bold")).pack(
+            anchor=W, pady=(10, 0))
+        out_var = tk.StringVar(value="separate")
+        for text, val in (
+                ("Separate PDFs — one per instrument, named for the student",
+                 "separate"),
+                ("One combined PDF, alphabetical by last name", "combined"),
+                ("Both", "both")):
+            ttk.Radiobutton(body, text=text, value=val,
+                            variable=out_var).pack(anchor=W, padx=10, pady=1)
+        ttk.Label(body, text="A student with two instruments gets two forms — "
+                             "one per instrument.",
+                  font=("Segoe UI", 8), foreground=muted_fg()).pack(
+            anchor=W, pady=(8, 0))
+
+        def run():
+            mode = scope.get()
+            cks = {"selected": sel_cks, "view": view_cks,
+                   "today": today_cks}.get(mode)
+            if cks is None:
+                cks = per_cks(period_var.get())
+            if not cks:
+                Messagebox.show_warning("Nothing to print for that choice.",
+                                        title="No Forms", parent=win)
+                return
+            outmode = out_var.get()
+            win.destroy()
+            self._run_bulk_forms(cks, outmode, today, student_of)
+
+        btns = ttk.Frame(win)
+        btns.pack(fill=X, padx=16, pady=12)
+        ttk.Button(btns, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=win.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btns, text="Generate", bootstyle=PRIMARY,
+                   command=run).pack(side=RIGHT, padx=4)
+        from ui.theme import fit_window
+        fit_window(win, 520, 430)
+
+    def _run_bulk_forms(self, cks, outmode, today, student_of):
+        import os
+        import shutil
+        import tempfile
+        from pdf_generator import generate_form_for_checkout
+
+        single_quick = (len(cks) == 1 and outmode == "separate")
+        folder = None
+        if not single_quick:
+            from tkinter import filedialog
+            folder = filedialog.askdirectory(
+                parent=self.winfo_toplevel(),
+                title="Where should the forms go?", mustexist=False)
+            if not folder:
+                return
+        gen_dir = folder
+        if outmode == "combined":
+            gen_dir = tempfile.mkdtemp()
+
+        def sort_key(c):
+            s = student_of(c)
+            if s:
+                return ((s.get("last_name") or "").lower(),
+                        (s.get("first_name") or "").lower())
+            name = display_person(c.get("student_name") or "")
+            parts = name.split()
+            return ((parts[-1].lower() if parts else ""), name.lower())
+
+        made, failed = [], []
+        for c in sorted(cks, key=sort_key):
+            try:
+                made.append(generate_form_for_checkout(
+                    self.db, c["id"], self.base_dir, out_dir=gen_dir))
+                self.db.mark_form_generated(c["id"])
+            except Exception as e:
+                who = display_person(c.get("student_name") or "?") or "?"
+                failed.append(f"  • {who}: {e}")
+
+        if single_quick and made:
+            try:
+                os.startfile(made[0])
+            except Exception:
+                pass
+            if failed:
+                Messagebox.show_error("Couldn't print:\n" + "\n".join(failed),
+                                      title="Form Error",
+                                      parent=self.winfo_toplevel())
+            return
+
+        notes = []
+        if outmode in ("separate", "both") and made:
+            notes.append(f"{len(made)} form(s) saved to:\n{folder}")
+        if outmode in ("combined", "both") and made:
+            try:
+                from pypdf import PdfWriter
+                w = PdfWriter()
+                for p in made:
+                    w.append(p)
+                combo = os.path.join(
+                    folder, f"Loan_Forms_{today.replace('-', '')}.pdf")
+                with open(combo, "wb") as fh:
+                    w.write(fh)
+                notes.append(f"Combined PDF (alphabetical):\n{combo}")
+            except Exception as e:
+                failed.append(f"  • combined PDF: {e}")
+        if outmode == "combined":
+            shutil.rmtree(gen_dir, ignore_errors=True)
+        note = "\n\n".join(notes) if notes else "No forms could be made."
+        if failed:
+            note += "\n\nCouldn't print:\n" + "\n".join(failed[:8])
+        Messagebox.show_info(note, title="Loan Forms",
+                             parent=self.winfo_toplevel())
+        if folder:
+            try:
+                os.startfile(folder)
+            except Exception:
+                pass
+
+    def _generate_form_single(self):
         iid = self._get_selected_instrument()
         if iid is None:
             return
