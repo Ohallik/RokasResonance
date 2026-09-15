@@ -1246,17 +1246,25 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
         alt_fill = PatternFill("solid", fgColor="F5F5F5")
         border = Border(*[Side(style="thin", color="CCCCCC")] * 4)
 
-        headers = ["School Year", "Last Name", "First Name", "Grade", "Status",
-                   "Ensembles", "Class Periods", "Primary Instrument", "Secondary Instrument",
+        # Every fillable field ships; a teacher can delete a column they
+        # don't want, but they cannot conjure one that was left out.
+        headers = ["School Year", "Last Name", "First Name", "Preferred Name",
+                   "Grade", "Status", "Student ID", "Gender", "Birth Date",
+                   "Ensembles", "Class Periods",
+                   "Primary Instrument", "Secondary Instrument",
+                   "Jazz Instrument", "Jazz Part", "Honors", "Jr. All-State",
                    "Student Email", "Phone",
-                   "Parent 1", "Parent 1 Email", "Parent 1 Phone",
-                   "Parent 2", "Parent 2 Email", "Parent 2 Phone",
+                   "Parent 1", "P1 Relation", "P1 Email", "P1 Phone",
+                   "Parent 2", "P2 Relation", "P2 Email", "P2 Phone",
                    "Address", "City", "State", "ZIP", "Notes"]
-        keys = ["school_year", "last_name", "first_name", "grade", None,
-                "ensembles", "class_periods", "primary_instrument", "secondary_instrument",
+        keys = ["school_year", "last_name", "first_name", "preferred_name",
+                "grade", None, "student_id", "gender", "birth_date",
+                "ensembles", "class_periods",
+                "primary_instrument", "secondary_instrument",
+                "jazz_instrument", "jazz_part", "honors", "all_state",
                 "student_email", "phone",
-                "parent1_name", "parent1_email", "parent1_phone",
-                "parent2_name", "parent2_email", "parent2_phone",
+                "parent1_name", "parent1_relation", "parent1_email", "parent1_phone",
+                "parent2_name", "parent2_relation", "parent2_email", "parent2_phone",
                 "address", "city", "state", "zip_code", "notes"]
 
         for c, h in enumerate(headers, 1):
@@ -1271,6 +1279,8 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
             for c, key in enumerate(keys, 1):
                 if key is None:
                     val = "Active" if self._sval(s, "is_active") else "Inactive"
+                elif key in ("honors", "all_state"):
+                    val = "Yes" if self._sval(s, key) else ""
                 else:
                     val = self._sval(s, key)
                 cell = ws.cell(row=r, column=c, value=val or "")
@@ -1279,7 +1289,9 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                 if fill:
                     cell.fill = fill
 
-        widths = [12, 14, 14, 7, 9, 20, 12, 16, 16, 24, 14, 18, 24, 14, 18, 24, 14, 24, 14, 7, 8, 30]
+        widths = [12, 14, 14, 14, 7, 9, 12, 10, 11, 20, 12, 16, 16, 14, 9,
+                  7, 11, 24, 14, 18, 11, 24, 14, 18, 11, 24, 14, 24, 14, 7,
+                  8, 30]
         for col, w in zip(range(1, len(widths) + 1), widths):
             ws.column_dimensions[get_column_letter(col)].width = w
 
@@ -1302,11 +1314,16 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                     w = csv.writer(fh)
                     w.writerow(headers)
                     for st in students:
-                        w.writerow([
-                            ("Active" if self._sval(st, "is_active")
-                             else "Inactive") if key is None
-                            else (self._sval(st, key) or "")
-                            for key in keys])
+                        vals = []
+                        for key in keys:
+                            if key is None:
+                                vals.append("Active" if self._sval(st, "is_active")
+                                            else "Inactive")
+                            elif key in ("honors", "all_state"):
+                                vals.append("Yes" if self._sval(st, key) else "")
+                            else:
+                                vals.append(self._sval(st, key) or "")
+                        w.writerow(vals)
             else:
                 wb.save(path)
         except Exception as e:
