@@ -2716,7 +2716,12 @@ KEEPING IT
             key = f"{fw}|{(s['last_name'] or '').lower()}"
             if key not in seen or (has_sid and not seen[key][1]):
                 seen[key] = (dict(s), has_sid)
-        return [s for s, _ in seen.values()]
+        out = [s for s, _ in seen.values()]
+        # By SURNAME, always — every list a teacher reads is filed that way,
+        # and a dict rebuild must never be what decides the order.
+        out.sort(key=lambda s: ((s.get("last_name") or "").lower(),
+                                (s.get("first_name") or "").lower()))
+        return out
 
     def find_student_by_name(self, first_name: str, last_name: str, school_year: str = None):
         """The student a typed name means.
@@ -3686,14 +3691,20 @@ KEEPING IT
             # read-only synthetic rows (managed in Budget ▸ Student Fees, same
             # pattern as auto-linked repair expenses).  Matched on the fee's
             # academic-year label so the July fiscal-boundary can't drop them.
+            # Paid AND unpaid: September's billed fees are the income the
+            # teacher is watching for, so they are LISTED (marked unpaid,
+            # greyed, excluded from totals) rather than invisible until the
+            # first payment lands.  Waived fees are forgiven — not listed.
             fees = conn.execute(
-                """SELECT sf.id, sf.fee_type, sf.amount, sf.date_paid, sf.student_id,
-                          (s.first_name || ' ' || s.last_name) AS student_name
+                """SELECT sf.id, sf.fee_type, sf.amount, sf.date_paid, sf.status,
+                          sf.student_id, s.first_name AS fn, s.last_name AS ln,
+                          s.preferred_name AS pn
                    FROM student_fees sf
                    LEFT JOIN students s ON s.id = sf.student_id
-                   WHERE sf.status='paid' AND sf.school_year=:yr"""
+                   WHERE sf.status IN ('paid','unpaid') AND sf.school_year=:yr"""
                 + ("  AND (s.site_id = :site OR s.site_id IS NULL)"
-                   if site_id else ""),
+                   if site_id else "")
+                + " ORDER BY s.last_name, s.first_name",
                 {"yr": school_year, "site": site_id} if site_id
                 else {"yr": school_year}).fetchall()
         for rp in reps:
@@ -3718,20 +3729,29 @@ KEEPING IT
                                       else None) or "Curricular"
         except Exception:
             pass
+        try:
+            from ui.names import display_last_first as _dlf
+        except Exception:
+            def _dlf(s):
+                return f"{s.get('last_name') or ''}, {s.get('first_name') or ''}".strip(", ")
         for f in fees:
             ftype = f["fee_type"] or "Student Fee"
             cat = ("Instrument Rental Fees"
                    if ftype.lower().startswith("instrument rental") else "Student Fees")
-            who = f["student_name"] or ""
+            who = _dlf({"first_name": f["fn"], "last_name": f["ln"],
+                        "preferred_name": f["pn"]}) if (f["fn"] or f["ln"]) else ""
+            paid = (f["status"] or "") == "paid"
             rows.append({
                 "id": None, "source": "fee", "fee_id": f["id"],
-                "txn_date": f["date_paid"] or lo,
+                "fee_status": (f["status"] or ""),
+                "txn_date": (f["date_paid"] or "") if paid else "",
                 # Every word of "Fee: Instrument Rental (School Year) — Charlie
                 # Zhang" except two is already on the row: the Category column
                 # says Instrument Rental Fees and the Student column says
                 # Charlie Zhang.  What is left worth saying is which rental it
                 # is, so that is all this says.
-                "description": _fee_description(ftype),
+                "description": (_fee_description(ftype) if paid
+                                else _fee_description(ftype) + "  (unpaid)"),
                 "category": cat, "kind": "income",
                 "amount": float(f["amount"] or 0), "funding_source": "Fee",
                 "use_type": fee_use.get(ftype, "Curricular"),
@@ -3745,6 +3765,8 @@ KEEPING IT
         rows = self.get_budget_transactions(school_year)
         summary = {}
         for r in rows:
+            if r.get("source") == "fee" and r.get("fee_status") != "paid":
+                continue                       # billed, not yet money
             src = r.get("funding_source") or "Other"
             d = summary.setdefault(src, {"expense": 0.0, "income": 0.0})
             d[r.get("kind") or "expense"] += float(r.get("amount") or 0)
@@ -3879,12 +3901,65 @@ KEEPING IT
         with self._connect() as conn:
             conn.execute("DELETE FROM fee_types WHERE id=?", (fee_id,))
 
+    def get_open_instruments_by_student(self):
+        """{student_id: "Tuba #123, Bari Sax #45"} for every open loan —
+        the fee window's Instruments-Out column in one query."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT c.student_id, i.description,
+                          COALESCE(NULLIF(i.barcode,''), NULLIF(i.district_no,''),
+                                   NULLIF(i.serial_no,''), '') AS tag
+                     FROM checkouts c JOIN instruments i ON i.id = c.instrument_id
+                    WHERE (c.date_returned IS NULL OR TRIM(c.date_returned)='')
+                      AND c.student_id IS NOT NULL
+                    ORDER BY i.description""").fetchall()
+        out = {}
+        for r in rows:
+            label = (r["description"] or "").strip() or "instrument"
+            if (r["tag"] or "").strip():
+                label += f" #{r['tag']}"
+            out.setdefault(r["student_id"], []).append(label)
+        return {k: ", ".join(v) for k, v in out.items()}
+
+    def get_fee_reconciliation(self, fee_type: str, school_year: str):
+        """Students holding more school instruments than they have rows of
+        this fee — the leftovers of the old one-fee-per-year rule.  Waived
+        rows count as handled (the teacher decided), and students at a school
+        that doesn't charge are skipped.  Returns dicts with open_count,
+        fee_count and an ``instruments`` summary string."""
+        inst_map = self.get_open_instruments_by_student()
+        out = []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT s.id, s.first_name, s.last_name, s.preferred_name,
+                          COUNT(c.id) AS open_count,
+                          (SELECT COUNT(*) FROM student_fees sf
+                            WHERE sf.student_id = s.id AND sf.fee_type = ?
+                              AND sf.school_year = ?) AS fee_count
+                     FROM students s
+                     JOIN checkouts c ON c.student_id = s.id
+                      AND (c.date_returned IS NULL OR TRIM(c.date_returned)='')
+                      AND c.instrument_id IS NOT NULL
+                    WHERE COALESCE(s.is_active,1)=1
+                    GROUP BY s.id
+                   HAVING open_count > fee_count
+                    ORDER BY s.last_name, s.first_name""",
+                (fee_type, school_year)).fetchall()
+        for r in rows:
+            if not self._student_site_charges_fees(r["id"]):
+                continue
+            d = dict(r)
+            d["instruments"] = inst_map.get(r["id"], "")
+            out.append(d)
+        return out
+
     def get_student_fees(self, fee_type: str, school_year: str):
         """All student_fee rows for a fee type + year, joined with the student."""
         with self._connect() as conn:
             return conn.execute(
                 """SELECT sf.*, s.first_name, s.last_name, s.preferred_name, s.grade,
-                          s.ensembles, s.student_email, s.parent1_email, s.parent2_email
+                          s.ensembles, s.class_periods,
+                          s.student_email, s.parent1_email, s.parent2_email
                    FROM student_fees sf
                    JOIN students s ON s.id = sf.student_id
                    WHERE sf.fee_type=? AND sf.school_year=?

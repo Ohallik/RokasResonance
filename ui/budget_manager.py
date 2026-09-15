@@ -131,6 +131,12 @@ class BudgetManager(ttk.Frame):
         ttk.Combobox(fb, textvariable=self._use_var, state="readonly", width=14,
                      values=["All"] + self.db.USES).pack(side=LEFT)
         self._use_var.trace_add("write", lambda *_: self._apply())
+        # Student fees ARE the income for most of the year, so they default to
+        # showing; the switch is for reading the ledger without them.
+        self._fees_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(fb, text="Student fees", variable=self._fees_var,
+                        bootstyle="round-toggle",
+                        command=self._apply).pack(side=LEFT, padx=(16, 0))
 
         # Content: transactions + summary side panel
         paned = ttk.Panedwindow(self, orient=HORIZONTAL)
@@ -209,6 +215,9 @@ class BudgetManager(ttk.Frame):
             rows = [r for r in rows
                     if funding_class(r.get("funding_source"),
                                      r.get("use_type")) == use]
+        fv = getattr(self, "_fees_var", None)
+        if fv is not None and not fv.get():
+            rows = [r for r in rows if r.get("source") != "fee"]
         self._rows = rows
         self._fill(rows)
         self._build_summary(rows)
@@ -260,6 +269,8 @@ class BudgetManager(ttk.Frame):
                 tags.append("income")
             if r.get("source") == "repair":
                 tags.append("repair")
+            if r.get("source") == "fee" and r.get("fee_status") != "paid":
+                tags.append("pending")
             amt = _money(r.get("amount"))
             if r.get("kind") == "expense":
                 amt = "(" + amt + ")"
@@ -275,14 +286,18 @@ class BudgetManager(ttk.Frame):
                 r.get("student_name") or "",
                 amt,
             ))
+        self.tree.tag_configure("pending", foreground="#8a8a8a")
         self._autosize_columns()
 
     def _build_summary(self, rows):
         for w in self._summary_frame.winfo_children():
             w.destroy()
         by_src = {}
-        tot_exp = tot_inc = 0.0
+        tot_exp = tot_inc = outstanding = 0.0
         for r in rows:
+            if r.get("source") == "fee" and r.get("fee_status") != "paid":
+                outstanding += float(r.get("amount") or 0)
+                continue                       # billed, not yet money
             src = r.get("funding_source") or "Other"
             d = by_src.setdefault(src, {"expense": 0.0, "income": 0.0})
             amt = float(r.get("amount") or 0)
@@ -315,6 +330,8 @@ class BudgetManager(ttk.Frame):
         # Curricular vs Extracurricular rollup
         by_use = {}
         for r in rows:
+            if r.get("source") == "fee" and r.get("fee_status") != "paid":
+                continue
             u = funding_class(r.get("funding_source"), r.get("use_type"))
             d = by_use.setdefault(u, {"expense": 0.0, "income": 0.0})
             d[r.get("kind") or "expense"] += float(r.get("amount") or 0)
@@ -332,6 +349,9 @@ class BudgetManager(ttk.Frame):
         line(self._summary_frame, "TOTAL Income", _money(tot_inc), bold=True, color="#1a7a1a")
         line(self._summary_frame, "TOTAL Expenses", _money(tot_exp), bold=True, color="#b00000")
         line(self._summary_frame, "NET", _money(tot_inc - tot_exp), bold=True)
+        if outstanding:
+            line(self._summary_frame, "Fees billed, not yet paid",
+                 _money(outstanding), color="#996a00")
 
     def _selected(self):
         sel = self.tree.selection()
@@ -1034,6 +1054,7 @@ class _FeesDialog(ttk.Toplevel):
         self._year_var = tk.StringVar(value=default)
         self._fee_var = tk.StringVar()
         self._checked = set()   # fee-row ids checked for bulk actions
+        self._sort = ("name", False)   # (column, reversed)
         self.title("Student Fees — Roka's Resonance")
         self.resizable(True, True)
         self.grab_set()
@@ -1062,6 +1083,15 @@ class _FeesDialog(ttk.Toplevel):
         self._fee_combo = ttk.Combobox(bar, textvariable=self._fee_var, state="readonly", width=22)
         self._fee_combo.pack(side=LEFT)
         self._fee_combo.bind("<<ComboboxSelected>>", lambda e: self._reload_list())
+        ttk.Label(bar, text="Period:", font=("Segoe UI", 9, "bold")).pack(
+            side=LEFT, padx=(12, 4))
+        self._period_var = tk.StringVar(value="All")
+        self._period_combo = ttk.Combobox(bar, textvariable=self._period_var,
+                                          state="readonly", width=5,
+                                          values=["All"])
+        self._period_combo.pack(side=LEFT)
+        self._period_combo.bind("<<ComboboxSelected>>",
+                                lambda e: self._reload_list())
         ttk.Button(bar, text="Manage Fee Types", bootstyle=(SECONDARY, OUTLINE),
                    command=self._manage_types).pack(side=LEFT, padx=8)
 
@@ -1072,6 +1102,8 @@ class _FeesDialog(ttk.Toplevel):
                    command=self._add_class).pack(side=LEFT, padx=2)
         ttk.Button(tb, text="⧉ Duplicate", bootstyle=(SUCCESS, OUTLINE),
                    command=self._duplicate).pack(side=LEFT, padx=2)
+        ttk.Button(tb, text="⚖ Missing fees…", bootstyle=(WARNING, OUTLINE),
+                   command=self._reconcile).pack(side=LEFT, padx=2)
         ttk.Separator(tb, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=2)
         ttk.Button(tb, text="Select All", bootstyle=(SECONDARY, OUTLINE),
                    command=self._check_all).pack(side=LEFT, padx=2)
@@ -1097,19 +1129,22 @@ class _FeesDialog(ttk.Toplevel):
                   foreground="#888").pack(anchor=W, padx=14)
 
         frame = ttk.Frame(self); frame.pack(fill=BOTH, expand=True, padx=12, pady=8)
-        cols = ("chk", "name", "grade", "ensembles", "amount", "status", "inst")
+        cols = ("chk", "name", "grade", "period", "ensembles", "amount",
+                "status", "inst")
         sb = ttk.Scrollbar(frame, orient=VERTICAL)
         self.tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="extended",
                                  yscrollcommand=sb.set, bootstyle=INFO)
         sb.config(command=self.tree.yview); sb.pack(side=RIGHT, fill=Y)
         self.tree.pack(fill=BOTH, expand=True)
-        heads = {"chk": "✓", "name": "Student", "grade": "Grade", "ensembles": "Ensembles",
-                 "amount": "Amount", "status": "Status", "inst": "Instrument Out?"}
-        widths = {"chk": 34, "name": 200, "grade": 55, "ensembles": 220, "amount": 90,
-                  "status": 90, "inst": 110}
+        heads = {"chk": "✓", "name": "Student", "grade": "Grade", "period": "Per",
+                 "ensembles": "Ensembles", "amount": "Amount", "status": "Status",
+                 "inst": "Instruments Out"}
+        widths = {"chk": 34, "name": 185, "grade": 48, "period": 44,
+                  "ensembles": 165, "amount": 80, "status": 80, "inst": 190}
         for c in cols:
             self.tree.heading(c, text=heads[c], anchor=W,
-                              command=(self._toggle_all_header if c == "chk" else ""))
+                              command=(self._toggle_all_header if c == "chk"
+                                       else (lambda col=c: self._sort_rows(col))))
             self.tree.column(c, width=widths[c], anchor=(CENTER if c == "chk" else W))
         self.tree.tag_configure("paid", foreground="#1a7a1a")
         self.tree.tag_configure("waived", foreground="#888")
@@ -1143,33 +1178,140 @@ class _FeesDialog(ttk.Toplevel):
                 return float(t["default_amount"] or 0)
         return 0.0
 
+    def _sort_rows(self, col):
+        cur, rev = self._sort
+        self._sort = (col, (not rev) if cur == col else False)
+        self._reload_list()
+
     def _reload_list(self):
         self.tree.delete(*self.tree.get_children())
         fee = self._fee_var.get()
         if not fee:
             return
-        rows = self.db.get_student_fees(fee, self.school_year)
+        rows = [dict(r) for r in self.db.get_student_fees(fee, self.school_year)]
+        inst_map = self.db.get_open_instruments_by_student()
+        for r in rows:
+            r["_insts"] = inst_map.get(r["student_id"], "")
+            r["_pers"] = [p.strip() for p in
+                          (r.get("class_periods") or "").split(",") if p.strip()]
+        # The period filter offers only periods that actually appear.
+        pers = sorted({p for r in rows for p in r["_pers"]},
+                      key=lambda x: (0, int(x)) if x.isdigit() else (1, x))
+        vals = ["All"] + pers
+        self._period_combo.config(values=vals)
+        if self._period_var.get() not in vals:
+            self._period_var.set("All")
+        want = self._period_var.get()
+        if want != "All":
+            rows = [r for r in rows if want in r["_pers"]]
+        # Sorted by SURNAME unless a header was clicked.
+        col, rev = self._sort
+        keyers = {
+            "name": lambda r: ((r.get("last_name") or "").lower(),
+                               (r.get("first_name") or "").lower()),
+            "grade": lambda r: (int(r["grade"])
+                                if str(r.get("grade") or "").isdigit() else 99),
+            "period": lambda r: (int(r["_pers"][0])
+                                 if r["_pers"] and r["_pers"][0].isdigit() else 99),
+            "ensembles": lambda r: (r.get("ensembles") or "").lower(),
+            "amount": lambda r: float(r.get("amount") or 0),
+            "status": lambda r: (r.get("status") or ""),
+            "inst": lambda r: (r.get("_insts") or "").lower(),
+        }
+        rows.sort(key=keyers.get(col, keyers["name"]), reverse=rev)
         present = {r["id"] for r in rows}
         self._checked &= present    # drop checks for rows no longer shown
         n_unpaid = 0
-        with self.db._connect() as conn:
-            for r in rows:
-                out = conn.execute(
-                    "SELECT COUNT(*) FROM checkouts WHERE student_id=? AND date_returned IS NULL",
-                    (r["student_id"],)).fetchone()[0]
-                if r["status"] == "unpaid":
-                    n_unpaid += 1
-                self.tree.insert("", "end", iid=str(r["id"]), tags=(r["status"],), values=(
-                    "☑" if r["id"] in self._checked else "☐",
-                    display_last_first(r),
-                    r["grade"] or "",
-                    r["ensembles"] or "",
-                    _money(r["amount"]),
-                    r["status"].title(),
-                    "✓ Yes" if out else "",
-                ))
+        for r in rows:
+            if r["status"] == "unpaid":
+                n_unpaid += 1
+            self.tree.insert("", "end", iid=str(r["id"]), tags=(r["status"],), values=(
+                "☑" if r["id"] in self._checked else "☐",
+                display_last_first(r),
+                r["grade"] or "",
+                "/".join(r["_pers"]),
+                r["ensembles"] or "",
+                _money(r["amount"]),
+                r["status"].title(),
+                r["_insts"],
+            ))
         self._count.config(text=f"{len(rows)} student(s) • {n_unpaid} unpaid "
                                 f"• {len(self._checked)} selected")
+
+    def _reconcile(self):
+        """Students holding more school instruments than fee rows.
+
+        The first-day checkouts ran under the old one-fee-per-year rule, so a
+        student renting two instruments got billed once.  Shown for the
+        teacher to judge, never auto-billed: a fee she deleted or waived on
+        purpose stays deleted."""
+        fee = self._fee_var.get()
+        if not fee:
+            Messagebox.show_warning("Pick a fee first.", title="No Fee", parent=self)
+            return
+        rows = self.db.get_fee_reconciliation(fee, self.school_year)
+        if not rows:
+            Messagebox.show_info(
+                f"Everyone holding a school instrument has a matching "
+                f"“{fee}” row for {self.school_year}. Nothing is missing.",
+                title="All accounted for", parent=self)
+            return
+        win = ttk.Toplevel(master=self)
+        win.title("Missing fees")
+        win.grab_set()
+        ttk.Label(win, text=(
+            f"These students are holding more school instruments than they "
+            f"have “{fee}” rows for {self.school_year}. Checked students get "
+            "the missing fee(s) added as unpaid. Uncheck anyone you have "
+            "handled on purpose."),
+            wraplength=560, justify=LEFT, font=("Segoe UI", 9)
+        ).pack(anchor=W, padx=14, pady=(12, 6))
+        box = ttk.Frame(win)
+        box.pack(fill=BOTH, expand=True, padx=14)
+        canvas = tk.Canvas(box, highlightthickness=0, height=300)
+        sb = ttk.Scrollbar(box, orient=VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side=RIGHT, fill=Y)
+        canvas.pack(side=LEFT, fill=BOTH, expand=True)
+        lst = ttk.Frame(canvas)
+        cw = canvas.create_window((0, 0), window=lst, anchor="nw")
+        lst.bind("<Configure>",
+                 lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
+        picks = []
+        for r in rows:
+            v = tk.BooleanVar(value=True)
+            missing = r["open_count"] - r["fee_count"]
+            ttk.Checkbutton(
+                lst, variable=v,
+                text=(f"{display_last_first(r)}  —  {r['instruments']}   "
+                      f"({r['fee_count']} fee(s) / {r['open_count']} instruments"
+                      f" → add {missing})")).pack(anchor=W, pady=2)
+            picks.append((v, r, missing))
+        amount = self._fee_amount()
+
+        def apply():
+            n = 0
+            for v, r, missing in picks:
+                if not v.get():
+                    continue
+                for _ in range(missing):
+                    self.db.add_student_fee(r["id"], fee, self.school_year, amount)
+                    n += 1
+            win.destroy()
+            self._reload_list()
+            Messagebox.show_info(
+                f"Added {n} fee(s), unpaid, at {_money(amount)} each.",
+                title="Fees added", parent=self)
+
+        b = ttk.Frame(win)
+        b.pack(fill=X, padx=14, pady=12)
+        ttk.Button(b, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=win.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(b, text="Add missing fees", bootstyle=SUCCESS,
+                   command=apply).pack(side=RIGHT, padx=4)
+        from ui.theme import fit_window
+        fit_window(win, 640, 470)
 
     def _on_click(self, event):
         if self.tree.identify("region", event.x, event.y) != "cell":
