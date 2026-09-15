@@ -794,13 +794,34 @@ class AgendasView(ttk.Frame):
         win.grab_set()
         hdr = ttk.Frame(win, bootstyle=INFO)
         hdr.pack(fill=X)
-        ttk.Label(hdr, text=f"📄  Export — {self._cfg['label']}",
+        ttk.Label(hdr, text="📄  Export",
                   font=("Segoe UI", fs(12), "bold"),
                   bootstyle=(INVERSE, INFO)).pack(pady=10, padx=16, anchor=W)
         body = ttk.Frame(win)
         body.pack(fill=BOTH, expand=True, padx=18, pady=10)
 
-        ttk.Label(body, text="Days:", font=("Segoe UI", fs(9), "bold")).pack(anchor=W)
+        # Which classes.  The one on screen starts checked; check more and the
+        # same days come out for each, in school-day order.
+        import class_registry
+        try:
+            classes = class_registry.load_classes(self.base_dir or ".",
+                                                  self._program_type())
+        except Exception:
+            classes = []
+        cls_vars = []
+        if classes:
+            ttk.Label(body, text="Classes:",
+                      font=("Segoe UI", fs(9), "bold")).pack(anchor=W)
+            crow = ttk.Frame(body)
+            crow.pack(fill=X, padx=10)
+            for i, k in enumerate(classes):
+                v = tk.BooleanVar(value=(k["id"] == self._klass.get("id")))
+                ttk.Checkbutton(crow, text=k["label"], variable=v).grid(
+                    row=i // 3, column=i % 3, sticky=W, padx=(0, 14), pady=1)
+                cls_vars.append((k, v))
+
+        ttk.Label(body, text="Days:", font=("Segoe UI", fs(9), "bold")).pack(
+            anchor=W, pady=(10, 0))
         dmode = tk.StringVar(value="day")
         ttk.Radiobutton(body, text=f"Just this day  ({self._date.isoformat()})",
                         value="day", variable=dmode).pack(anchor=W, padx=10, pady=1)
@@ -818,7 +839,8 @@ class AgendasView(ttk.Frame):
 
         sec_vars = []
         if len(secs) >= 2:
-            ttk.Label(body, text="Periods:", font=("Segoe UI", fs(9), "bold")
+            ttk.Label(body, text=f"Periods for {self._cfg['label']}:",
+                      font=("Segoe UI", fs(9), "bold")
                       ).pack(anchor=W, pady=(10, 0))
             srow = ttk.Frame(body)
             srow.pack(fill=X, padx=10)
@@ -827,6 +849,10 @@ class AgendasView(ttk.Frame):
                 ttk.Checkbutton(srow, text=sec["label"], variable=v).pack(
                     side=LEFT, padx=(0, 10))
                 sec_vars.append((sec, v))
+            ttk.Label(body, text="Any other class you check exports every "
+                                 "period it has.",
+                      font=("Segoe UI", fs(8)), foreground=muted_fg()).pack(
+                anchor=W, padx=10)
 
         ttk.Label(body, text="Format:", font=("Segoe UI", fs(9), "bold")).pack(
             anchor=W, pady=(10, 0))
@@ -872,8 +898,16 @@ class AgendasView(ttk.Frame):
                 Messagebox.show_warning("No school days in that range.",
                                         title="Nothing to export", parent=win)
                 return
+            chosen = ([k for k, v in cls_vars if v.get()] if cls_vars
+                      else [dict(self._klass)])
+            if not chosen:
+                Messagebox.show_warning("Pick at least one class.",
+                                        title="Classes", parent=win)
+                return
+            exporting_self = any(k.get("id") == self._klass.get("id")
+                                 for k in chosen)
             sids = None
-            if sec_vars:
+            if sec_vars and exporting_self:
                 sids = [s["sid"] for s, v in sec_vars if v.get()]
                 if not sids:
                     Messagebox.show_warning("Pick at least one period.",
@@ -881,7 +915,8 @@ class AgendasView(ttk.Frame):
                     return
             fmt = fmt_var.get()
             import re as _re
-            base = _re.sub(r"[^A-Za-z0-9]+", "", self._cfg["label"]) or "Agenda"
+            base = (_re.sub(r"[^A-Za-z0-9]+", "", chosen[0]["label"])
+                    if len(chosen) == 1 else "Agendas") or "Agenda"
             tag = (dates[0].isoformat() if len(dates) == 1
                    else f"{dates[0].isoformat()}_to_{dates[-1].isoformat()}")
             ext = ".pdf" if fmt == "pdf" else ".docx"
@@ -896,7 +931,30 @@ class AgendasView(ttk.Frame):
                 return
             win.destroy()
             try:
-                pages = self._export_pages(dates, sids)
+                pages = []
+                for k in chosen:
+                    if k.get("id") == self._klass.get("id"):
+                        pages += self._export_pages(dates, sids)
+                        continue
+                    # Another class: a hidden view of it gathers its own days
+                    # with the same machinery, then goes away.
+                    holder = ttk.Frame(self)
+                    try:
+                        temp = AgendasView(holder, self.db, self.main_db,
+                                           self.base_dir, klass=k)
+                        tsecs = temp._class_sections()
+                        tsids = ([s["sid"] for s in tsecs]
+                                 if len(tsecs) >= 2 else None)
+                        pages += temp._export_pages(dates, tsids)
+                    finally:
+                        holder.destroy()
+
+                # A sub reads the day in school order: P1 before P4 before P6.
+                def _pnum(pg):
+                    t = (pg.get("period") or "").replace("Period", "").strip()
+                    return int(t) if t.isdigit() else 99
+                pages.sort(key=lambda pg: (pg["date"].isoformat(), _pnum(pg),
+                                           pg.get("label") or ""))
                 import agenda_export
                 if fmt == "pdf":
                     agenda_export.write_pdf(pages, path)
@@ -918,7 +976,7 @@ class AgendasView(ttk.Frame):
         ttk.Button(btns, text="Export", bootstyle=INFO,
                    command=run).pack(side=RIGHT, padx=4)
         from ui.theme import fit_window
-        fit_window(win, 480, 440)
+        fit_window(win, 500, 560)
 
     def _export_pages(self, dates, sids):
         """Page payloads for agenda_export, one per (day, period).
