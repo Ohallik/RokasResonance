@@ -1335,8 +1335,10 @@ class InventoryManager(ttk.Frame):
         all_rows = list(self._all_rows)
         view_cks = open_cks(getattr(self, "_visible_rows", all_rows))
         all_cks = open_cks(all_rows)
-        today_cks = [c for c in all_cks
-                     if (c.get("date_assigned") or "")[:10] == today]
+        def date_cks(ds):
+            ds = (ds or "").strip()[:10]
+            return [c for c in all_cks
+                    if (c.get("date_assigned") or "")[:10] == ds]
         sel_cks = ([dict(c) for c in
                     self.db.get_active_checkouts_for_instrument(sel_iid)]
                    if sel_iid is not None else [])
@@ -1378,17 +1380,31 @@ class InventoryManager(ttk.Frame):
         ttk.Label(body, text="Forms for:",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W)
         scope = tk.StringVar(value="selected" if sel_cks
-                             else ("today" if today_cks else "view"))
+                             else ("ondate" if date_cks(today) else "view"))
         rb = lambda text, val, ok=True: ttk.Radiobutton(
             body, text=text, value=val, variable=scope,
             state=("normal" if ok else "disabled")).pack(anchor=W, padx=10,
                                                          pady=1)
         rb(f"The selected instrument  ({len(sel_cks)} form(s))", "selected",
            bool(sel_cks))
-        rb(f"Every checked-out instrument in the current view  "
-           f"({len(view_cks)})", "view", bool(view_cks))
-        rb(f"Everything checked out today  ({len(today_cks)})", "today",
-           bool(today_cks))
+        rb(f"Every checked-out instrument matching the current filters  "
+           f"({len(view_cks)} — scrolled out of sight included)", "view",
+           bool(view_cks))
+        drow = ttk.Frame(body)
+        drow.pack(fill=X, padx=10, pady=1)
+        ttk.Radiobutton(drow, text="Everything checked out on:", value="ondate",
+                        variable=scope).pack(side=LEFT)
+        date_var = tk.StringVar(value=today)
+        ttk.Entry(drow, textvariable=date_var, width=11).pack(side=LEFT,
+                                                              padx=(6, 6))
+        dcount = ttk.Label(drow, text="", font=("Segoe UI", 8),
+                           foreground=muted_fg())
+        dcount.pack(side=LEFT)
+
+        def _dn(*_a):
+            dcount.config(text=f"({len(date_cks(date_var.get()))} form(s))")
+        date_var.trace_add("write", _dn)
+        _dn()
         prow = ttk.Frame(body)
         prow.pack(fill=X, padx=10, pady=1)
         ttk.Radiobutton(prow, text="Everyone in period:", value="period",
@@ -1426,17 +1442,25 @@ class InventoryManager(ttk.Frame):
 
         def run():
             mode = scope.get()
-            cks = {"selected": sel_cks, "view": view_cks,
-                   "today": today_cks}.get(mode)
-            if cks is None:
+            if mode == "selected":
+                cks = sel_cks
+            elif mode == "view":
+                cks = view_cks
+            elif mode == "ondate":
+                cks = date_cks(date_var.get())
+            else:
                 cks = per_cks(period_var.get())
             if not cks:
-                Messagebox.show_warning("Nothing to print for that choice.",
-                                        title="No Forms", parent=win)
+                Messagebox.show_warning(
+                    "Nothing to print for that choice."
+                    + ("  Dates read YYYY-MM-DD, e.g. 2026-09-02."
+                       if mode == "ondate" else ""),
+                    title="No Forms", parent=win)
                 return
             outmode = out_var.get()
             win.destroy()
-            self._run_bulk_forms(cks, outmode, today, student_of)
+            tag = (date_var.get().strip()[:10] if mode == "ondate" else today)
+            self._run_bulk_forms(cks, outmode, tag, student_of)
 
         btns = ttk.Frame(win)
         btns.pack(fill=X, padx=16, pady=12)
