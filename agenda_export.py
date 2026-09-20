@@ -6,7 +6,8 @@ Two renderers over the same page payloads (built by ui/agendas_view.py):
   * write_pdf(pages, path)   — looks like the projected day: the date up top,
                                reminders/announcements, the percussion (or jazz
                                rhythm) rotation when one is filled in, then the
-                               sections with an empty check box per line.
+                               sections with a check box per line — checked
+                               where the class checked it off in Present.
   * write_docx(pages, path)  — the same day as an editable Word document, so a
                                teacher can add notes for the sub before printing.
 
@@ -18,9 +19,13 @@ A page payload:
      reminders: [str], announcements: [str],
      perc_head: str, perc_rows: [(name, station)],
      sections: [{title, items: [
-         {text, runs, indent, static, color}      — a line
-         {image: abspath, img_w: px}              — a picture
+         {text, runs, indent, static, color, done}   — a line
+         {image: abspath, img_w: px, done}            — a picture
      ]}]}
+
+``done`` is the per-section check-off state for that day (True = the box was
+checked in Present, or on the plan), so the export is a record of what the
+class actually got through, not just what was planned.
 
 ``runs`` are the agenda's rich-text spans [[start, end, tag]] with tag in
 b / i / u / hl — the same shape the editor stores.
@@ -132,6 +137,8 @@ def write_pdf(pages, path):
     sym = _symbol_font()
     box = (f'<font name="{sym}">☐</font>&nbsp;&nbsp;' if sym
            else "[&nbsp;&nbsp;]&nbsp;")
+    box_done = (f'<font name="{sym}">☑</font>&nbsp;&nbsp;' if sym
+                else "[x]&nbsp;")
     dot = (f'<font name="{sym}">◦</font>&nbsp;&nbsp;' if sym else "-&nbsp;")
 
     body = ParagraphStyle("body", fontName="Helvetica", fontSize=11,
@@ -242,7 +249,8 @@ def write_pdf(pages, path):
                 elif item.get("static"):
                     story.append(Paragraph(markup, detail))
                 else:
-                    story.append(Paragraph(box + markup, body))
+                    story.append(Paragraph(
+                        (box_done if item.get("done") else box) + markup, body))
                 story.append(Spacer(1, 2))
 
     doc.build(story)
@@ -357,7 +365,7 @@ def write_docx(pages, path):
                 elif item.get("static"):
                     par.paragraph_format.left_indent = Inches(0.25)
                 else:
-                    par.add_run("☐  ")
+                    par.add_run("☑  " if item.get("done") else "☐  ")
                 _add_runs(par, item)
 
     doc.save(path)

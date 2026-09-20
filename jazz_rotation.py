@@ -131,27 +131,39 @@ def eligible_players(seat, players, used=None):
             if seat in (p.get("parts") or []) and p.get("name") not in used]
 
 
-def day_assignments(seats, players, day=1, locked=None, pools=None):
-    """Assign players to seats for rotation ``day`` (1-based).
+class _History:
+    """What the rotation has already handed out, day by day, so a turn goes
+    to whoever has waited longest rather than to whoever happens to sit at a
+    given index in today's eligible list.
 
-    Order of operations:
-      1. Locked seats (a song's auditioned players) are pinned first, consuming
-         capacity — and, if the seat is in a pool, a slot of that pool.
-      2. Scarce one-at-a-time seats are filled first (drum set before anything,
-         then by capacity) so turns on them rotate day to day across everyone
-         eligible — the main goal of a jazz rotation.
-      3. Anyone still unplaced is parked on any seat they can play that still has
-         room (preferring the emptiest, i.e. the big mallet seat) so as few
-         players as possible sit out.
+    ``turns[seat][name]`` counts days on that seat, ``last[seat][name]`` is the
+    most recent day they held it, ``seated[name]`` is days placed anywhere."""
 
-    ``locked`` may map a seat to one name or a list (up to its capacity); pools
-    ({"name","limit","seats"}) cap the TOTAL players across their seats (e.g. 3
-    amps split across Bass + Guitar).
+    def __init__(self):
+        self.turns = {}
+        self.last = {}
+        self.seated = {}
 
-    Returns ``(assignments, bench)`` — ``assignments`` is an ordered list of
-    ``(seat, [names])`` (a list because a seat may hold several) and ``bench`` is
-    the players not placed anywhere.
-    """
+    def record(self, day, assignments):
+        for seat, names in assignments:
+            t = self.turns.setdefault(seat, {})
+            l = self.last.setdefault(seat, {})
+            for nm in names:
+                t[nm] = t.get(nm, 0) + 1
+                l[nm] = day
+                self.seated[nm] = self.seated.get(nm, 0) + 1
+
+    def key(self, seat, name, roster_index):
+        """Sort key: fewest turns on this seat, then the longest wait since the
+        last one, then fewest days seated anywhere, then roster order."""
+        return (self.turns.get(seat, {}).get(name, 0),
+                self.last.get(seat, {}).get(name, 0),
+                self.seated.get(name, 0),
+                roster_index)
+
+
+def _assign_one_day(seats, players, day, locked, pools, hist):
+    """One day's board given the history so far — see day_assignments."""
     seatlist = normalize_seats(seats)
     names = [n for n, _ in seatlist]
     caps = {n: c for n, c in seatlist}
@@ -161,8 +173,7 @@ def day_assignments(seats, players, day=1, locked=None, pools=None):
     pool_limit = {p["name"]: p["limit"] for p in pool_list}
     pool_use = {p["name"]: 0 for p in pool_list}
     locked = normalize_locked(locked, names)
-    if day < 1:
-        day = 1
+    roster_index = {p.get("name"): i for i, p in enumerate(players)}
 
     assign = {n: [] for n in names}
     used = set()
@@ -195,36 +206,28 @@ def day_assignments(seats, players, day=1, locked=None, pools=None):
             if nm in present and nm not in used and has_room(seat):
                 place(seat, nm)
 
-    # 2) Rotate — drum set first, then the other scarce (small-capacity) seats,
-    #    so a turn on the kit cycles through every eligible player over the days.
+    # 2) Rotate — drum set first, then the other scarce (small-capacity) seats.
+    #    Each open slot goes to the eligible player who has had the FEWEST
+    #    turns on that seat (then the longest wait), so every pianist gets to
+    #    the piano no matter how many drummers double on it.
     def priority(item):
         n, c = item
         return (0 if n.strip().lower() in DRUM_SEATS else 1, c, names.index(n))
 
     for seat, _cap in sorted(seatlist, key=priority):
-        offset = names.index(seat)
         while has_room(seat):
             elig = eligible_players(seat, players, used)
             if not elig:
                 break
-            place(seat, elig[(day - 1 + offset) % len(elig)]["name"])
+            elig.sort(key=lambda p: hist.key(seat, p["name"],
+                                             roster_index.get(p["name"], 0)))
+            place(seat, elig[0]["name"])
 
-    # 3) Minimize the bench: seat any leftover player wherever they fit, filling
-    #    the emptiest seat first (the mallet seat soaks up the extras).
-    for p in players:
-        if p["name"] in used:
-            continue
-        cands = [s for s in names if s in (p.get("parts") or []) and has_room(s)]
-        if not cands:
-            continue
-        cands.sort(key=lambda s: caps[s] - len(assign[s]), reverse=True)
-        place(cands[0], p["name"])
-
-    # 4) Rescue pass — a player may still be benched only because a seat they can
-    #    play is full of players who each have somewhere ELSE to go (e.g. a piano-
-    #    only student stuck behind a pianist who also plays vibes).  Shuffle one
-    #    movable occupant out so the stuck player gets a seat.  Repeats until no
-    #    further rescue is possible.
+    # 3) Rescue pass — a player may still be benched only because a seat they
+    #    can play is full of players who each have somewhere ELSE to go (e.g. a
+    #    piano-only student stuck behind a pianist who also plays vibes).
+    #    Shuffle one movable occupant out so the stuck player gets a seat.
+    #    Repeats until no further rescue is possible.
     changed = True
     while changed:
         changed = False
@@ -255,25 +258,128 @@ def day_assignments(seats, players, day=1, locked=None, pools=None):
     return [(n, assign[n]) for n in names], bench
 
 
+def _simulate(seats, players, days, locked=None, pools=None):
+    """Boards for days 1..``days`` in order, each built on what came before.
+    Yields ``(day, assignments, bench, hist)``."""
+    hist = _History()
+    for d in range(1, max(1, days) + 1):
+        asg, bench = _assign_one_day(seats, players, d, locked, pools, hist)
+        hist.record(d, asg)
+        yield d, asg, bench, hist
+
+
+def _memo_key(*parts):
+    import json
+    try:
+        return json.dumps(parts, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return None
+
+
+_MEMO = {}
+
+
+def _memoized(key, compute):
+    """Same inputs, same answer — remembered, because the agenda banner, the
+    Present window and an export all ask for today's board in one go."""
+    if key is None:
+        return compute()
+    hit = _MEMO.get(key)
+    if hit is None:
+        if len(_MEMO) > 512:
+            _MEMO.clear()
+        hit = _MEMO[key] = compute()
+    return hit
+
+
+def day_assignments(seats, players, day=1, locked=None, pools=None):
+    """Assign players to seats for rotation ``day`` (1-based).
+
+    Order of operations:
+      1. Locked seats (a song's auditioned players) are pinned first, consuming
+         capacity — and, if the seat is in a pool, a slot of that pool.
+      2. Scarce one-at-a-time seats are filled first (drum set before anything,
+         then by capacity).  Each slot goes to the eligible player with the
+         fewest turns on that seat so far, ties to whoever has waited longest,
+         so turns genuinely rotate through everyone eligible — a student who
+         doubles on drums and piano no longer knocks a piano-only student out
+         of the piano rotation for good.
+      3. Anyone still benched behind a movable occupant is rescued.
+
+    The board for a day is built by replaying the days before it, so it is
+    deterministic — the same inputs always give the same board — and the
+    agenda and the Jazz tool always agree.
+
+    ``locked`` may map a seat to one name or a list (up to its capacity); pools
+    ({"name","limit","seats"}) cap the TOTAL players across their seats (e.g. 3
+    amps split across Bass + Guitar).
+
+    Returns ``(assignments, bench)`` — ``assignments`` is an ordered list of
+    ``(seat, [names])`` (a list because a seat may hold several) and ``bench`` is
+    the players not placed anywhere.
+    """
+    if day < 1:
+        day = 1
+
+    def compute():
+        asg, bench = [], [p.get("name") for p in players]
+        for _d, asg, bench, _h in _simulate(seats, players, day, locked, pools):
+            pass
+        return asg, bench
+
+    asg, bench = _memoized(_memo_key("day", seats, players, day, locked, pools),
+                           compute)
+    return [(s, list(n)) for s, n in asg], list(bench)
+
+
+# The longest cycle worth looking for.  Two drummers and three pianists need
+# six days for everyone to come out even; a section would have to be very
+# lopsided to need more than this.
+_MAX_CYCLE = 120
+
+
 def cycle_length(seats, players, locked=None, pools=None):
     """Distinct rotation days before the board repeats (so the day-stepper
-    wraps).  It's the most turns any single scarce seat needs to show everyone
-    eligible: a one-seat spot two players share needs 2 days; three, 3.  A seat's
-    open capacity (after locks) divides its eligible pool.  Never less than 1."""
+    wraps): the first day on which every rotating seat has given each of its
+    eligible players the same number of turns.  Two drummers alone need 2
+    days; two drummers and three pianists need 6, so that the drummers come
+    out 3 and 3 and the pianists 2, 2 and 2.  Never less than 1.
+
+    A seat nobody has to wait for (everyone eligible fits at once) never
+    lengthens the cycle.  If no day within the search window comes out even —
+    the only drummer also wants a piano turn, say — the fairest day found is
+    used instead."""
     seatlist = normalize_seats(seats)
     names = [n for n, _ in seatlist]
     locked = normalize_locked(locked, names)
     locked_names = {nm for v in locked.values() for nm in v}
     avail = [p for p in players if p.get("name") not in locked_names]
-    best = 1
+    rotating = {}
     for name, cap in seatlist:
         open_slots = cap - len(locked.get(name, []))
         if open_slots <= 0:
             continue
-        elig = len(eligible_players(name, avail))
-        if elig > open_slots:
-            best = max(best, -(-elig // open_slots))          # ceil
-    return best
+        elig = [p["name"] for p in eligible_players(name, avail)]
+        if len(elig) > open_slots:
+            rotating[name] = elig
+    if not rotating:
+        return 1
+
+    def compute():
+        best_day, best_spread = 1, None
+        for d, _asg, _bench, hist in _simulate(seats, players, _MAX_CYCLE,
+                                               locked, pools):
+            spread = 0
+            for seat, elig in rotating.items():
+                counts = [hist.turns.get(seat, {}).get(nm, 0) for nm in elig]
+                spread += max(counts) - min(counts)
+            if spread == 0:
+                return d
+            if best_spread is None or spread < best_spread:
+                best_day, best_spread = d, spread
+        return best_day
+
+    return _memoized(_memo_key("cycle", seats, players, locked, pools), compute)
 
 
 def describe_seat_coverage(seats, players):

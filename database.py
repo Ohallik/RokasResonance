@@ -682,6 +682,20 @@ class Database:
                 conn.commit()
             except Exception:
                 pass
+            # A rental fee belongs to ONE instrument.  Two baritones on one
+            # student used to show as two fees that each listed both horns,
+            # which read as a duplicate and got deleted.  checkout_id ties
+            # the fee to the loan it bills (heal_fee_instrument_links fills
+            # it in for fees written before this existed).  contract_received
+            # tracks the signed rental contract, which the office wants along
+            # with the money.
+            for col, decl in (("checkout_id", "INTEGER"),
+                              ("contract_received", "INTEGER DEFAULT 0")):
+                try:
+                    conn.execute(f"ALTER TABLE student_fees ADD COLUMN {col} {decl}")
+                    conn.commit()
+                except Exception:
+                    pass
 
             # Migrate: student ensemble / class-period / instrument fields.
             # Stored as comma-separated strings (e.g. "Advanced Band,Jazz 1"
@@ -3157,29 +3171,36 @@ KEEPING IT
         if student_id and charge_fee and self._student_site_charges_fees(student_id):
             try:
                 self._auto_add_rental_fee(student_id, date_assigned, rental_type,
-                                          per_instrument=fee_per_instrument)
+                                          per_instrument=fee_per_instrument,
+                                          checkout_id=checkout_id)
             except Exception:
                 pass
         return checkout_id
 
     def add_rental_fee(self, student_id: int, date_assigned: str,
                        rental_type: str = "school_year",
-                       per_instrument: bool = True):
+                       per_instrument: bool = True, checkout_id=None):
         """Bill the rental fee on its own, for an instrument the student is
         already holding — a summer loan that simply runs on into the new school
-        year owes the new year's fee without a second check-out."""
+        year owes the new year's fee without a second check-out.  Pass the
+        loan's ``checkout_id`` so the fee knows which instrument it is for."""
         self._auto_add_rental_fee(student_id, date_assigned, rental_type,
-                                  per_instrument=per_instrument)
+                                  per_instrument=per_instrument,
+                                  checkout_id=checkout_id)
 
     def _auto_add_rental_fee(self, student_id: int, date_assigned: str,
                              rental_type: str = "school_year",
-                             per_instrument: bool = False):
+                             per_instrument: bool = False, checkout_id=None):
         """The rental fee for one check-out.
 
         ``per_instrument`` bills this instrument on its own line, which is what
         a student renting three of them actually owes.  Left off, the fee is
         deduped to one per student per year — the older behavior, kept so a
-        single check-out screen can't double-bill someone by accident."""
+        single check-out screen can't double-bill someone by accident.
+
+        ``checkout_id`` is the loan being billed; the fee is tied to it, so the
+        fee window can say WHICH baritone each $75 is for.  A loan that already
+        has its fee is never billed twice."""
         year = self.academic_year_of(date_assigned)
         if rental_type == "summer":
             name, amount, want = "Instrument Rental (Summer)", 20.0, "summer"
@@ -3196,6 +3217,11 @@ KEEPING IT
             # a checkout screen twice cannot double-bill, while the second
             # tuba a student really takes still gets its own line.
             with self._connect() as conn:
+                if checkout_id and conn.execute(
+                        "SELECT 1 FROM student_fees WHERE checkout_id=? AND "
+                        "fee_type=? AND school_year=?",
+                        (checkout_id, name, year)).fetchone():
+                    return
                 n_open = conn.execute(
                     "SELECT COUNT(*) FROM checkouts WHERE student_id=? AND "
                     "instrument_id IS NOT NULL AND "
@@ -3206,7 +3232,8 @@ KEEPING IT
                     "fee_type=? AND school_year=?",
                     (student_id, name, year)).fetchone()[0]
             if n_fees < max(n_open, 1):
-                self.add_student_fee(student_id, name, year, amount)
+                self.add_student_fee(student_id, name, year, amount,
+                                     checkout_id=checkout_id)
         else:
             self.ensure_student_fee(student_id, name, year, amount)
 
@@ -3993,13 +4020,32 @@ KEEPING IT
     def get_fee_reconciliation(self, fee_type: str, school_year: str,
                                include_cleared: bool = False):
         """Students holding more school instruments than they have rows of
-        this fee — the leftovers of the old one-fee-per-year rule.  Waived
-        rows count as handled (the teacher decided), and students at a school
-        that doesn't charge are skipped.  Returns dicts with open_count,
-        fee_count and an ``instruments`` summary string."""
+        this fee — the leftovers of the old one-fee-per-year rule, or a fee
+        that got deleted.  Waived rows count as handled (the teacher decided),
+        and students at a school that doesn't charge are skipped.  Returns
+        dicts with open_count, fee_count, an ``instruments`` summary string
+        and ``missing``: the open loans with no fee row yet, as
+        ``[{"checkout_id", "label"}]``, as many as are actually unbilled."""
+        self.heal_fee_instrument_links(fee_type, school_year)
         inst_map = self.get_open_instruments_by_student()
         out = []
         with self._connect() as conn:
+            unbilled = {}
+            for l in conn.execute(
+                    """SELECT c.id, c.student_id, i.description,
+                              COALESCE(NULLIF(i.barcode,''), NULLIF(i.district_no,''),
+                                       NULLIF(i.serial_no,''), '') AS tag
+                         FROM checkouts c JOIN instruments i ON i.id = c.instrument_id
+                        WHERE (c.date_returned IS NULL OR TRIM(c.date_returned)='')
+                          AND c.student_id IS NOT NULL
+                          AND c.id NOT IN (SELECT checkout_id FROM student_fees
+                                            WHERE fee_type=? AND school_year=?
+                                              AND checkout_id IS NOT NULL)
+                        ORDER BY c.date_assigned, c.id""",
+                    (fee_type, school_year)):
+                unbilled.setdefault(l["student_id"], []).append(
+                    {"checkout_id": l["id"],
+                     "label": self.instrument_label(l["description"], l["tag"])})
             rows = conn.execute(
                 """SELECT s.id, s.first_name, s.last_name, s.preferred_name,
                           COUNT(c.id) AS open_count,
@@ -4025,18 +4071,137 @@ KEEPING IT
             d = dict(r)
             d["cleared"] = cleared
             d["instruments"] = inst_map.get(r["id"], "")
+            short = max(0, int(r["open_count"] or 0) - int(r["fee_count"] or 0))
+            d["missing"] = unbilled.get(r["id"], [])[:short]
             out.append(d)
         return out
 
+    @staticmethod
+    def instrument_label(description, tag) -> str:
+        """"Baritone #12346" — the description plus whichever of barcode /
+        district number / serial the instrument has."""
+        label = (description or "").strip() or "instrument"
+        if (tag or "").strip():
+            label += f" #{str(tag).strip()}"
+        return label
+
+    @staticmethod
+    def fee_instrument_label(row) -> str:
+        """The one instrument a fee row (from get_student_fees) is for, or ""
+        when it isn't tied to one.  A loan since returned says so."""
+        try:
+            if not row["checkout_id"] or not row.get("inst_description"):
+                return ""
+        except (KeyError, TypeError, IndexError):
+            return ""
+        label = Database.instrument_label(row.get("inst_description"),
+                                          row.get("inst_tag"))
+        if (row.get("inst_returned") or "").strip():
+            label += " (returned)"
+        return label
+
+    @staticmethod
+    def is_rental_fee_type(name) -> bool:
+        """Fee types that bill an instrument loan — the ones a fee window ties
+        to a specific horn.  Loose on purpose: "Instrument Rental (Summer)",
+        "School instrument rental" and the like all count."""
+        n = (name or "").lower()
+        return "instrument" in n and "rental" in n
+
+    def heal_fee_instrument_links(self, fee_type: str, school_year: str) -> int:
+        """Tie each still-untied fee of this type and year to one of its
+        student's open loans that no fee of this type and year claims yet,
+        oldest loan first.  Fees written before fees knew their instrument get
+        one this way; so does a fee charged by hand for a horn already out.
+        Only ever fills a blank — never moves a fee that is already tied.
+        Returns how many were tied."""
+        with self._connect() as conn:
+            fees = conn.execute(
+                "SELECT id, student_id FROM student_fees WHERE fee_type=? AND "
+                "school_year=? AND checkout_id IS NULL AND student_id IS NOT NULL "
+                "ORDER BY id", (fee_type, school_year)).fetchall()
+            if not fees:
+                return 0
+            taken = {r["checkout_id"] for r in conn.execute(
+                "SELECT checkout_id FROM student_fees WHERE fee_type=? AND "
+                "school_year=? AND checkout_id IS NOT NULL",
+                (fee_type, school_year))}
+            free = {}
+            for r in conn.execute(
+                    "SELECT id, student_id FROM checkouts WHERE student_id IS NOT NULL "
+                    "AND instrument_id IS NOT NULL AND "
+                    "(date_returned IS NULL OR TRIM(date_returned)='') "
+                    "ORDER BY date_assigned, id"):
+                if r["id"] not in taken:
+                    free.setdefault(r["student_id"], []).append(r["id"])
+            n = 0
+            for f in fees:
+                pool = free.get(f["student_id"])
+                if pool:
+                    conn.execute("UPDATE student_fees SET checkout_id=? WHERE id=?",
+                                 (pool.pop(0), f["id"]))
+                    n += 1
+            return n
+
+    def get_student_open_loans(self, student_id, fee_type=None, school_year=None):
+        """This student's open loans, oldest first, as dicts with checkout_id,
+        label, date_assigned and — when a fee type + year are given — fee_id:
+        the fee of that type already tied to the loan, or None."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT c.id, c.date_assigned, i.description,
+                          COALESCE(NULLIF(i.barcode,''), NULLIF(i.district_no,''),
+                                   NULLIF(i.serial_no,''), '') AS tag
+                     FROM checkouts c JOIN instruments i ON i.id = c.instrument_id
+                    WHERE c.student_id=? AND
+                          (c.date_returned IS NULL OR TRIM(c.date_returned)='')
+                    ORDER BY c.date_assigned, c.id""", (student_id,)).fetchall()
+            billed = {}
+            if fee_type and school_year:
+                for f in conn.execute(
+                        "SELECT id, checkout_id FROM student_fees WHERE student_id=? "
+                        "AND fee_type=? AND school_year=? AND checkout_id IS NOT NULL",
+                        (student_id, fee_type, school_year)):
+                    billed.setdefault(f["checkout_id"], f["id"])
+        return [{"checkout_id": r["id"], "date_assigned": r["date_assigned"] or "",
+                 "label": self.instrument_label(r["description"], r["tag"]),
+                 "fee_id": billed.get(r["id"])} for r in rows]
+
+    def count_student_fees(self, student_id, fee_type, school_year) -> int:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM student_fees WHERE student_id=? AND "
+                "fee_type=? AND school_year=?",
+                (student_id, fee_type, school_year)).fetchone()[0]
+
+    def set_student_fee_checkout(self, fee_id, checkout_id):
+        """Tie a fee to a loan (or untie it with None)."""
+        with self._connect() as conn:
+            conn.execute("UPDATE student_fees SET checkout_id=? WHERE id=?",
+                         (checkout_id or None, fee_id))
+
+    def set_student_fee_contract(self, fee_id, received: bool):
+        with self._connect() as conn:
+            conn.execute("UPDATE student_fees SET contract_received=? WHERE id=?",
+                         (1 if received else 0, fee_id))
+
     def get_student_fees(self, fee_type: str, school_year: str):
-        """All student_fee rows for a fee type + year, joined with the student."""
+        """All student_fee rows for a fee type + year, joined with the student
+        and with the instrument the fee is for (inst_description / inst_tag /
+        inst_returned — see fee_instrument_label)."""
         with self._connect() as conn:
             return conn.execute(
                 """SELECT sf.*, s.first_name, s.last_name, s.preferred_name, s.grade,
                           s.ensembles, s.class_periods,
-                          s.student_email, s.parent1_email, s.parent2_email
+                          s.student_email, s.parent1_email, s.parent2_email,
+                          i.description AS inst_description,
+                          COALESCE(NULLIF(i.barcode,''), NULLIF(i.district_no,''),
+                                   NULLIF(i.serial_no,''), '') AS inst_tag,
+                          c.date_returned AS inst_returned
                    FROM student_fees sf
                    JOIN students s ON s.id = sf.student_id
+                   LEFT JOIN checkouts c ON c.id = sf.checkout_id
+                   LEFT JOIN instruments i ON i.id = c.instrument_id
                    WHERE sf.fee_type=? AND sf.school_year=?
                    ORDER BY s.last_name, s.first_name""",
                 (fee_type, school_year)).fetchall()
@@ -4055,14 +4220,18 @@ KEEPING IT
                 (student_id, fee_type, school_year, amount, status))
             return cur.lastrowid
 
-    def add_student_fee(self, student_id, fee_type, school_year, amount, status="unpaid"):
+    def add_student_fee(self, student_id, fee_type, school_year, amount,
+                        status="unpaid", checkout_id=None):
         """Always INSERT a fee row (no dedup) — for students who owe a fee more
-        than once, e.g. renting several instruments (3 summer rentals = 3 × $20)."""
+        than once, e.g. renting several instruments (3 summer rentals = 3 × $20).
+        ``checkout_id`` ties the fee to the loan it bills."""
         with self._connect() as conn:
             cur = conn.execute(
-                """INSERT INTO student_fees (student_id, fee_type, school_year, amount, status)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (student_id, fee_type, school_year, amount, status))
+                """INSERT INTO student_fees (student_id, fee_type, school_year, amount,
+                                             status, checkout_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (student_id, fee_type, school_year, amount, status,
+                 checkout_id or None))
             return cur.lastrowid
 
     def set_student_fee_status(self, fee_id, status, date_paid=None):

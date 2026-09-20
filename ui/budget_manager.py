@@ -1112,7 +1112,10 @@ class _FeesDialog(ttk.Toplevel):
         ttk.Button(bar, text="Manage Fee Types", bootstyle=(SECONDARY, OUTLINE),
                    command=self._manage_types).pack(side=LEFT, padx=8)
 
-        tb = ttk.Frame(self); tb.pack(fill=X, padx=12, pady=4)
+        # Two rows: charging on the first, marking on the second.  One row
+        # ran off the right edge of a 900px window once the contract buttons
+        # joined it.
+        tb = ttk.Frame(self); tb.pack(fill=X, padx=12, pady=(4, 0))
         ttk.Button(tb, text="➕ Charge a Student…", bootstyle=SUCCESS,
                    command=self._add_students).pack(side=LEFT, padx=2)
         ttk.Button(tb, text="🎓 Add fee to a class…", bootstyle=(SUCCESS, OUTLINE),
@@ -1121,33 +1124,43 @@ class _FeesDialog(ttk.Toplevel):
                    command=self._duplicate).pack(side=LEFT, padx=2)
         ttk.Button(tb, text="⚖ Missing fees…", bootstyle=(WARNING, OUTLINE),
                    command=self._reconcile).pack(side=LEFT, padx=2)
+        ttk.Button(tb, text="🎺 Instrument…", bootstyle=(INFO, OUTLINE),
+                   command=self._link_instrument).pack(side=LEFT, padx=2)
         ttk.Separator(tb, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=2)
-        ttk.Button(tb, text="Select All", bootstyle=(SECONDARY, OUTLINE),
-                   command=self._check_all).pack(side=LEFT, padx=2)
-        ttk.Button(tb, text="Clear", bootstyle=(SECONDARY, OUTLINE),
-                   command=self._clear_checks).pack(side=LEFT, padx=2)
-        ttk.Separator(tb, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=2)
-        ttk.Button(tb, text="✅ Paid", bootstyle=(SUCCESS, OUTLINE),
-                   command=lambda: self._set_status("paid")).pack(side=LEFT, padx=2)
-        ttk.Button(tb, text="⛔ Unpaid", bootstyle=(WARNING, OUTLINE),
-                   command=lambda: self._set_status("unpaid")).pack(side=LEFT, padx=2)
-        ttk.Button(tb, text="🚫 Waive", bootstyle=(SECONDARY, OUTLINE),
-                   command=lambda: self._set_status("waived")).pack(side=LEFT, padx=2)
-        ttk.Button(tb, text="🗑️ Remove", bootstyle=(DANGER, OUTLINE),
-                   command=self._remove).pack(side=LEFT, padx=2)
-        ttk.Separator(tb, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=2)
-        ttk.Button(tb, text="✉️ Email Unpaid", bootstyle=INFO,
+        ttk.Button(tb, text="✉️ Email families…", bootstyle=INFO,
                    command=self._email_unpaid).pack(side=LEFT, padx=2)
         ttk.Button(tb, text="📊 Export", bootstyle=(SECONDARY, OUTLINE),
                    command=self._export).pack(side=LEFT, padx=2)
 
-        ttk.Label(self, text="Check the ☐ boxes (or Ctrl/Shift-click rows) to select several, "
-                             "then Paid / Waive.", font=("Segoe UI", 8),
-                  foreground="#888").pack(anchor=W, padx=14)
+        tb2 = ttk.Frame(self); tb2.pack(fill=X, padx=12, pady=(2, 4))
+        ttk.Button(tb2, text="Select All", bootstyle=(SECONDARY, OUTLINE),
+                   command=self._check_all).pack(side=LEFT, padx=2)
+        ttk.Button(tb2, text="Clear", bootstyle=(SECONDARY, OUTLINE),
+                   command=self._clear_checks).pack(side=LEFT, padx=2)
+        ttk.Separator(tb2, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=2)
+        ttk.Button(tb2, text="✅ Paid", bootstyle=(SUCCESS, OUTLINE),
+                   command=lambda: self._set_status("paid")).pack(side=LEFT, padx=2)
+        ttk.Button(tb2, text="⛔ Unpaid", bootstyle=(WARNING, OUTLINE),
+                   command=lambda: self._set_status("unpaid")).pack(side=LEFT, padx=2)
+        ttk.Button(tb2, text="🚫 Waive", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: self._set_status("waived")).pack(side=LEFT, padx=2)
+        ttk.Separator(tb2, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=2)
+        ttk.Button(tb2, text="📄 Contract in", bootstyle=(SUCCESS, OUTLINE),
+                   command=lambda: self._set_contract(True)).pack(side=LEFT, padx=2)
+        ttk.Button(tb2, text="📄 No contract", bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: self._set_contract(False)).pack(side=LEFT, padx=2)
+        ttk.Separator(tb2, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=2)
+        ttk.Button(tb2, text="🗑️ Remove", bootstyle=(DANGER, OUTLINE),
+                   command=self._remove).pack(side=LEFT, padx=2)
+
+        ttk.Label(self, text="Check the ☐ boxes (or Ctrl/Shift-click rows) to select "
+                             "several, then Paid / Waive / Contract in. Click a row's "
+                             "Contract box to flip just that one.",
+                  font=("Segoe UI", 8), foreground="#888").pack(anchor=W, padx=14)
 
         frame = ttk.Frame(self); frame.pack(fill=BOTH, expand=True, padx=12, pady=8)
         cols = ("chk", "name", "grade", "period", "ensembles", "amount",
-                "status", "inst")
+                "status", "contract", "inst")
         sb = ttk.Scrollbar(frame, orient=VERTICAL)
         self.tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="extended",
                                  yscrollcommand=sb.set, bootstyle=INFO)
@@ -1155,14 +1168,16 @@ class _FeesDialog(ttk.Toplevel):
         self.tree.pack(fill=BOTH, expand=True)
         heads = {"chk": "✓", "name": "Student", "grade": "Grade", "period": "Per",
                  "ensembles": "Ensembles", "amount": "Amount", "status": "Status",
-                 "inst": "Instruments Out"}
+                 "contract": "Contract", "inst": "Instrument"}
         widths = {"chk": 34, "name": 185, "grade": 48, "period": 44,
-                  "ensembles": 165, "amount": 80, "status": 80, "inst": 190}
+                  "ensembles": 150, "amount": 74, "status": 74,
+                  "contract": 70, "inst": 175}
         for c in cols:
             self.tree.heading(c, text=heads[c], anchor=W,
                               command=(self._toggle_all_header if c == "chk"
                                        else (lambda col=c: self._sort_rows(col))))
-            self.tree.column(c, width=widths[c], anchor=(CENTER if c == "chk" else W))
+            self.tree.column(c, width=widths[c],
+                             anchor=(CENTER if c in ("chk", "contract") else W))
         self.tree.tag_configure("paid", foreground="#1a7a1a")
         self.tree.tag_configure("waived", foreground="#888")
         self.tree.tag_configure("unpaid", foreground="#b00000")
@@ -1205,10 +1220,14 @@ class _FeesDialog(ttk.Toplevel):
         fee = self._fee_var.get()
         if not fee:
             return
+        if self.db.is_rental_fee_type(fee):
+            # Fees from before a fee knew its instrument get one now, so the
+            # column below names ONE horn per row instead of every horn the
+            # student has -- which is how two baritones read as a duplicate.
+            self.db.heal_fee_instrument_links(fee, self.school_year)
         rows = [dict(r) for r in self.db.get_student_fees(fee, self.school_year)]
-        inst_map = self.db.get_open_instruments_by_student()
         for r in rows:
-            r["_insts"] = inst_map.get(r["student_id"], "")
+            r["_insts"] = self.db.fee_instrument_label(r)
             r["_pers"] = [p.strip() for p in
                           (r.get("class_periods") or "").split(",") if p.strip()]
         # Every period 0-7, always — the filter has to fit whoever is
@@ -1237,6 +1256,7 @@ class _FeesDialog(ttk.Toplevel):
             "ensembles": lambda r: (r.get("ensembles") or "").lower(),
             "amount": lambda r: float(r.get("amount") or 0),
             "status": lambda r: (r.get("status") or ""),
+            "contract": lambda r: 0 if r.get("contract_received") else 1,
             "inst": lambda r: (r.get("_insts") or "").lower(),
         }
         rows.sort(key=keyers.get(col, keyers["name"]), reverse=rev)
@@ -1254,9 +1274,13 @@ class _FeesDialog(ttk.Toplevel):
                 r["ensembles"] or "",
                 _money(r["amount"]),
                 r["status"].title(),
+                "☑" if r.get("contract_received") else "☐",
                 r["_insts"],
             ))
+        n_no_contract = sum(1 for r in rows if not r.get("contract_received")
+                            and r["status"] != "waived")
         self._count.config(text=f"{len(rows)} student(s) • {n_unpaid} unpaid "
+                                f"• {n_no_contract} without a contract "
                                 f"• {len(self._checked)} selected")
 
     def _changed(self):
@@ -1401,9 +1425,11 @@ class _FeesDialog(ttk.Toplevel):
         win.grab_set()
         ttk.Label(win, text=(
             f"{len(rows)} student(s) are holding more school instruments than "
-            f"they have “{fee}” rows for {self.school_year}. Checked students "
-            "get the missing fee(s) added as unpaid — the button counts them, "
-            "so scroll and look everyone over before applying."),
+            f"they have “{fee}” rows for {self.school_year} — an instrument "
+            "checked out before fees were tied to instruments, or a fee that "
+            "was removed. Checked students get a fee added, unpaid, for each "
+            "instrument named — the button counts them, so scroll and look "
+            "everyone over before applying."),
             wraplength=580, justify=LEFT, font=("Segoe UI", 9)
         ).pack(anchor=W, padx=14, pady=(12, 4))
         tools = ttk.Frame(win)
@@ -1439,7 +1465,8 @@ class _FeesDialog(ttk.Toplevel):
         for r in rows:
             v = tk.BooleanVar(value=not r.get("cleared"))
             missing = r["open_count"] - r["fee_count"]
-            txt = (f"{display_last_first(r)}  —  {r['instruments']}   "
+            named = ", ".join(m["label"] for m in (r.get("missing") or []))
+            txt = (f"{display_last_first(r)}  —  {named or r['instruments']}   "
                    f"({r['fee_count']} fee(s) / {r['open_count']} instruments"
                    f" → add {missing})")
             if r.get("cleared"):
@@ -1456,9 +1483,13 @@ class _FeesDialog(ttk.Toplevel):
             n = 0
             names = []
             for r in chosen:
-                for _ in range(r["open_count"] - r["fee_count"]):
-                    self.db.add_student_fee(r["id"], fee, self.school_year,
-                                            amount)
+                short = r["open_count"] - r["fee_count"]
+                todo = list(r.get("missing") or [])[:short]
+                todo += [None] * (short - len(todo))
+                for m in todo:
+                    self.db.add_student_fee(
+                        r["id"], fee, self.school_year, amount,
+                        checkout_id=(m or {}).get("checkout_id"))
                     n += 1
                 names.append(display_last_first(r))
                 if r.get("cleared"):
@@ -1494,15 +1525,27 @@ class _FeesDialog(ttk.Toplevel):
         from ui.theme import fit_window
         fit_window(win, 680, 540)
 
+    def _col_number(self, name):
+        """The '#n' id Treeview uses for a named column."""
+        return f"#{list(self.tree['columns']).index(name) + 1}"
+
     def _on_click(self, event):
         if self.tree.identify("region", event.x, event.y) != "cell":
             return
-        if self.tree.identify_column(event.x) != "#1":
-            return
+        col = self.tree.identify_column(event.x)
         iid = self.tree.identify_row(event.y)
         if not iid:
             return
         fid = int(iid)
+        if col == self._col_number("contract"):
+            # One click on the box flips that one row -- the common case is
+            # a single form handed in at the door.
+            now = self.tree.set(iid, "contract") == "☑"
+            self.db.set_student_fee_contract(fid, not now)
+            self.tree.set(iid, "contract", "☐" if now else "☑")
+            return
+        if col != "#1":
+            return
         self._checked.symmetric_difference_update({fid})
         self.tree.set(iid, "chk", "☑" if fid in self._checked else "☐")
         n = len([1 for i in self.tree.get_children()
@@ -1544,6 +1587,73 @@ class _FeesDialog(ttk.Toplevel):
         self._changed()
         self._checked.clear()
         self._reload_list()
+
+    def _set_contract(self, received):
+        ids = self._sel_ids()
+        if not ids:
+            Messagebox.show_warning("Check or select student(s) first.",
+                                    title="No Selection", parent=self)
+            return
+        for fid in ids:
+            self.db.set_student_fee_contract(fid, received)
+        self._checked.clear()
+        self._reload_list()
+
+    def _link_instrument(self):
+        """Say which of the student's instruments a fee is for.
+
+        Fees tie themselves to the loan that raised them; this is for the
+        one that came in some other way, or was tied to the wrong horn."""
+        ids = self._sel_ids()
+        if len(ids) != 1:
+            Messagebox.show_warning("Check or select one fee row.",
+                                    title="One at a time", parent=self)
+            return
+        fee = self._fee_var.get()
+        rows = {r["id"]: dict(r) for r in self.db.get_student_fees(fee, self.school_year)}
+        r = rows.get(ids[0])
+        if not r:
+            return
+        loans = self.db.get_student_open_loans(r["student_id"], fee, self.school_year)
+        who = display_last_first(r)
+        if not loans:
+            Messagebox.show_info(f"{who} has no instrument checked out.",
+                                 title="Nothing out", parent=self)
+            return
+        win = ttk.Toplevel(master=self)
+        win.title("Which instrument")
+        win.grab_set()
+        ttk.Label(win, text=f"{who} — {fee}: which instrument is this fee for?",
+                  font=("Segoe UI", 9, "bold"), wraplength=420,
+                  justify=LEFT).pack(anchor=W, padx=14, pady=(12, 6))
+        var = tk.StringVar(value=str(r.get("checkout_id") or 0))
+        for l in loans:
+            taken = l["fee_id"] and l["fee_id"] != r["id"]
+            text = l["label"]
+            if l.get("date_assigned"):
+                text += f"   (out since {l['date_assigned']})"
+            if taken:
+                text += "   [already has its own fee]"
+            rb = ttk.Radiobutton(win, text=text, variable=var,
+                                 value=str(l["checkout_id"]))
+            rb.pack(anchor=W, padx=24, pady=2)
+            if taken:
+                rb.configure(state="disabled")
+        ttk.Radiobutton(win, text="Not for a particular instrument",
+                        variable=var, value="0").pack(anchor=W, padx=24, pady=(6, 2))
+
+        def apply():
+            cid = int(var.get() or 0)
+            self.db.set_student_fee_checkout(r["id"], cid or None)
+            win.destroy()
+            self._reload_list()
+
+        b = ttk.Frame(win); b.pack(fill=X, padx=14, pady=12)
+        ttk.Button(b, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=win.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(b, text="Apply", bootstyle=INFO, command=apply).pack(side=RIGHT, padx=4)
+        from ui.theme import fit_window
+        fit_window(win, 460, 220)
 
     def _remove(self):
         ids = self._sel_ids()
@@ -1592,14 +1702,38 @@ class _FeesDialog(ttk.Toplevel):
                                    fee=self._fee_var.get())
         self.wait_window(dlg)
         if dlg.chosen_ids and dlg.chosen_fee:
+            fee, year = dlg.chosen_fee, self.school_year
+            rental = self.db.is_rental_fee_type(fee)
+            if rental:
+                self.db.heal_fee_instrument_links(fee, year)
+            already = []
             for sid in dlg.chosen_ids:
-                self.db.ensure_student_fee(sid, dlg.chosen_fee, self.school_year,
-                                           dlg.chosen_amount)
+                if rental:
+                    # A rental is for a horn: bill the one they have out that
+                    # has no fee yet (the one whose fee got deleted, say).
+                    spare = [l for l in self.db.get_student_open_loans(sid, fee, year)
+                             if not l["fee_id"]]
+                    if spare:
+                        self.db.add_student_fee(sid, fee, year, dlg.chosen_amount,
+                                                checkout_id=spare[0]["checkout_id"])
+                        continue
+                if self.db.count_student_fees(sid, fee, year):
+                    already.append(sid)
+                    continue
+                self.db.ensure_student_fee(sid, fee, year, dlg.chosen_amount)
             # Land on the fee just charged, otherwise the window still shows
             # whatever was selected before and the work looks like it vanished.
             self._reload()
-            self._fee_var.set(dlg.chosen_fee)
+            self._fee_var.set(fee)
             self._reload_list()
+            self._changed()
+            if already:
+                Messagebox.show_info(
+                    f"{len(already)} of them already had “{fee}” for this year"
+                    + (" (one for every instrument they have out)" if rental else "")
+                    + ", so nothing was added for them. To charge someone a second "
+                    "time on purpose, select their row and use ⧉ Duplicate.",
+                    title="Already charged", parent=self)
 
     def _add_class(self):
         """Apply the selected fee to every student in a chosen class/ensemble."""
@@ -1669,33 +1803,67 @@ class _FeesDialog(ttk.Toplevel):
             pass
 
         win = ttk.Toplevel(master=self)
-        win.title(f"Email — Unpaid: {fee}")
+        win.title(f"Email families — {fee}")
         win.grab_set()
         only_out = tk.BooleanVar(value=False)
+        # Who gets it: the families who still owe money, the ones whose signed
+        # contract hasn't come in, or anyone missing either.
+        mode = tk.StringVar(value="unpaid")
         txt = tk.Text(win, height=4, width=72, wrap=WORD, relief="solid", bd=1)
-        info = ttk.Label(win, text="", font=("Segoe UI", 9), justify=LEFT)
+        info = ttk.Label(win, text="", font=("Segoe UI", 9), justify=LEFT,
+                         wraplength=600)
+
+        def _rows():
+            rows = [dict(r) for r in self.db.get_student_fees(fee, self.school_year)]
+            m = mode.get()
+
+            def owes(r):
+                return r["status"] == "unpaid"
+
+            def no_form(r):
+                return not r.get("contract_received") and r["status"] != "waived"
+
+            if m == "unpaid":
+                rows = [r for r in rows if owes(r)]
+            elif m == "contract":
+                rows = [r for r in rows if no_form(r)]
+            else:
+                rows = [r for r in rows if owes(r) or no_form(r)]
+            if only_out.get():
+                out = self.db.get_open_instruments_by_student()
+                rows = [r for r in rows if r["student_id"] in out]
+            return rows
 
         def _refresh(*_):
-            if only_out.get():
-                rows = self.db.get_unpaid_fee_with_checkout(fee, self.school_year)
-            else:
-                rows = self.db.get_unpaid_fee(fee, self.school_year)
+            rows = _rows()
             emails, seen = [], set()
             for r in rows:
                 for key in ("parent1_email", "parent2_email", "student_email"):
                     a = (r.get(key) or "").strip()
                     if a and "@" in a and a.lower() not in seen:
                         seen.add(a.lower()); emails.append(a)
-            info.config(text=f"{len(rows)} student(s) owe '{fee}'"
+            what = {"unpaid": f"owe '{fee}'",
+                    "contract": "haven't turned in the signed contract",
+                    "either": f"owe '{fee}' or haven't turned in the contract"}[mode.get()]
+            n_students = len({r["student_id"] for r in rows})
+            info.config(text=f"{n_students} student(s) {what}"
                              f"{' and have an instrument out' if only_out.get() else ''}. "
                              f"{len(emails)} email(s). Paste into Outlook (semicolon-separated):")
             txt.delete("1.0", "end"); txt.insert("1.0", "; ".join(emails))
+            _fill_template()
 
-        info.pack(anchor=W, padx=14, pady=(12, 4))
+        who = ttk.Frame(win)
+        who.pack(anchor=W, padx=14, pady=(12, 0))
+        ttk.Label(who, text="Who:", font=("Segoe UI", 9, "bold")).pack(side=LEFT, padx=(0, 6))
+        for val, text in (("unpaid", "Still owe payment"),
+                          ("contract", "No signed contract yet"),
+                          ("either", "Either")):
+            ttk.Radiobutton(who, text=text, value=val, variable=mode,
+                            command=_refresh).pack(side=LEFT, padx=(0, 10))
+        info.pack(anchor=W, padx=14, pady=(6, 4))
         ttk.Checkbutton(win, text="Only those who also have an instrument checked out",
                         variable=only_out, bootstyle=INFO, command=_refresh).pack(anchor=W, padx=14)
         txt.pack(fill=X, padx=14, pady=(4, 0))
-        _refresh()
 
         def _copy():
             win.clipboard_clear(); win.clipboard_append(txt.get("1.0", "end").strip())
@@ -1709,18 +1877,46 @@ class _FeesDialog(ttk.Toplevel):
         ttk.Separator(win).pack(fill=X, padx=14, pady=(4, 0))
         ttk.Label(win, text="Message template (edit as needed, then Copy):",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W, padx=14, pady=(8, 2))
-        body = (
-            "Good morning,\n\n"
-            f"If you're receiving this email, we have not yet received your payment "
-            f"for {fee}. Payments can be made in person at {school} main office, or "
-            "online at https://wa-bellevue.intouchreceipting.com/. Please talk to the "
-            "main office right away if you have any questions or if you need financial "
-            "assistance.\n\n"
-            "Thank you,"
-        )
+        pay_how = (f"Payments can be made in person at {school} main office, or "
+                   "online at https://wa-bellevue.intouchreceipting.com/. Please "
+                   "talk to the main office right away if you have any questions "
+                   "or if you need financial assistance.")
+        bodies = {
+            "unpaid": (
+                "Good morning,\n\n"
+                f"If you're receiving this email, we have not yet received your "
+                f"payment for {fee}. {pay_how}\n\n"
+                "Thank you,"),
+            "contract": (
+                "Good morning,\n\n"
+                "If you're receiving this email, we have not yet received the "
+                "signed instrument rental contract for your student. Please send "
+                "the signed form back with them as soon as you can (reply to this "
+                "email if you need another copy).\n\n"
+                "Thank you,"),
+            "either": (
+                "Good morning,\n\n"
+                f"If you're receiving this email, we are still missing your "
+                f"payment for {fee}, the signed instrument rental contract, or "
+                f"both. {pay_how} The signed form can come back to school with "
+                "your student (reply to this email if you need another copy)."
+                "\n\n"
+                "Thank you,"),
+        }
         msg = tk.Text(win, height=9, width=72, wrap=WORD, relief="solid", bd=1)
         msg.pack(fill=BOTH, expand=True, padx=14, pady=(0, 0))
-        msg.insert("1.0", body)
+        filled = {"mode": None}
+
+        def _fill_template():
+            # Swap the wording only when the audience changes, never over an
+            # edit in progress.
+            if filled["mode"] == mode.get():
+                return
+            filled["mode"] = mode.get()
+            msg.delete("1.0", "end")
+            msg.insert("1.0", bodies[mode.get()])
+
+        _refresh()
 
         def _copy_msg():
             win.clipboard_clear(); win.clipboard_append(msg.get("1.0", "end").strip())
@@ -1737,8 +1933,10 @@ class _FeesDialog(ttk.Toplevel):
                 Messagebox.show_info("No addresses to send to.",
                                      title="No Addresses", parent=win)
                 return
-            open_message(win, self.base_dir,
-                         f"{fee} — payment reminder",
+            subject = {"unpaid": f"{fee} - payment reminder",
+                       "contract": "Instrument rental contract - reminder",
+                       "either": f"{fee} - payment and contract reminder"}[mode.get()]
+            open_message(win, self.base_dir, subject,
                          msg.get("1.0", "end").strip(), addrs)
 
         b2 = ttk.Frame(win); b2.pack(fill=X, padx=14, pady=12)
@@ -1749,7 +1947,7 @@ class _FeesDialog(ttk.Toplevel):
         ttk.Button(b2, text="✉ Open in Outlook", bootstyle=SUCCESS,
                    command=_send).pack(side=RIGHT, padx=4)
         from ui.theme import fit_window
-        fit_window(win, 640, 580)
+        fit_window(win, 660, 620)
 
     def _manage_types(self):
         win = ttk.Toplevel(master=self)
@@ -1850,13 +2048,17 @@ class _FeesDialog(ttk.Toplevel):
             Messagebox.show_info("No students on this fee.", title="Nothing to Export", parent=self)
             return
         wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Fees"
-        ws.append(["Last Name", "First Name", "Grade", "Ensembles", "Amount", "Status",
-                   "Date Paid"])
+        ws.append(["Last Name", "First Name", "Grade", "Period", "Ensembles", "Amount",
+                   "Status", "Date Paid", "Contract", "Instrument"])
         for c in ws[1]:
             c.font = Font(bold=True, color="FFFFFF"); c.fill = PatternFill("solid", fgColor="2E7D32")
         for r in rows:
-            ws.append([r["last_name"], r["first_name"], r["grade"] or "", r["ensembles"] or "",
-                       float(r["amount"] or 0), r["status"], r["date_paid"] or ""])
+            ws.append([r["last_name"], r["first_name"], r["grade"] or "",
+                       (r["class_periods"] or "").replace(",", "/"),
+                       r["ensembles"] or "", float(r["amount"] or 0), r["status"],
+                       r["date_paid"] or "",
+                       "yes" if r.get("contract_received") else "",
+                       self.db.fee_instrument_label(r)])
         from tkinter import filedialog
         import datetime as _d
         path = filedialog.asksaveasfilename(

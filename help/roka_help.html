@@ -903,17 +903,26 @@
       <span class="btn-ref">⛔ Unpaid</span> or
       <span class="btn-ref">🚫 Waive</span> them</li>
     <li>Add a fee to a whole class at once</li>
-    <li><span class="btn-ref">✉️ Email Unpaid</span> to build a reminder to the
-      families who still owe</li>
+    <li><span class="btn-ref">✉️ Email families…</span> builds a reminder,
+      addressed to the families who still owe, the ones whose signed rental
+      contract has not come in, or either</li>
+    <li>The <b>Contract</b> column tracks the signed rental contract next to
+      the money: click a row's box to flip it, or select several and use
+      <span class="btn-ref">📄 Contract in</span></li>
     <li>Change what each fee type costs with
       <span class="btn-ref">Manage Fee Types</span></li>
     <li>Filter by class period, and click any column heading to sort — the
       list is alphabetical by last name until you say otherwise</li>
-    <li>See which instruments each student actually has out, so two fees on
-      one student reads as two instruments, not a duplicate</li>
-    <li><span class="btn-ref">⚖ Missing fees…</span> finds students holding
-      more school instruments than they have fee rows (how the first week of
-      school left things) and adds the missing ones — you pick who</li>
+    <li>Each rental fee names the one instrument it is for (Baritone #12345
+      on one row, Baritone #12346 on the next), so two fees on one student
+      read as two instruments, not a duplicate. A fee that came in some other
+      way, or landed on the wrong horn, gets fixed with
+      <span class="btn-ref">🎺 Instrument…</span></li>
+    <li><span class="btn-ref">⚖ Missing fees…</span> finds instruments out
+      with no fee behind them (how the first week of school left things, or a
+      fee removed by mistake) and adds them back, tied to the right
+      instrument — you pick who. <span class="btn-ref">➕ Charge a
+      Student…</span> with a rental fee does the same for one student</li>
   </ul>
 
   <div class="note"><p>Instrument rentals appear here on their own when you check
@@ -1190,6 +1199,15 @@
   through warm-ups day by day. Only rhythm players rotate — a horn part is a
   chair, not a warm-up rotation.</p>
 
+  <p>Turns are counted, not guessed: each seat goes to whoever has had the
+  fewest turns on it, so two drummers and three pianists come out even over
+  a six-day cycle (3 and 3, 2 and 2 and 2), and a student who doubles on
+  drums and piano cannot crowd a piano-only student out. The
+  <b>Day</b> stepper shows the cycle length. To skip a day or hand-pick
+  today's lineup, use <span class="btn-ref">⏸ Pause</span> and
+  <span class="btn-ref">⭐ Special…</span> on the Agendas tab, beside the
+  rotation.</p>
+
   <ul>
     <li><span class="btn-ref">🎛 Part limits…</span> caps how many players sit on
       a part at once.</li>
@@ -1349,10 +1367,13 @@
     <li><span class="btn-ref">📄 Export…</span> turns the agenda into a file:
       a PDF that looks like the projected day (print it for a substitute, or
       drop a whole week into OneNote), or an editable Word document a sub can
-      add notes to. Pick one day, this week, or any range — and which classes and
-      periods — and each day gets its own page, in period order, with the date, the reminders and
-      announcements, the percussion rotation when one is filled in, and every
-      line with an empty checkbox.</li>
+      add notes to. Pick one day, this week, or any range, and which classes and
+      periods. Each day gets its own page with the date, the reminders and
+      announcements, the rotation when one is filled in, and a checkbox on
+      every line. A box you checked off in Present comes out checked, so the
+      export is a record of what the class got through. Pages are grouped by
+      period: all of period 1's days, then all of period 2's, so a week pasted
+      into OneNote reads as one class's week.</li>
     <li><span class="btn-ref">⧉ Copy Previous Day</span> when today is yesterday
       again.</li>
     <li><span class="btn-ref">↺ Reset Day</span> throws away your edits and goes
@@ -1360,7 +1381,15 @@
     <li><span class="btn-ref">📷 Paste Image</span> puts a picture on the board,
       for example a fingering chart or a rhythm to clap.</li>
     <li>Classes with a percussion rotation show today's rotation beside the
-      agenda, so the section can see where they are without asking.</li>
+      agenda, so the section can see where they are without asking.
+      <span class="btn-ref">⏸ Pause</span> on that pane skips a day the
+      section is not on instruments; the rotation holds and picks up next
+      class.</li>
+    <li>A jazz class shows its rhythm-section warm-up rotation in the same
+      spot, with the same <span class="btn-ref">⏸ Pause</span>, plus
+      <span class="btn-ref">⭐ Special…</span> to hand-pick who sits where
+      today (a guest drummer, one pianist with one bassist). A special day
+      holds the rotation the way a paused one does.</li>
     <li>The banner shows how long until this class next performs, counted from
       its own concerts on the planner, not another class's.</li>
   </ul>

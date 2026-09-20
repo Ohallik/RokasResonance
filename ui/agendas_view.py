@@ -114,6 +114,30 @@ def _tk(cls, parent, **kw):
     return w
 
 
+def _compress_image(im):
+    """A pasted picture as the smaller of a paletted PNG and a JPEG.
+
+    A screenshot of a rhythm line is a few colors on white: the paletted PNG
+    is lossless and a fraction of the size of the RGB PNG these used to be
+    saved as (a full-width one ran to a megabyte).  A photo is the other way
+    round, so both are tried and the smaller wins."""
+    import io
+    from PIL import Image
+    if im.width > 1800:                    # keep enough res for full-width
+        h = int(im.height * 1800 / im.width)
+        im = im.resize((1800, h), Image.LANCZOS)
+    im = im.convert("RGB")
+    png = io.BytesIO()
+    try:
+        im.quantize(256).save(png, "PNG", optimize=True)
+    except Exception:
+        im.save(png, "PNG", optimize=True)
+    jpg = io.BytesIO()
+    im.save(jpg, "JPEG", quality=85, optimize=True)
+    a, b = png.getvalue(), jpg.getvalue()
+    return a if len(a) <= len(b) else b
+
+
 def _lum(hexcolor):
     h = hexcolor.lstrip("#")
     r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
@@ -223,8 +247,29 @@ class AgendasView(ttk.Frame):
         self._saved = False
         self._present = None
         self._img_refs = []
+        self._migrate_images_once()
         self._build()
         self.refresh()
+
+    # Per-year files already opened this session; the picture migration is a
+    # scan of every saved day, so it runs once per file, not once per tab.
+    _images_migrated = set()
+
+    def _migrate_images_once(self):
+        key = getattr(self.db, "db_path", None) or id(self.db)
+        if key in AgendasView._images_migrated:
+            return
+        AgendasView._images_migrated.add(key)
+
+        def recompress(raw):
+            import io
+            from PIL import Image
+            return _compress_image(Image.open(io.BytesIO(raw)))
+
+        try:
+            self.db.migrate_agenda_images(compress=recompress)
+        except Exception:
+            pass
 
     # ──────────────────────────────────────────────────────────── jazz mode ────
     # Jazz is the only ensemble whose one tab serves several bands.  These helpers
@@ -333,12 +378,17 @@ class AgendasView(ttk.Frame):
                             "parts": jr._clean_seats(_safe_json(r["parts"], []))})
         return seats, players, pools
 
-    def _jazz_day(self):
-        """Warm-up rotation day for this school day — auto-advances day to day and
-        wraps by the rotation cycle, like the percussion rotation."""
+    def _jazz_cycle(self):
         import jazz_rotation as jr
         seats, players, pools = self._jazz_seats_players()
-        cyc = jr.cycle_length(seats, players, pools=pools)
+        return jr.cycle_length(seats, players, pools=pools)
+
+    def _jazz_day(self):
+        """Warm-up rotation day for this school day — auto-advances day to day and
+        wraps by the rotation cycle, like the percussion rotation.  Paused and
+        special days already gone by don't count: the rotation holds on those
+        and picks up where it left off."""
+        cyc = self._jazz_cycle()
         if cyc <= 0:
             return 1
         cal = self._calendar()
@@ -347,14 +397,139 @@ class AgendasView(ttk.Frame):
         else:
             start, _end = self._year_bounds()
             idx = spine._school_days_between(start, self._date)
+        idx -= self._jazz_held_before_today()
         return ((idx - 1) % cyc) + 1
 
     def _jazz_rotation(self):
+        """Today's rhythm-section board: nothing on a paused day, the hand-set
+        lineup on a special day, otherwise the warm-up rotation."""
         import jazz_rotation as jr
         seats, players, pools = self._jazz_seats_players()
         if not seats:
             return [], []
+        if self._is_jazz_paused():
+            return [], []
+        special = self._jazz_special_today()
+        if special:
+            lineup = special.get("lineup") or {}
+            asg = [(s, [n for n in (lineup.get(s) or []) if n])
+                   for s in jr.seat_names(seats)]
+            placed = {n for _s, ns in asg for n in ns}
+            bench = [p["name"] for p in players if p["name"] not in placed]
+            return asg, bench
         return jr.day_assignments(seats, players, self._jazz_day(), pools=pools)
+
+    def _jazz_status_text(self):
+        """One line for the banner / projector / export head: which day of the
+        rotation this is, or why there isn't one today."""
+        if self._is_jazz_paused():
+            return "rotation paused today"
+        special = self._jazz_special_today()
+        if special:
+            note = (special.get("note") or "").strip()
+            return "⭐ special day" + (f": {note}" if note else "")
+        return f"warm-up day {self._jazz_day()} of {self._jazz_cycle()}"
+
+    # ── paused / special jazz days ───────────────────────────────────────────
+    # The jazz twins of the percussion pause: some days the rhythm section
+    # isn't rotating at all (a written assessment, a clinician), and some days
+    # she wants a particular lineup (a guest drummer, hearing one pianist with
+    # one bassist).  Both are keyed by DATE per band, and neither consumes a
+    # rotation slot, so the warm-up rotation picks up next class exactly where
+    # it left off.
+
+    def _jazz_pause_key(self):
+        eid = self._jazz_eid
+        return f"agenda_jazz_pause_{eid}" if eid else "agenda_jazz_pause_none"
+
+    def _jazz_special_key(self):
+        eid = self._jazz_eid
+        return f"agenda_jazz_special_{eid}" if eid else "agenda_jazz_special_none"
+
+    def _load_jazz_pause_set(self):
+        raw = self.db.get_program_setting(self._jazz_pause_key())
+        if not raw:
+            return set()
+        try:
+            vals = json.loads(raw)
+        except (ValueError, TypeError):
+            return set()
+        return set(vals) if isinstance(vals, list) else set()
+
+    def _is_jazz_paused(self):
+        return self._date.isoformat() in self._load_jazz_pause_set()
+
+    def _toggle_jazz_pause(self):
+        paused = self._load_jazz_pause_set()
+        iso = self._date.isoformat()
+        if iso in paused:
+            paused.discard(iso)
+        else:
+            paused.add(iso)
+        self.db.set_program_setting(self._jazz_pause_key(),
+                                    json.dumps(sorted(paused)))
+        self.refresh()
+
+    def _load_jazz_specials(self):
+        """{iso date: {"lineup": {seat: [names]}, "note": str}}"""
+        raw = self.db.get_program_setting(self._jazz_special_key())
+        if not raw:
+            return {}
+        try:
+            m = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+        return m if isinstance(m, dict) else {}
+
+    def _jazz_special_today(self):
+        return self._load_jazz_specials().get(self._date.isoformat())
+
+    def _set_jazz_special(self, lineup, note):
+        m = self._load_jazz_specials()
+        m[self._date.isoformat()] = {"lineup": lineup, "note": note or ""}
+        self.db.set_program_setting(self._jazz_special_key(), json.dumps(m))
+
+    def _clear_jazz_special(self):
+        m = self._load_jazz_specials()
+        if m.pop(self._date.isoformat(), None) is not None:
+            self.db.set_program_setting(self._jazz_special_key(), json.dumps(m))
+
+    def _jazz_held_before_today(self):
+        """Rotation slots to give back: paused and special days already gone."""
+        iso = self._date.isoformat()
+        held = self._load_jazz_pause_set() | set(self._load_jazz_specials())
+        return sum(1 for d in held if d < iso)
+
+    def _edit_jazz_special(self):
+        """Set (or clear) today's hand-picked rhythm section."""
+        import jazz_rotation as jr
+        seats, players, pools = self._jazz_seats_players()
+        if not seats or not players:
+            Messagebox.show_info("Add seats and players on the 🎷 Jazz tab first.",
+                                 title="Nothing to arrange", parent=self)
+            return
+        existing = self._jazz_special_today()
+        if existing:
+            start = existing.get("lineup") or {}
+        else:
+            # Start from what the rotation would have done, so a one-seat
+            # change is one click.
+            asg, _b = jr.day_assignments(seats, players, self._jazz_day(),
+                                         pools=pools)
+            start = {s: list(ns) for s, ns in asg}
+        dlg = _JazzSpecialDialog(self.winfo_toplevel(), self._date,
+                                 jr.normalize_seats(seats), players, start,
+                                 (existing or {}).get("note", ""),
+                                 has_existing=bool(existing))
+        self.wait_window(dlg)
+        if dlg.result is None:
+            return
+        action, lineup, note = dlg.result
+        if action == "clear":
+            self._clear_jazz_special()
+        else:
+            self._set_jazz_special(lineup, note)
+        self.refresh()
 
     def _display_label(self):
         if self._is_jazz:
@@ -679,6 +854,46 @@ class AgendasView(ttk.Frame):
     def _image_abspath(self, rel):
         return rel if os.path.isabs(rel) else os.path.join(self._base(), rel)
 
+    def _image_bytes(self, val):
+        """The picture behind an item's ``image`` value: "img:<sha>" (stored
+        once in the year's file), "b64:…" (the old inline form, before the
+        migration has run) or a file path."""
+        import base64
+        try:
+            if isinstance(val, str) and val.startswith("img:"):
+                return self.db.get_agenda_image(val[4:])
+            if isinstance(val, str) and val.startswith("b64:"):
+                return base64.b64decode(val[4:])
+            with open(self._image_abspath(val), "rb") as f:
+                return f.read()
+        except Exception:
+            return None
+
+    def _export_image_path(self, val):
+        """A real file for the exporters — reportlab and python-docx take a
+        path, and a pasted picture lives in the database.  Written once per
+        distinct picture into the temp folder and reused."""
+        if not (isinstance(val, str) and (val.startswith("img:")
+                                          or val.startswith("b64:"))):
+            p = self._image_abspath(val)
+            return p if os.path.exists(p) else None
+        data = self._image_bytes(val)
+        if not data:
+            return None
+        import hashlib
+        import tempfile
+        d = os.path.join(tempfile.gettempdir(), "RokasResonance", "agenda_export")
+        try:
+            os.makedirs(d, exist_ok=True)
+            ext = ".png" if data[:4] == b"\x89PNG" else ".jpg"
+            p = os.path.join(d, hashlib.sha1(data).hexdigest() + ext)
+            if not os.path.exists(p):
+                with open(p, "wb") as f:
+                    f.write(data)
+            return p
+        except OSError:
+            return None
+
     # ─────────────────────────────────────────────────────────── navigation ───
 
     def _shift_day(self, delta):
@@ -862,10 +1077,11 @@ class AgendasView(ttk.Frame):
         ttk.Radiobutton(body, text="Word (.docx) — editable, for adding notes "
                                    "for a sub", value="docx",
                         variable=fmt_var).pack(anchor=W, padx=10, pady=1)
-        ttk.Label(body, text="One page per day (and per period). Checkboxes "
-                             "come out empty, ready to tick.",
-                  font=("Segoe UI", fs(8)), foreground=muted_fg()).pack(
-            anchor=W, pady=(8, 0))
+        ttk.Label(body, text="One page per day (and per period), grouped by "
+                             "period: all of P1's days, then all of P2's. Boxes "
+                             "you checked off in Present come out checked.",
+                  font=("Segoe UI", fs(8)), foreground=muted_fg(),
+                  wraplength=440, justify=LEFT).pack(anchor=W, pady=(8, 0))
 
         def run():
             cal = self._calendar()
@@ -949,12 +1165,15 @@ class AgendasView(ttk.Frame):
                     finally:
                         holder.destroy()
 
-                # A sub reads the day in school order: P1 before P4 before P6.
+                # One class at a time: every P1 day together, then every
+                # P2 day, and so on -- a week pasted into OneNote reads as
+                # one class's week, not the whole day's timetable repeated.
+                # Within a period the days run in order.
                 def _pnum(pg):
                     t = (pg.get("period") or "").replace("Period", "").strip()
                     return int(t) if t.isdigit() else 99
-                pages.sort(key=lambda pg: (pg["date"].isoformat(), _pnum(pg),
-                                           pg.get("label") or ""))
+                pages.sort(key=lambda pg: (_pnum(pg), pg.get("label") or "",
+                                           pg["date"].isoformat()))
                 import agenda_export
                 if fmt == "pdf":
                     agenda_export.write_pdf(pages, path)
@@ -1006,12 +1225,16 @@ class AgendasView(ttk.Frame):
         period = (f"Period {sec['period']}"
                   if sec and str(sec.get("period") or "").strip() else "")
         day = self._day or {}
+        iso = d.isoformat()
+        # The section's own check-off record, read once per page: what this
+        # period actually got through, so the export shows it.
+        done_map = self._load_done_map().get(iso) or {}
         perc_head, perc_rows = "", []
         try:
             if self._is_jazz:
                 asg, _bench = self._jazz_rotation()
                 if asg:
-                    perc_head = f"Rhythm section — warm-up day {self._jazz_day()}"
+                    perc_head = f"Rhythm section — {self._jazz_status_text()}"
                     perc_rows = [(seat, ", ".join(names) if names else "—")
                                  for seat, names in asg]
             elif self._percussion:
@@ -1031,11 +1254,13 @@ class AgendasView(ttk.Frame):
                     continue
                 if it.get("kind") == "missing":
                     continue
+                checked = bool(it.get("id") and done_map.get(it.get("id")))
                 if it.get("image"):
-                    p = self._image_abspath(it["image"])
-                    if os.path.exists(p):
+                    p = self._export_image_path(it["image"])
+                    if p:
                         items.append({"image": p,
-                                      "img_w": int(it.get("img_w") or 380)})
+                                      "img_w": int(it.get("img_w") or 380),
+                                      "done": checked})
                     continue
                 if not (it.get("text") or "").strip():
                     continue
@@ -1043,7 +1268,8 @@ class AgendasView(ttk.Frame):
                               "runs": it.get("runs") or [],
                               "indent": 1 if it.get("indent") else 0,
                               "static": it.get("kind") == "static",
-                              "color": it.get("color") or ""})
+                              "color": it.get("color") or "",
+                              "done": checked})
             if items:
                 sections.append({"title": s.get("title", ""), "items": items})
         return {"label": self._cfg["label"], "date": d, "period": period,
@@ -1299,14 +1525,42 @@ class AgendasView(ttk.Frame):
                       wraplength=fs(24) * 11, font=("Segoe UI", fs(8)),
                       foreground=muted_fg(), justify=LEFT).pack(anchor=W)
             return
-        asg, bench = self._jazz_rotation()
-        if not asg:
+        seats, players, _pools = self._jazz_seats_players()
+        if not seats or not players:
             ttk.Label(body, text="Add seats & players on the 🎷 Jazz tab.",
                       font=("Segoe UI", fs(8)), foreground=muted_fg()).pack(anchor=W)
             return
-        ttk.Label(body, text=f"Warm-up rotation · day {self._jazz_day()}",
-                  font=("Segoe UI", fs(8), "bold"),
-                  foreground=muted_fg()).pack(anchor=W, pady=(0, 2))
+        paused = self._is_jazz_paused()
+        special = None if paused else self._jazz_special_today()
+        asg, bench = self._jazz_rotation()
+        # Status line, then the two controls on their own row — this pane is
+        # narrow.  bootstyle, not foreground, for the amber (see percussion).
+        status = self._jazz_status_text()
+        lbl = ttk.Label(body, text=status[:1].upper() + status[1:],
+                        font=("Segoe UI", fs(8), "bold"),
+                        wraplength=fs(24) * 11, justify=LEFT)
+        if paused or special:
+            lbl.configure(bootstyle=WARNING)
+        else:
+            lbl.configure(foreground=muted_fg())
+        lbl.pack(anchor=W)
+        ctl = ttk.Frame(body)
+        ctl.pack(fill=X, pady=(2, 2))
+        ttk.Button(ctl, text=("▶ Resume" if paused else "⏸ Pause"),
+                   bootstyle=((WARNING, OUTLINE) if paused
+                              else (SECONDARY, OUTLINE)),
+                   command=self._toggle_jazz_pause).pack(side=RIGHT)
+        if not paused:
+            ttk.Button(ctl, text="⭐ Special…",
+                       bootstyle=((WARNING, OUTLINE) if special
+                                  else (SECONDARY, OUTLINE)),
+                       command=self._edit_jazz_special).pack(side=RIGHT, padx=(0, 4))
+        if paused:
+            ttk.Label(body, text="No rotation today — it holds and picks up "
+                                 "here next class.",
+                      wraplength=fs(24) * 11, font=("Segoe UI", fs(8)),
+                      foreground=muted_fg(), justify=LEFT).pack(anchor=W)
+            return
         for seat, names in asg:
             r = ttk.Frame(body)
             r.pack(fill=X, pady=1)
@@ -2048,13 +2302,12 @@ class AgendasView(ttk.Frame):
 
     def _thumb(self, val, target_w):
         import io
-        import base64
         try:
             from PIL import Image, ImageTk
-            if isinstance(val, str) and val.startswith("b64:"):
-                im = Image.open(io.BytesIO(base64.b64decode(val[4:])))
-            else:
-                im = Image.open(self._image_abspath(val))
+            data = self._image_bytes(val)
+            if not data:
+                return None
+            im = Image.open(io.BytesIO(data))
             h = max(1, int(im.height * target_w / im.width))
             im = im.resize((target_w, h), Image.LANCZOS)
             return ImageTk.PhotoImage(im, master=self)
@@ -2094,15 +2347,8 @@ class AgendasView(ttk.Frame):
         self._render()
 
     def _encode_image(self, im):
-        import io
-        import base64
-        from PIL import Image
-        if im.width > 1800:                    # keep enough res for full-width
-            h = int(im.height * 1800 / im.width)
-            im = im.resize((1800, h), Image.LANCZOS)
-        buf = io.BytesIO()
-        im.convert("RGB").save(buf, "PNG")
-        return "b64:" + base64.b64encode(buf.getvalue()).decode("ascii")
+        """Store a pasted picture once and hand back its reference."""
+        return "img:" + self.db.put_agenda_image(_compress_image(im))
 
     # ── section / item mutations ──
 
@@ -2530,6 +2776,111 @@ class AgendasView(ttk.Frame):
         self._render()
 
 
+class _JazzSpecialDialog(ttk.Toplevel):
+    """Hand-pick today's rhythm section.
+
+    One row per seat, a check box per player who can cover it — check who
+    sits where today.  Starts from what the rotation would have done, so a
+    one-seat change is one click.  The rotation itself holds on a special
+    day, the same as a paused one."""
+
+    def __init__(self, parent, day_date, seat_pairs, players, start, note,
+                 has_existing=False):
+        super().__init__(master=parent)
+        self.result = None
+        self._pairs = seat_pairs
+        self.title("Special Day — Rhythm Section")
+        self.resizable(False, False)
+        self.grab_set()
+        self.lift()
+
+        hdr = ttk.Frame(self, bootstyle=WARNING)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text=f"⭐ {day_date.strftime('%A, %B ')}{day_date.day}",
+                  font=("Segoe UI", fs(12), "bold"),
+                  bootstyle=(INVERSE, WARNING)).pack(pady=10, padx=16, anchor=W)
+
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
+        ttk.Label(body, text="Who sits where today. The warm-up rotation holds "
+                             "and picks up next class where it left off.",
+                  font=("Segoe UI", fs(9)), wraplength=440,
+                  justify=LEFT).pack(anchor=W, pady=(0, 8))
+
+        self._vars = {}                      # seat -> [(name, BooleanVar)]
+        grid = ttk.Frame(body)
+        grid.pack(fill=X)
+        for row, (seat, cap) in enumerate(seat_pairs):
+            elig = [p["name"] for p in players if seat in (p.get("parts") or [])]
+            chosen = set(start.get(seat) or [])
+            # A name pinned here that can no longer cover the seat still shows,
+            # checked, so what she saved is what she sees.
+            for nm in start.get(seat) or []:
+                if nm not in elig:
+                    elig.append(nm)
+            title = f"{seat} ×{cap}" if cap > 1 else seat
+            ttk.Label(grid, text=title, font=("Segoe UI", fs(9), "bold"),
+                      anchor=W).grid(row=row, column=0, sticky="nw",
+                                     padx=(0, 10), pady=3)
+            cell = ttk.Frame(grid)
+            cell.grid(row=row, column=1, sticky="w", pady=3)
+            if not elig:
+                ttk.Label(cell, text="nobody covers this seat",
+                          font=("Segoe UI", fs(8)),
+                          foreground=muted_fg()).grid(row=0, column=0, sticky="w")
+            vs = []
+            for i, nm in enumerate(elig):
+                v = tk.BooleanVar(value=nm in chosen)
+                ttk.Checkbutton(cell, text=nm, variable=v).grid(
+                    row=i // 3, column=i % 3, sticky="w", padx=(0, 12))
+                vs.append((nm, v))
+            self._vars[seat] = vs
+
+        ttk.Label(body, text="Note (optional, shows on the board):",
+                  font=("Segoe UI", fs(9))).pack(anchor=W, pady=(10, 0))
+        self._note = tk.StringVar(value=note or "")
+        ttk.Entry(body, textvariable=self._note, width=48).pack(anchor=W, pady=(2, 0))
+
+        btn = ttk.Frame(self)
+        btn.pack(fill=X, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Apply", bootstyle=WARNING,
+                   command=self._save).pack(side=RIGHT, padx=4)
+        if has_existing:
+            ttk.Button(btn, text="↩ Back to normal rotation",
+                       bootstyle=(SECONDARY, OUTLINE),
+                       command=self._clear).pack(side=LEFT)
+
+        from ui.theme import fit_window
+        fit_window(self, 520, 420)
+
+    def _save(self):
+        lineup = {}
+        seen = {}
+        for seat, cap in self._pairs:
+            names = [nm for nm, v in self._vars.get(seat, []) if v.get()]
+            if len(names) > cap:
+                Messagebox.show_warning(
+                    f"{seat} holds {cap} at a time; {len(names)} are checked.",
+                    title="Too many on one seat", parent=self)
+                return
+            for nm in names:
+                if nm in seen:
+                    Messagebox.show_warning(
+                        f"{nm} is checked on both {seen[nm]} and {seat}.",
+                        title="One seat each", parent=self)
+                    return
+                seen[nm] = seat
+            lineup[seat] = names
+        self.result = ("set", lineup, self._note.get().strip())
+        self.destroy()
+
+    def _clear(self):
+        self.result = ("clear", None, "")
+        self.destroy()
+
+
 # ══════════════════════════════════════════════════════════════ present ══════
 
 class _PresentWindow(ttk.Toplevel):
@@ -2808,9 +3159,10 @@ class _PresentWindow(ttk.Toplevel):
         """Present-mode floating panel for the jazz rhythm-section rotation."""
         import jazz_icons
         asg, bench = self.view._jazz_rotation()
-        if not asg:
+        paused = self.view._is_jazz_paused()
+        if not asg and not paused:
             return
-        dnum = self.view._jazz_day()
+        status = self.view._jazz_status_text()
         if self._perc_collapsed:
             btn = _tk(tk.Button, self._stage, text="🎷 Rhythm  ▾",
                       bg=BAN_BG, fg=BAN_FG, activebackground=BAN_BG,
@@ -2824,7 +3176,7 @@ class _PresentWindow(ttk.Toplevel):
                     highlightbackground="#8aa0b8", highlightthickness=2)
         head = _tk(tk.Frame, panel, bg=BAN_BG)
         head.pack(fill=X)
-        _tk(tk.Label, head, text=f"🎷 Rhythm — warm-up day {dnum}",
+        _tk(tk.Label, head, text=f"🎷 Rhythm — {status}",
             bg=BAN_BG, fg=BAN_FG, anchor="w", padx=8, pady=3,
             font=("Segoe UI", fs(13), "bold")).pack(side=LEFT, fill=X, expand=True)
         _tk(tk.Button, head, text="▸ hide", bg=BAN_BG, fg=BAN_FG,

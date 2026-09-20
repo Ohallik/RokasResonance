@@ -1000,7 +1000,8 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
                         student_id=sid, student_name=sname)
                     if charge and sid:
                         self.db.add_rental_fee(sid, today, "school_year",
-                                               per_instrument=True)
+                                               per_instrument=True,
+                                               checkout_id=cid)
                     if cid:
                         made.append((cid, sname))
                     kept += 1

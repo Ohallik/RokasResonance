@@ -222,6 +222,17 @@ class LessonPlanDatabase:
                     UNIQUE(group_key, day_date)
                 );
 
+                -- Pictures pasted onto an agenda, stored ONCE each and referenced
+                -- from the day as "img:<sha>".  They used to sit base64-encoded
+                -- inside every day's JSON, and Copy Previous Day duplicated them
+                -- into each new day, which is how a year's file reached several
+                -- megabytes and every backup copy with it.
+                CREATE TABLE IF NOT EXISTS agenda_images (
+                    sha TEXT PRIMARY KEY,
+                    data BLOB NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS jazz_ensembles (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     school_year TEXT,
@@ -1277,6 +1288,82 @@ class LessonPlanDatabase:
             return [r["day_date"] for r in conn.execute(
                 "SELECT day_date FROM agenda_days WHERE group_key=? "
                 "ORDER BY day_date", (group_key,)).fetchall()]
+
+    # ── Agenda pictures ──
+    # Content-addressed: the same screenshot pasted twice, or carried forward
+    # by Copy Previous Day, is one row.
+
+    def put_agenda_image(self, data: bytes) -> str:
+        import hashlib
+        sha = hashlib.sha1(data).hexdigest()
+        with self._connect() as conn:
+            conn.execute("INSERT OR IGNORE INTO agenda_images (sha, data) VALUES (?, ?)",
+                         (sha, sqlite3.Binary(data)))
+        return sha
+
+    def get_agenda_image(self, sha: str):
+        with self._connect() as conn:
+            row = conn.execute("SELECT data FROM agenda_images WHERE sha=?",
+                               (sha,)).fetchone()
+        return bytes(row["data"]) if row else None
+
+    def migrate_agenda_images(self, compress=None):
+        """Move pictures still embedded base64 in agenda days into
+        agenda_images, once.  ``compress`` (bytes -> bytes) re-encodes each
+        picture on the way through — the old inline form was a full RGB PNG.
+        Returns (days rewritten, bytes taken out of the day rows).  Compacts
+        the file afterwards when anything moved, so the size actually drops
+        instead of lingering as free pages."""
+        import base64
+        import json
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, data FROM agenda_days WHERE data LIKE '%b64:%'"
+            ).fetchall()
+        changed, saved = 0, 0
+        for r in rows:
+            try:
+                day = json.loads(r["data"] or "")
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(day, dict):
+                continue
+            before = len(r["data"] or "")
+            touched = False
+            for sec in day.get("sections") or []:
+                for it in sec.get("items") or []:
+                    val = it.get("image")
+                    if isinstance(val, str) and val.startswith("b64:"):
+                        try:
+                            raw = base64.b64decode(val[4:])
+                        except (ValueError, TypeError):
+                            continue
+                        if compress is not None:
+                            try:
+                                raw = compress(raw) or raw
+                            except Exception:
+                                pass
+                        it["image"] = "img:" + self.put_agenda_image(raw)
+                        touched = True
+            if not touched:
+                continue
+            text = json.dumps(day)
+            with self._connect() as conn:
+                conn.execute("UPDATE agenda_days SET data=? WHERE id=?",
+                             (text, r["id"]))
+            changed += 1
+            saved += max(0, before - len(text))
+        if changed:
+            # In WAL mode a VACUUM lands in the write-ahead log; the main file
+            # only gives the space back once that log is checkpointed.
+            try:
+                conn = sqlite3.connect(self.db_path)
+                conn.execute("VACUUM")
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                conn.close()
+            except sqlite3.Error:
+                pass
+        return changed, saved
 
     def clear_percussion_override(self, group_id, day_number):
         with self._connect() as conn:
