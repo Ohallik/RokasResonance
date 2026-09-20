@@ -27,6 +27,7 @@ from ttkbootstrap.dialogs import Messagebox
 import jazz_rotation as jr
 import jazz_icons
 from ui.theme import muted_fg, fs
+from ui.theme import WrapBar
 from ui.names import display_full
 
 
@@ -67,7 +68,7 @@ class JazzView(ttk.Frame):
         # One toolbutton per band, like the Agendas tab's class picker -- the
         # old band list was a half-window table for what is usually one and
         # rarely three names.
-        bar = ttk.Frame(self, bootstyle=LIGHT)
+        bar = WrapBar(self, bootstyle=LIGHT)
         bar.pack(fill=X)
         self._band_bar = ttk.Frame(bar, bootstyle=LIGHT)
         self._band_bar.pack(side=LEFT, padx=(6, 0))

@@ -10,6 +10,7 @@ replacement decisions you can forward to district staff / PTSA).
 import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
+from ui.theme import WrapBar
 from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
 
@@ -92,7 +93,7 @@ class RepairHub(ttk.Toplevel):
         self._summary_lbl.pack(side=RIGHT, padx=8)
 
         # ── Action buttons ────────────────────────────────────────────────
-        bar = ttk.Frame(self)
+        bar = WrapBar(self)
         bar.pack(fill=X, padx=12, pady=(2, 6))
         ttk.Button(bar, text="📋 Upload Invoice", bootstyle=(SECONDARY, OUTLINE),
                    command=self._upload_invoice).pack(side=LEFT, padx=2)

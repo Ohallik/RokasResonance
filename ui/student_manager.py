@@ -14,6 +14,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
 from ui.theme import muted_fg, subtle_fg, fs, bind_copy_menu
+from ui.theme import WrapBar
 from ui.names import display_last_first, display_full, display_first_of
 
 
@@ -180,7 +181,7 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
 
     def _build(self):
         # ── Toolbar ───────────────────────────────────────────────────────────
-        toolbar = ttk.Frame(self, bootstyle=LIGHT)
+        toolbar = WrapBar(self, bootstyle=LIGHT)
         toolbar.pack(fill=X)
 
         from ui.help_system import add_help_button
@@ -2530,9 +2531,11 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
         # nobody, and even at high school the people who need to know about a
         # concert are the ones driving to it.
         self._recip_var = tk.StringVar(value="everyone")
-        self._ens_var = tk.StringVar(value="All")
-        self._per_var = tk.StringVar(value="All")
-        self._instr_var = tk.StringVar(value="All")
+        # Classes and periods are tick boxes, several at once: "the flutes and
+        # oboes in periods 1 and 2" is one list, not four.  Nothing ticked
+        # means everyone, the same rule as the instruments.
+        self._ens_vars = {}          # canonical class name -> BooleanVar
+        self._per_vars = {}          # period -> BooleanVar
 
         self.title("Generate Email List")
         self.resizable(True, True)
@@ -2585,24 +2588,40 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
                                 ).grid(row=i // 2, column=i % 2, sticky=W,
                                        padx=(0, 16), pady=1)
         else:
-            ttk.Label(body, text="Ensemble:", font=("Segoe UI", 9, "bold")).grid(
-                row=1, column=0, sticky=W, pady=4)
-            ttk.Combobox(body, textvariable=self._ens_var, state="readonly", width=20,
-                         values=["All"] + self._class_display_options()).grid(
-                row=1, column=1, sticky=W, padx=4)
-            self._ens_var.trace_add("write", lambda *_: self._generate())
+            from ui.ensembles import class_display_map
+            ttk.Label(body, text="Classes:", font=("Segoe UI", 9, "bold")).grid(
+                row=1, column=0, sticky=NW, pady=4)
+            cbox = ttk.Frame(body)
+            cbox.grid(row=1, column=1, columnspan=3, sticky=W, padx=4)
+            opts = self._class_options()
+            dmap = class_display_map(opts)
+            for i, name in enumerate(opts):
+                v = tk.BooleanVar(value=False)
+                self._ens_vars[name] = v
+                ttk.Checkbutton(cbox, text=dmap.get(name, name), variable=v,
+                                bootstyle=INFO, command=self._generate
+                                ).grid(row=i // 3, column=i % 3, sticky=W,
+                                       padx=(0, 14), pady=1)
 
-            ttk.Label(body, text="Period:", font=("Segoe UI", 9, "bold")).grid(
-                row=1, column=2, sticky=W, pady=4, padx=(10, 0))
-            ttk.Combobox(body, textvariable=self._per_var, state="readonly", width=6,
-                         values=["All"] + PERIOD_OPTIONS).grid(row=1, column=3, sticky=W, padx=4)
-            self._per_var.trace_add("write", lambda *_: self._generate())
+            ttk.Label(body, text="Periods:", font=("Segoe UI", 9, "bold")).grid(
+                row=3, column=0, sticky=NW, pady=4)
+            pbox = ttk.Frame(body)
+            pbox.grid(row=3, column=1, columnspan=3, sticky=W, padx=4)
+            for i, per in enumerate(PERIOD_OPTIONS):
+                v = tk.BooleanVar(value=False)
+                self._per_vars[per] = v
+                ttk.Checkbutton(pbox, text=per, variable=v, bootstyle=INFO,
+                                command=self._generate).pack(side=LEFT, padx=(0, 8))
+            ttk.Label(pbox, text="none ticked = every period",
+                      font=("Segoe UI", 8), foreground=muted_fg()).pack(
+                side=LEFT, padx=(6, 0))
 
         # Instruments are a long list, so this is a multi-select rather than a
         # grid of eighteen tickboxes.  "The low brass" is trombone, baritone and
         # tuba; sending that message three separate times is how one of the
-        # three ends up not being told.
-        ttk.Label(body, text="Instrument:", font=("Segoe UI", 9, "bold")).grid(
+        # three ends up not being told.  Plain clicks toggle -- no Ctrl to
+        # know about.
+        ttk.Label(body, text="Instruments:", font=("Segoe UI", 9, "bold")).grid(
             row=2, column=0, sticky=NW, pady=4)
         _instr = (fifth_grade_instruments(self.program_type) if self.site_id
                   else instruments_for(self.program_type))
@@ -2610,7 +2629,7 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
         ibox.grid(row=2, column=1, columnspan=2, sticky=W, padx=4)
         isb = ttk.Scrollbar(ibox, orient=VERTICAL)
         self._instr_list = tk.Listbox(
-            ibox, selectmode="extended", exportselection=False,
+            ibox, selectmode="multiple", exportselection=False,
             height=min(6, max(3, len(_instr))), width=24,
             yscrollcommand=isb.set, font=("Segoe UI", 9),
             activestyle="none")
@@ -2623,7 +2642,8 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
 
         side = ttk.Frame(body)
         side.grid(row=2, column=3, sticky=NW, padx=(10, 0), pady=4)
-        ttk.Label(side, text="Ctrl+click for several.\n"
+        ttk.Label(side, text="Click to pick several;\n"
+                             "click again to drop one.\n"
                              "None selected = every "
                              "instrument.",
                   font=("Segoe UI", 8), foreground=muted_fg(),
@@ -2696,14 +2716,23 @@ class _EmailListDialog(_ClassOptionsMixin, ttk.Toplevel):
                     picked.append(s)
             students = picked
         else:
-            ens = self._ens_var.get()
-            per = self._per_var.get()
-            students = self.db.get_students_for_email(
-                school_year=self.school_year,
-                ensemble=None if ens == "All" else ens,
-                period=None if per == "All" else per,
-                instrument=instr,
-            )
+            from class_registry import csv_has_class
+            classes = [c for c, v in self._ens_vars.items() if v.get()]
+            periods = {p for p, v in self._per_vars.items() if v.get()}
+            students = list(self.db.get_students_for_email(
+                school_year=self.school_year, instrument=instr))
+            if classes:
+                # Identity match, not spelling -- see class_registry.
+                students = [s for s in students
+                            if any(csv_has_class(
+                                s["ensembles"] if "ensembles" in s.keys() else "",
+                                c) for c in classes)]
+            if periods:
+                def _pers(s):
+                    raw = (s["class_periods"] if "class_periods" in s.keys()
+                           else "") or ""
+                    return {p.strip() for p in raw.split(",") if p.strip()}
+                students = [s for s in students if periods & _pers(s)]
 
         recip = self._recip_var.get()
         emails = []

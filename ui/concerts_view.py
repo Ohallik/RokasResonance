@@ -20,6 +20,7 @@ from tkinter import filedialog
 from datetime import datetime
 
 from ui.theme import fs, muted_fg, subtle_fg, fit_window, scroll_body
+from ui.theme import WrapBar
 from ui.names import display_full
 import concert_tools as ct
 
@@ -47,7 +48,7 @@ class ConcertsView(ttk.Frame):
         self.base_dir = base_dir
 
         # ── Header ──
-        hdr = ttk.Frame(self)
+        hdr = WrapBar(self)
         hdr.pack(fill=X, padx=12, pady=(10, 4))
         left = ttk.Frame(hdr)
         left.pack(side=LEFT)

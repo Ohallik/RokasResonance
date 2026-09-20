@@ -9,6 +9,7 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from ui.theme import muted_fg, fs, bind_copy_menu
+from ui.theme import WrapBar
 from ui.names import display_person
 
 
@@ -161,7 +162,7 @@ class InventoryManager(ttk.Frame):
 
     def _build(self):
         # ── Toolbar ───────────────────────────────────────────────────────────
-        toolbar = ttk.Frame(self, bootstyle=LIGHT)
+        toolbar = WrapBar(self, bootstyle=LIGHT)
         toolbar.pack(fill=X, padx=0, pady=0)
 
         # Help sits in the corner on every screen, packed first so it stays in

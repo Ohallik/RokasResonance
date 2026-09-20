@@ -9,6 +9,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
 from ui.theme import muted_fg, subtle_fg, fs
+from ui.theme import WrapBar
 
 
 def _current_school_year() -> str:
@@ -38,7 +39,7 @@ class ClassManager(ttk.Frame):
 
     def _build(self):
         # ── Toolbar ───────────────────────────────────────────────────────────
-        toolbar = ttk.Frame(self, bootstyle=LIGHT)
+        toolbar = WrapBar(self, bootstyle=LIGHT)
         toolbar.pack(fill=X)
 
         ttk.Button(toolbar, text="➕ Add Class", bootstyle=SUCCESS,

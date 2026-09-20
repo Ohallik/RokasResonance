@@ -13,6 +13,7 @@ import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ui.theme import muted_fg, fs
+from ui.theme import WrapBar
 
 
 class LessonPlansHub(ttk.Frame):
@@ -73,7 +74,7 @@ class LessonPlansHub(ttk.Frame):
 
     def _build(self):
         # ── Header ───────────────────────────────────────────────────────────
-        header = ttk.Frame(self, bootstyle=PRIMARY)
+        header = WrapBar(self, bootstyle=PRIMARY)
         header.pack(fill=X)
 
         # The ? follows the open tab, so it lands on seating, concerts or

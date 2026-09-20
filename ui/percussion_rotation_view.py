@@ -20,6 +20,7 @@ from ttkbootstrap.dialogs import Messagebox
 import percussion_rotation as pr
 from ui.names import display_first_of
 from ui.theme import muted_fg, fs
+from ui.theme import WrapBar
 
 CLASS_TYPE_LABELS = {
     pr.ENTRY: "Entry",
@@ -156,7 +157,7 @@ class PercussionRotationView(ttk.Frame):
     # ───────────────────────────────────────────────────────────── build ─────
 
     def _build(self):
-        toolbar = ttk.Frame(self, bootstyle=LIGHT)
+        toolbar = WrapBar(self, bootstyle=LIGHT)
         toolbar.pack(fill=X)
         ttk.Button(toolbar, text="➕ New Section", bootstyle=SUCCESS,
                    command=self._add_group).pack(side=LEFT, padx=6, pady=6)

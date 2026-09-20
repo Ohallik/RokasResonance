@@ -13,6 +13,7 @@ from ttkbootstrap.dialogs import Messagebox
 from tkinter import filedialog, messagebox
 from datetime import datetime
 from ui.theme import muted_fg, fs, bind_copy_menu
+from ui.theme import WrapBar
 
 def _display_title(t: str) -> str:
     """Library-catalog style: move a leading article to the end.
@@ -351,7 +352,7 @@ class MusicManager(ttk.Frame):
 
     def _build(self):
         # ── Toolbar ───────────────────────────────────────────────────────
-        toolbar = ttk.Frame(self, bootstyle=LIGHT)
+        toolbar = WrapBar(self, bootstyle=LIGHT)
         toolbar.pack(fill=X, padx=0, pady=0)
 
         from ui.help_system import add_help_button

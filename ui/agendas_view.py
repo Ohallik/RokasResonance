@@ -42,6 +42,7 @@ import agenda_spine as spine
 import percussion_rotation as pr
 import school_calendar as scal
 from ui.theme import muted_fg, fs
+from ui.theme import WrapBar
 
 ENTRY_GROUP = "entry"
 INTERMEDIATE_GROUP = "intermediate"
@@ -540,7 +541,7 @@ class AgendasView(ttk.Frame):
     # ─────────────────────────────────────────────────────────────── build ────
 
     def _build(self):
-        bar = ttk.Frame(self, bootstyle=LIGHT)
+        bar = WrapBar(self, bootstyle=LIGHT)
         bar.pack(fill=X)
         ttk.Label(bar, text=f"📋  {self._cfg['label']} — Daily Agenda",
                   font=("Segoe UI", fs(12), "bold")).pack(side=LEFT, padx=10, pady=8)

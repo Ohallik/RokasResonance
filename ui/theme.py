@@ -12,6 +12,9 @@ Apply these at startup (main.py) before any windows are built so that
 all widget creation picks up the correct values.
 """
 
+import tkinter as tk
+import ttkbootstrap as ttk
+
 # ── Available display themes ──────────────────────────────────────────────────
 
 DISPLAY_THEMES = {
@@ -320,6 +323,165 @@ def fit_window(win, min_w: int = 200, min_h: int = 200, margin: int = 80):
     y = max(0, (avail_h - h) // 2)
     win.geometry(f"{w}x{h}+{x}+{y}")
     win.deiconify()
+
+
+# ── Toolbars that wrap ────────────────────────────────────────────────────────
+# Tk's packer hands out space in packing order and simply cuts off whatever
+# does not fit, so on a small district laptop (1366 wide, or 1280 at 125%
+# scaling, with the fonts at 1.25x) the last three buttons of a toolbar were
+# under the right edge of the window with nothing to say they existed.  A
+# WrapBar is a Frame that lays its packed children out in rows instead: pack
+# buttons into it exactly as before, and when the window is narrower than the
+# buttons need, the overflow moves to a second row.  Widen the window and it
+# is one row again.  RIGHT-packed children (the ? button, Close) keep the
+# first row's right edge.
+
+
+class WrapBar(ttk.Frame):
+    """A toolbar whose packed children flow onto more rows when they don't fit.
+
+    Drop-in for ``ttk.Frame`` as the parent of a row of buttons: children are
+    still created with the bar as their parent and packed with side=LEFT /
+    side=RIGHT and any padding; the bar re-lays them into internal row frames
+    as its width changes.  Children managed by grid or place are left alone.
+    """
+
+    def __init__(self, master=None, **kw):
+        super().__init__(master, **kw)
+        self._rows = []
+        self._known = []          # children in the order they first appeared
+        self._opts = {}
+        self._sig = None
+        self._pending = None
+        self.bind("<Configure>", self._schedule, add="+")
+
+    # Anything that changes the bar's size (its window resized, a button added
+    # or removed) triggers a reflow, coalesced to one per idle cycle.
+    def _schedule(self, _e=None):
+        if self._pending is None:
+            try:
+                self._pending = self.after_idle(self._reflow)
+            except tk.TclError:
+                pass
+
+    @staticmethod
+    def _pad_total(val):
+        if isinstance(val, (tuple, list)):
+            return sum(int(v) for v in val)
+        try:
+            parts = str(val).split()
+            return sum(int(float(v)) for v in parts) if parts else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def _children(self):
+        """Pack-managed children in the order they first appeared, with their
+        pack options remembered from the moment the app packed them.
+
+        winfo_children is STACKING order, and lifting a child above its row
+        changes that -- so the order is kept here, not re-read each time."""
+        seen = set()
+        for w in self.winfo_children():
+            if w in self._rows or w in seen:
+                continue
+            seen.add(w)
+            if w not in self._known:
+                self._known.append(w)
+        self._known = [w for w in self._known if w in seen]
+        out = []
+        for w in self._known:
+            try:
+                mgr = w.winfo_manager()
+            except tk.TclError:
+                continue
+            if mgr != "pack":
+                self._opts.pop(w, None)          # hidden, or grid/place-managed
+                continue
+            try:
+                info = w.pack_info()
+            except tk.TclError:
+                continue
+            if str(info.get("in")) == str(self) or w not in self._opts:
+                self._opts[w] = {k: v for k, v in info.items()
+                                 if k not in ("in", "after", "before")}
+            out.append(w)
+        return out
+
+    def _reflow(self):
+        self._pending = None
+        try:
+            if not self.winfo_exists():
+                return
+            width = self.winfo_width()
+        except tk.TclError:
+            return
+        if width <= 1:
+            return
+        kids = self._children()
+        if not kids:
+            return
+        lefts = [w for w in kids if str(self._opts[w].get("side")) != "right"]
+        rights = [w for w in kids if str(self._opts[w].get("side")) == "right"]
+
+        def need(w):
+            o = self._opts[w]
+            try:
+                return (w.winfo_reqwidth() + self._pad_total(o.get("padx"))
+                        + 2 * self._pad_total(o.get("ipadx")))
+            except tk.TclError:
+                return 0
+
+        rights_w = sum(need(w) for w in rights)
+
+        def layout(first_cap):
+            rows, row, used, cap = [], [], 0, first_cap
+            for w in lefts:
+                n = need(w)
+                if row and used + n > cap:
+                    rows.append(row)
+                    row, used, cap = [], 0, width
+                row.append(w)
+                used += n
+            rows.append(row)
+            return rows
+
+        rows = layout(width - rights_w)
+        if lefts and rights and need(rows[0][0]) + rights_w > width:
+            rows = [[]] + layout(width)          # rights alone on row one
+        sig = (width, tuple(tuple(str(w) for w in r) for r in rows),
+               tuple(str(w) for w in rights))
+        if sig == self._sig:
+            return
+        self._sig = sig
+
+        self._rows = [f for f in self._rows if f.winfo_exists()]
+        style = None
+        try:
+            style = self.cget("style") or None
+        except tk.TclError:
+            pass
+        while len(self._rows) < len(rows):
+            f = ttk.Frame(self, style=style) if style else ttk.Frame(self)
+            self._rows.append(f)
+        for f in self._rows:
+            f.pack_forget()
+        for i, members in enumerate(rows):
+            f = self._rows[i]
+            f.pack(side="top", fill="x")
+            # Chained with after= so the row keeps packing order: a bare
+            # pack(in_=...) on an already-managed widget lands it at the
+            # FRONT of the row, which reversed every toolbar.
+            prev = None
+            for w in members + (rights if i == 0 else []):
+                try:
+                    if prev is None:
+                        w.pack(in_=f, **self._opts[w])
+                    else:
+                        w.pack(after=prev, **self._opts[w])
+                    w.lift(f)                    # a slave sits above its master
+                    prev = w
+                except tk.TclError:
+                    pass
 
 
 # ── Navigation button palette ─────────────────────────────────────────────────

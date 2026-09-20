@@ -16,6 +16,7 @@ from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
 
 from ui.theme import fs, muted_fg, fit_window
+from ui.theme import WrapBar
 from ui.names import display_person
 from ui.uniform_dialog import UniformDialog, UniformCheckoutDialog
 
@@ -72,7 +73,7 @@ class UniformManager(ttk.Frame):
                       bootstyle=(INVERSE, PRIMARY)).pack(side=LEFT, pady=10)
 
         # ── Toolbar ──
-        bar = ttk.Frame(self)
+        bar = WrapBar(self)
         bar.pack(fill=X, padx=10, pady=(8, 4))
 
         def tb(text, style, cmd):
@@ -94,7 +95,7 @@ class UniformManager(ttk.Frame):
                    self._hand_over).pack(side=RIGHT, padx=2)
 
         # ── Filter row ──
-        filt = ttk.Frame(self)
+        filt = WrapBar(self)
         filt.pack(fill=X, padx=10, pady=(0, 6))
         ttk.Label(filt, text="Search:", font=("Segoe UI", fs(9))).pack(side=LEFT)
         se = ttk.Entry(filt, textvariable=self._search, width=24)

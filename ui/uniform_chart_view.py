@@ -14,6 +14,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 
 from ui.theme import fs, muted_fg, fit_window
+from ui.theme import WrapBar
 
 
 class UniformChartView(ttk.Toplevel):
@@ -33,7 +34,7 @@ class UniformChartView(ttk.Toplevel):
         ttk.Label(hdr, text="📊  Uniform Assignments", font=("Segoe UI", fs(13), "bold"),
                   bootstyle=(INVERSE, SUCCESS)).pack(side=LEFT, pady=10, padx=16)
 
-        bar = ttk.Frame(self)
+        bar = WrapBar(self)
         bar.pack(fill=X, padx=10, pady=6)
         ttk.Checkbutton(bar, text="Only students missing a piece",
                         variable=self._only_missing, bootstyle="round-toggle",

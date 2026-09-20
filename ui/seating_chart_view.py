@@ -21,6 +21,7 @@ import seating_render as sr
 from ui.ensembles import ensembles_for, PERIOD_OPTIONS
 from ui.names import display_first_of, display_full
 from ui.theme import muted_fg, fs
+from ui.theme import WrapBar
 
 SORT_LABELS = [
     ("alphabetical", "Alphabetical (by last name)"),
@@ -110,7 +111,7 @@ class SeatingChartView(ttk.Frame):
 
     def _build(self):
         self._chart_var = tk.StringVar()
-        bar = ttk.Frame(self, bootstyle=LIGHT)
+        bar = WrapBar(self, bootstyle=LIGHT)
         bar.pack(fill=X)
         ttk.Label(bar, text="🪑  Seating Chart", font=("Segoe UI", fs(12), "bold")).pack(
             side=LEFT, padx=12, pady=8)

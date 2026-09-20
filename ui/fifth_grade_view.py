@@ -20,6 +20,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 
 from ui.theme import fs, muted_fg, fit_window
+from ui.theme import WrapBar
 
 
 def elementary_sites(db):
@@ -104,7 +105,7 @@ class FifthGradeView(ttk.Frame):
         """One school: its instruments and its roster, both already scoped."""
         outer = ttk.Frame(self.nb)
 
-        bar = ttk.Frame(outer)
+        bar = WrapBar(outer)
         bar.pack(fill=X, padx=10, pady=(8, 4))
         program = (site.get("program") or "").capitalize() or "Not set"
         ttk.Label(bar, text=site["name"], font=("Segoe UI", 11, "bold")).pack(side=LEFT)

@@ -16,6 +16,7 @@ from datetime import datetime
 from ui.ensembles import ensembles_for, all_class_options
 from ui.names import display_last_first
 from ui.theme import px
+from ui.theme import WrapBar
 
 
 def _pick_from_list(parent, title, prompt, options):
@@ -90,7 +91,7 @@ class BudgetManager(ttk.Frame):
                   bootstyle=(INVERSE, SUCCESS)).pack(pady=10, padx=16, anchor=W)
 
         # Toolbar
-        tb = ttk.Frame(self, bootstyle=LIGHT)
+        tb = WrapBar(self, bootstyle=LIGHT)
         tb.pack(fill=X)
         ttk.Button(tb, text="➕ Add", bootstyle=SUCCESS,
                    command=self._add_txn).pack(side=LEFT, padx=6, pady=6)
@@ -1088,7 +1089,7 @@ class _FeesDialog(ttk.Toplevel):
                   font=("Segoe UI", 13, "bold"), bootstyle=(INVERSE, INFO)).pack(
             pady=10, padx=16, anchor=W)
 
-        bar = ttk.Frame(self); bar.pack(fill=X, padx=12, pady=(8, 2))
+        bar = WrapBar(self); bar.pack(fill=X, padx=12, pady=(8, 2))
         ttk.Label(bar, text="School Year:", font=("Segoe UI", 9, "bold")).pack(side=LEFT, padx=(0, 4))
         years = self.db.get_school_years() or [self.school_year]
         if self.school_year not in years:
@@ -1115,7 +1116,7 @@ class _FeesDialog(ttk.Toplevel):
         # Two rows: charging on the first, marking on the second.  One row
         # ran off the right edge of a 900px window once the contract buttons
         # joined it.
-        tb = ttk.Frame(self); tb.pack(fill=X, padx=12, pady=(4, 0))
+        tb = WrapBar(self); tb.pack(fill=X, padx=12, pady=(4, 0))
         ttk.Button(tb, text="➕ Charge a Student…", bootstyle=SUCCESS,
                    command=self._add_students).pack(side=LEFT, padx=2)
         ttk.Button(tb, text="🎓 Add fee to a class…", bootstyle=(SUCCESS, OUTLINE),
@@ -1132,7 +1133,7 @@ class _FeesDialog(ttk.Toplevel):
         ttk.Button(tb, text="📊 Export", bootstyle=(SECONDARY, OUTLINE),
                    command=self._export).pack(side=LEFT, padx=2)
 
-        tb2 = ttk.Frame(self); tb2.pack(fill=X, padx=12, pady=(2, 4))
+        tb2 = WrapBar(self); tb2.pack(fill=X, padx=12, pady=(2, 4))
         ttk.Button(tb2, text="Select All", bootstyle=(SECONDARY, OUTLINE),
                    command=self._check_all).pack(side=LEFT, padx=2)
         ttk.Button(tb2, text="Clear", bootstyle=(SECONDARY, OUTLINE),

@@ -17,6 +17,7 @@ from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
 
 from ui.theme import fs, muted_fg, subtle_fg, fit_window, scroll_body, px
+from ui.theme import WrapBar
 import concert_tools as ct
 import field_trip_tools as ft
 
@@ -39,7 +40,7 @@ class FieldTripsView(ttk.Frame):
         self.main_db = main_db
         self.base_dir = base_dir
 
-        hdr = ttk.Frame(self)
+        hdr = WrapBar(self)
         hdr.pack(fill=X, padx=12, pady=(10, 4))
         left = ttk.Frame(hdr)
         left.pack(side=LEFT)
