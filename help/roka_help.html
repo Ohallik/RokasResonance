@@ -308,6 +308,9 @@
     <tr><td>Synergy (.csv)</td><td>Class lists, one file per class</td></tr>
     <tr><td>Roka inventory form (.xlsx)</td><td>An inventory typed in from
       scratch, for a program with nothing to export</td></tr>
+    <tr><td>Roka roster form (.xlsx)</td><td>Students typed or pasted
+      into a sheet, for a teacher who cannot get the district CSV. See
+      <a href="#roster-form">Students from Roka's roster form</a></td></tr>
   </table>
 
   <h4>Starting an inventory from nothing</h4>
@@ -731,6 +734,37 @@
   none.</p>
   <p><span class="btn-ref">➕ Add Student</span> types one in by hand.</p>
 
+  <h3 id="roster-form">Students from Roka's roster form</h3>
+  <p>Not everyone can export the district roster. A specialist who is not the
+  classroom teacher of record usually gets Synergy's simple student list, a
+  name and an ID number, and nothing more. For that teacher, and for anyone
+  whose list lives in a spreadsheet, the roster form works the way the
+  inventory form does.</p>
+  <ol class="steps">
+    <li><span class="btn-ref">📥 Import ▾</span> ▸ <b>Get a blank roster
+      form</b> saves an Excel sheet with one column for each field of the
+      Student window: first and last name, preferred name, grade, gender,
+      student ID, ensemble(s) and class period(s), the concert and jazz
+      instruments, phone, email, address, two parents with relation, phone
+      and email, and notes. Your schools are a dropdown when you have more
+      than one; the class and instrument columns suggest your own classes
+      and instruments but take whatever you type.</li>
+    <li>Copy your list into it. First Name and Last Name are the only columns
+      every row needs (plus School when you have several). If your list has
+      names as "Last, First" in one column, paste that column into Last Name
+      and leave First Name blank: Roka splits them. Fill in what else you
+      know and save.</li>
+    <li><span class="btn-ref">📥 Import ▾</span> ▸ <b>Student list (Roka
+      roster form)</b>, pick the file, and read the summary. A student
+      already on this year's roster (same ID, or the same name) is updated
+      rather than added twice, so you can add rows and import again.</li>
+  </ol>
+  <p>This works the same at every level. An elementary profile's form has a
+  Section column and an "Also sings in choir" column instead of ensembles
+  and periods; a middle or high school's has the ensembles, periods and
+  jazz instrument. Whatever a class is called at your school, type it: the
+  list only suggests.</p>
+
   <h3>Working with the list</h3>
   <ul>
     <li><span class="btn-ref">🏷️ Assign</span> puts several selected students
@@ -804,9 +838,15 @@
       first year, bringing an inventory across from whatever came before: a
       CutTime spreadsheet, a Charms CSV, or either of those passed on by a
       colleague. Roka works out which it is, so it does not ask.</li>
-    <li><span class="btn-ref">🎓 Import Class List (CSV)</span> loads this year's
-      children. Import each section separately. They arrive belonging to this
-      school, which is what lets you lend them its instruments.</li>
+    <li><span class="btn-ref">🎓 Import Class List</span> loads this year's
+      children from the district CSV or from Roka's roster form; Roka works
+      out which. Import each section separately. They arrive belonging to
+      this school, which is what lets you lend them its instruments.</li>
+    <li><span class="btn-ref">📄 Blank Roster Form</span> is for when Synergy
+      will not give you the CSV. Paste the simple student list into the
+      form (names, or names and IDs, are enough), add anything else you
+      know, save, and use Import Class List. See
+      <a href="#roster-form">Students from Roka's roster form</a>.</li>
     <li><span class="btn-ref">📦 Hand Over This School</span> saves the
       inventory, checkout history and repair history in one file for whoever
       teaches here next.</li>
@@ -1059,6 +1099,17 @@
   a concert arc stays an arc. A long percussion line wraps onto a second row on
   its own rather than running wider than the band in front of it.</p>
 
+  <h3>Students who join after a chart is saved</h3>
+  <p>A saved chart follows the class list. Load it after a student has been
+  added to the class and they are already on it, seated beside their own
+  section if it has a free chair, otherwise in the first empty seat, and if
+  the room is full, on one more chair at the end of their section's row. The
+  red line under the chart names them. Click their seat and then the seat you
+  want them in to swap; nobody else moves. A student who has left the class
+  simply disappears from their seat. This is the same for a concert chart
+  and a jazz chart, where a new rhythm player appears in the rhythm column
+  and a new wind player in their section's row.</p>
+
   <h3>Jazz band</h3>
   <p><span class="btn-ref">🎷 Jazz Band Setup…</span> seats a big band the way
   a jazz chart is drawn — by the PART each player is covering, not by what
@@ -1074,8 +1125,13 @@
   written part is normal at middle school, and both sit side by side. Parts
   are saved on the student, so they are still there on the next chart and
   next term. Real bands are not the book, and it copes: eleven saxes simply
-  make a longer front row, bass-clef players cover the trombone parts, and
-  flutes and clarinets cover trumpet parts behind them. If the trumpet row
+  make a longer front row and bass-clef players cover the trombone parts.
+  A flute is a flute: flutes, clarinets, oboes and strings are listed as
+  themselves in the Winds list and sit together as their own section behind
+  the trumpets, not as "Trumpet 3". If one of them really reads a trumpet
+  part, pick that part for them instead. The Winds list follows the class:
+  a student added in Manage Students appears the next time you come back to
+  the window. If the trumpet row
   will not fit on one line, set it to two in Jazz Band Setup and it splits
   in order, the lead trumpet staying in the nearer row. The rotation on
   that same page still cycles only the rhythm section — a horn part is a
@@ -1083,6 +1139,13 @@
   the rows at all: a piano is an instrument off to the side, so the rhythm
   players stand as their own labeled column, an icon and a name each, on
   whichever side you pick in Jazz Band Setup.</p>
+  <p>Zones work on a jazz chart too. Under
+  <span class="btn-ref">⚙ Configuration…</span> the sections are Saxes,
+  Trombones, Trumpets and every instrument listed as itself. Give the
+  trumpets zone 8 and they sit together in the middle of the back; give the
+  flutes zones 3 and 6 and they stay on stage left. A section with no zone
+  keeps its standard big-band row. <span class="btn-ref">↺ Standard jazz
+  seating</span> drops the zones again.</p>
 
   <h3>Symphony orchestra</h3>
   <p>A strings class with winds, brass or percussion in it is laid out as a
@@ -1095,13 +1158,19 @@
 
   <h3>The nine zones</h3>
   <p>Under <span class="btn-ref">⚙ Configuration…</span>, Concert seating gives
-  every section a zone. The room splits into three depths and three sides, the
-  way a concert chart is drawn in rings:</p>
+  every section a zone. Click a section in the list, then click the zone
+  boxes in the little drawing of the room. The room splits into three depths
+  and three sides, the way a concert chart is drawn in rings:</p>
   <ul>
     <li><strong>1, 2, 3</strong> — front: stage right, center, stage left.</li>
     <li><strong>4, 5, 6</strong> — middle: stage right, center, stage left.</li>
     <li><strong>7, 8, 9</strong> — back: stage right, center, stage left.</li>
   </ul>
+  <p>A section can have more than one zone, and together they make one
+  bigger box. Zones 1 and 4 for the flutes is the front and middle of stage
+  right, filled from the wall inward, so the flutes stay on that side and on
+  the edge instead of bleeding into the center. Zones 2 and 5 keep a section
+  down the middle. Click a box again to take it off.</p>
   <p><span class="btn-ref">↺ Standard concert seating</span>, under the zone
   list, puts every section back in normal concert order front to back and drops
   all the zones — that is the way back to an ordinary chart.</p>

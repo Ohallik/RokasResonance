@@ -68,6 +68,10 @@ hiddenimports = [
     "ui.roster_export_view",
     # Incoming-student handoff (lazy-imported from the import wizard).
     "student_transfer",
+    # Roka's blank student roster form and its reader (lazy-imported
+    # from the Students window's Import menu and the 5th grade tabs).
+    "roka_roster_xlsx",
+    "ui.roster_form",
 ]
 hiddenimports += collect_submodules("ttkbootstrap")
 hiddenimports += collect_submodules("openpyxl")

@@ -206,6 +206,31 @@ def jazz_band(instrument):
     return "high"
 
 
+# The big band's own instruments: the parts ARE trumpet and trombone parts.
+# Everything else in the low and high rows -- a flute, a clarinet, a french
+# horn, a violin -- can be listed as itself and seated as its own section.
+JAZZ_CORE = {"Trumpet", "Trombone", "Bass Trombone"}
+
+
+def jazz_extra_instrument(instrument):
+    """True for a wind or string that is NOT one of the big band's own."""
+    i = (instrument or "").strip()
+    if not i:
+        return False
+    return jazz_band(i) in ("low", "high") and i not in JAZZ_CORE
+
+
+def jazz_extra_rank(name):
+    """Order for the extra sections: the back-row instruments in their usual
+    order, then the bass-clef ones, then anything else by name."""
+    n = (name or "").strip()
+    if n in JAZZ_HIGH:
+        return (0, JAZZ_HIGH.index(n), n)
+    if n in JAZZ_LOW:
+        return (1, JAZZ_LOW.index(n), n)
+    return (2, 0, n)
+
+
 def jazz_layout(instruments, high_rows=1, rhythm_side="left"):
     """Plan a jazz row layout from the instruments PRESENT.
 
@@ -341,9 +366,34 @@ def jazz_part_from_label(label):
     return t
 
 
-def jazz_part_choices():
-    """The picker's values: every part under its teacher-facing name."""
-    return [jazz_part_label(p) for p in jazz_part_options()]
+def jazz_part_choices(extra=None):
+    """The picker's values: every part under its teacher-facing name, then
+    any instruments in ``extra`` -- so a flute can be listed as a flute
+    rather than as a trumpet part."""
+    out = [jazz_part_label(p) for p in jazz_part_options()]
+    for i in extra or []:
+        i = (i or "").strip()
+        if i and i not in out:
+            out.append(i)
+    return out
+
+
+# The sections a jazz chart's zones are given to.  Saxes, trombones and
+# trumpets are rows on the standard chart; a player listed as their own
+# instrument makes a section named for it ("Flute").
+JAZZ_SECTION_ORDER = ["Saxes", "Trombones", "Trumpets"]
+_JAZZ_SECTIONS = {"sax": "Saxes", "low": "Trombones", "high": "Trumpets",
+                  "rhythm": "Rhythm Section"}
+
+
+def jazz_section_of(part):
+    """The seating section a part belongs to: "Saxes", "Trombones",
+    "Trumpets", "Rhythm Section", or the instrument itself for a player
+    listed as one ("Flute").  "" for no part."""
+    band = jazz_part_band(part)
+    if band == "extra":
+        return (part or "").strip()
+    return _JAZZ_SECTIONS.get(band, "")
 
 
 def jazz_part_band(part):
@@ -363,6 +413,8 @@ def jazz_part_band(part):
         return "high"
     if _re.match(r"^[ATB]\s*\d*$", p):
         return "sax"
+    if p:
+        return "extra"      # an instrument name: seated as its own section
     return ""
 
 
@@ -452,6 +504,11 @@ def jazz_auto_parts(players, taken=None):
                 out[p["id"]] = take(["A1", "A2"])
         elif band == "low":
             out[p["id"]] = take(jazz_low_parts())
+        elif inst in JAZZ_HIGH and inst not in JAZZ_CORE:
+            # A flute is a flute.  Being listed as "Trumpet 3" was the
+            # complaint; the teacher can still put a clarinet on a trumpet
+            # part from the Winds list when that is what they read.
+            out[p["id"]] = inst
         else:
             out[p["id"]] = take(jazz_high_parts())
     return out
@@ -471,7 +528,8 @@ def _split_evenly(seq, n):
     return [c for c in out if c] or [[]]
 
 
-def jazz_seating(players, parts, rhythm_side="left", high_rows=1):
+def jazz_seating(players, parts, rhythm_side="left", high_rows=1,
+                 zones=None):
     """Seat a jazz band by PART, as close to the ideal chart as the players allow.
 
     Returns ``(rows_of_players, row_caps, rhythm_players)``.  Row 0 is the
@@ -488,6 +546,12 @@ def jazz_seating(players, parts, rhythm_side="left", high_rows=1):
     ``rhythm_side`` also mirrors the rows: the winds pack toward the rhythm
     section, so any empty chairs land on the far side, not between the band
     and its rhythm players.
+
+    A player listed as their own instrument (part "Flute") sits with the
+    others of that instrument, behind the trumpets, as a section of its own.
+    ``zones`` ({section: zone or [zones]}, sections as jazz_section_of names
+    them) then moves any section into its zone -- the trumpets to the middle,
+    the flutes to stage left -- exactly as a concert chart's zones do.
     """
     high_rows = max(1, int(high_rows or 1))
     by_part = {}
@@ -506,9 +570,14 @@ def jazz_seating(players, parts, rhythm_side="left", high_rows=1):
 
     rhythm = seats("rhythm")
     sax, low, high = seats("sax"), seats("low"), seats("high")
+    # Players listed as their own instrument sit together as that section,
+    # behind the trumpets, unless a zone puts them somewhere else.
+    extras = []
+    for q in sorted(band_parts("extra"), key=jazz_extra_rank):
+        extras.extend(by_part[q])
     unplaced = [p for p in players
                 if not jazz_part_band((parts or {}).get(p["id"]))]
-    high = high + unplaced          # never leave anybody off the chart
+    high = high + extras + unplaced     # never leave anybody off the chart
 
     # Where the brass blocks start, so the leads line up behind the lead
     # alto.  A row reads 2 1 3 4 and part 2 may be DOUBLED, so the lead's
@@ -553,7 +622,83 @@ def jazz_seating(players, parts, rhythm_side="left", high_rows=1):
     rows = [r + [None] * (width - len(r)) for r in rows]
     if rhythm_side == "right":
         rows = [list(reversed(r)) for r in rows]
-    return rows, [width] * len(rows), rhythm
+    caps = [width] * len(rows)
+    if zones:
+        # After the mirror: a zone is a place in the ROOM, as the audience
+        # sees it, whichever side the rhythm section is on.
+        rows, caps = _apply_jazz_zones(rows, caps, parts, zones)
+    return rows, caps, rhythm
+
+
+def _zone_seat_order(width, zones, side):
+    """Every seat of a row in the order a zoned section takes them: the box
+    first, along the row from its own edge (so the section keeps its own
+    left-to-right order), then the seats past the end of that run, then the
+    seats before it.  A section that outgrows its box continues the run
+    rather than jumping to the far side of the box."""
+    cols = zone_set_columns(zones, width)
+    if side == "right":
+        inside = cols[::-1]
+    else:
+        inside = list(cols)
+    rest = [c for c in range(width) if c not in cols]
+    if not inside:
+        return rest
+    end = inside[-1]
+    if side == "right":
+        rest.sort(key=lambda c: (c > end, abs(c - end)))
+    else:
+        rest.sort(key=lambda c: (c < end, abs(c - end)))
+    return inside + rest
+
+
+def _free_zone_seat(rows, zrows, side, zones):
+    """The next empty seat for a zoned section: inside the box in any of the
+    zone's rows first, then the nearest seat past the run in those rows."""
+    width = max((len(r) for r in rows), default=0)
+    order = _zone_seat_order(width, zones, side)
+    n_in = len(zone_set_columns(zones, width))
+    for cols in (order[:n_in], order[n_in:]):
+        for r in zrows:
+            for c in cols:
+                if c < len(rows[r]) and rows[r][c] is None:
+                    return r, c
+    return None
+
+
+def _apply_jazz_zones(rows, caps, parts, zones):
+    """Move zoned jazz sections into their zones, after the standard layout.
+
+    A zoned section is lifted out of wherever the standard chart put it and
+    seated in its zone's box, biggest section first, filling from the box's
+    own edge.  A full box spills to the rest of its rows; a full room grows
+    a chair wider rather than leaving anybody off.  Sections without a zone
+    stay exactly where the standard chart put them."""
+    n = len(rows)
+    wanted = {lab: zone_list(z) for lab, z in (zones or {}).items()
+              if zone_list(z)}
+    if not n or not wanted:
+        return rows, caps
+    lifted = {}
+    for r, row in enumerate(rows):
+        for c, p in enumerate(row):
+            if p and jazz_section_of((parts or {}).get(p["id"])) in wanted:
+                lab = jazz_section_of((parts or {}).get(p["id"]))
+                lifted.setdefault(lab, []).append(p)
+                rows[r][c] = None
+    for lab in sorted(lifted, key=lambda k: -len(lifted[k])):
+        zrows, side = zone_set_rows_side(wanted[lab], n)
+        if not zrows:
+            zrows = list(range(n))
+        for p in lifted[lab]:
+            seat = _free_zone_seat(rows, zrows, side, wanted[lab])
+            if seat is None:
+                for row in rows:
+                    row.append(None)
+                seat = (zrows[0], len(rows[zrows[0]]) - 1)
+            rows[seat[0]][seat[1]] = p
+    width = max(len(r) for r in rows)
+    return rows, [width] * n
 
 
 def _by_last(students):
@@ -1165,6 +1310,59 @@ _ZONE_SIDE = {z: ("left", "center", "right")[(z - 1) % 3] for z in range(1, 10)}
 # the back half, so the back three move to the new back three and the front
 # three keep their numbers.
 ZONE_MIGRATION_6_TO_9 = {1: 1, 2: 2, 3: 3, 4: 7, 5: 8, 6: 9}
+
+
+def zone_list(val):
+    """A section's zones as a sorted list of 1-9, whether stored as one
+    number (charts saved before a section could hold several) or a list."""
+    if val is None or val == "":
+        return []
+    vals = val if isinstance(val, (list, tuple, set)) else [val]
+    out = set()
+    for v in vals:
+        try:
+            z = int(v)
+        except (TypeError, ValueError):
+            continue
+        if z in ZONE_LABELS:
+            out.add(z)
+    return sorted(out)
+
+
+def zone_set_rows_side(zones, n_rows):
+    """``([0-based rows], side)`` for one zone or several together.
+
+    Several zones are one bigger box: the rows are the union, and the side
+    is the edge the section fills from -- its own edge when every zone is on
+    that side (or that side plus the middle), the middle when only middle
+    zones were given, the left edge otherwise.  Zones 1 and 4 for the flutes
+    is "the front and middle of stage right", filled from the wall inward,
+    so they never bleed into the center."""
+    rows, sides = set(), []
+    for z in zone_list(zones):
+        r, side = zone_rows_side(z, n_rows)
+        rows.update(r)
+        sides.append(side)
+    if not rows:
+        return ([], "left")
+    distinct = set(sides)
+    if distinct == {"center"}:
+        side = "center"
+    elif "left" in distinct and "right" not in distinct:
+        side = "left"
+    elif "right" in distinct and "left" not in distinct:
+        side = "right"
+    else:
+        side = "left"
+    return (sorted(rows), side)
+
+
+def zone_set_columns(zones, cap):
+    """The seats across a row that one zone or several cover, together."""
+    cols = set()
+    for z in zone_list(zones):
+        cols.update(zone_columns(z, cap))
+    return sorted(cols) if cols else list(range(cap))
 
 
 def _depth_bands(n_rows):

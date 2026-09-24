@@ -23,6 +23,7 @@ import synergy_import
 import cuttime_import
 import charms_import
 import roka_inventory_xlsx
+import roka_roster_xlsx
 
 
 def _norm_date(s):
@@ -401,4 +402,202 @@ def import_inventory(db, cuttime_path=None, charms_inv_path=None,
         summary["loans"] += 1
         if not sid:
             summary["loans_unmatched"] += 1
+    return summary
+
+
+# ── Students from Roka's roster form ─────────────────────────────────────────
+
+def detect_roster_format(path):
+    """What a student list file is, worked out from the file itself.
+
+    Returns "synergy" (the district class list, one row per parent),
+    "roka" (Roka's roster form filled in, or any spreadsheet / CSV whose
+    headings name a student column), or None.  Same idea as
+    detect_inventory_format: the file already answers the question."""
+    ext = os.path.splitext(path or "")[1].lower()
+    if ext in (".xlsx", ".xlsm"):
+        return "roka" if roka_roster_xlsx.sniff(path) else None
+    if ext in (".csv", ".txt", ""):
+        try:
+            rows = synergy_import._read_rows(path)
+        except Exception:
+            return None
+        if not rows:
+            return None
+        low = {str(h or "").strip().lower() for h in rows[0]}
+        if "student name" in low and (
+                low & {"orderby", "parent name", "citystatezip", "section"}):
+            return "synergy"
+        return "roka" if roka_roster_xlsx.header_map(rows[0]) else None
+    return None
+
+
+def _sites_of(db):
+    """Every active school as a plain dict, or [] for a profile with none."""
+    try:
+        return [dict(s) for s in db.get_sites()]
+    except Exception:
+        return []
+
+
+def resolve_site(sites, text):
+    """The school a School cell names, matched the way a teacher types it
+    ("Clyde Hill" for "Clyde Hill Elementary School"), or None."""
+    name = roka_roster_xlsx.match_school(text, [s["name"] for s in sites])
+    return next((s for s in sites if s["name"] == name), None) if name else None
+
+
+def canonical_group(label, site):
+    """A class name typed for an ELEMENTARY school, spelled the way that
+    school's roster spells it.
+
+    "1", "Section 1", "sec 2" become "<School>: Section N" and "choir"
+    becomes "<School>: Choir", so the section filter and the choir box find
+    them.  Anything else is the teacher's own name for a group and is kept
+    exactly as typed: the list of classes is theirs to write."""
+    import re
+    from ui.ensembles import site_sections, choir_ensemble
+    s = " ".join((label or "").split())
+    if not s or not site or site.get("level") != "elementary":
+        return s
+    name = site.get("name") or ""
+    if s.lower().startswith(name.lower()):
+        return s
+    m = re.match(r"^(?:sec(?:tion)?\.?\s*)?(\d)$", s, re.I)
+    if m:
+        want = f"{name}: Section {m.group(1)}"
+        return want if want in site_sections(name) else s
+    if s.lower() in ("choir", "chorus"):
+        return choir_ensemble(name)
+    return s
+
+
+def _split_csv(val):
+    return [p.strip() for p in str(val or "").split(",") if p.strip()]
+
+
+def _find_existing(db, rec, school_year):
+    """This year's record for a student on the form: by district ID first,
+    then by the exact name.  The ID is what makes six Alex Lis six
+    children."""
+    sid = str(rec.get("student_id") or "").strip()
+    if sid:
+        with db._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM students WHERE student_id=? AND school_year=? "
+                "ORDER BY COALESCE(is_active,1) DESC, id DESC LIMIT 1",
+                (sid, school_year)).fetchone()
+        if row:
+            return row
+    return db.find_student_by_name(rec.get("first_name", ""),
+                                   rec.get("last_name", ""), school_year)
+
+
+def import_roster_rows(db, students, school_year, site_id=None,
+                       default_class=None, default_period=None,
+                       default_instrument=None):
+    """Put the rows of a Roka roster form on the roster for ``school_year``.
+
+    ``site_id`` is the school for rows whose School cell is blank (or names
+    a school Roka does not have); a row that names a known school goes
+    there.  ``default_class``, ``default_period`` and ``default_instrument``
+    apply to rows that do not say otherwise.  A student already on this
+    year's roster (same district ID, else the same name) is updated in
+    place: blank fields filled, classes merged, never duplicated.
+
+    Returns a summary: added, updated, moved, skipped (rows naming a school
+    Roka does not have, with nowhere else to put them), unknown_schools
+    (the names that did not match), no_class (students who ended up in no
+    class), by_school (name -> count), total."""
+    from ui.ensembles import choir_ensemble
+    sites = _sites_of(db)
+    by_id = {s["id"]: s for s in sites}
+    default_site = by_id.get(site_id)
+    summary = {"added": 0, "updated": 0, "moved": 0, "skipped": 0,
+               "unknown_schools": [], "no_class": 0, "by_school": {},
+               "total": len(students)}
+    unknown = set()
+    for rec in students:
+        want = (rec.get("_site") or "").strip()
+        site = resolve_site(sites, want) if want else None
+        if want and not site:
+            unknown.add(want)
+            if sites and not default_site:
+                summary["skipped"] += 1
+                continue
+            site = default_site
+        site = site or default_site
+        sid_val = site["id"] if site else None
+        elementary = bool(site and site.get("level") == "elementary")
+
+        labels = _split_csv(rec.get("ensembles")) or (
+            [default_class] if default_class else [])
+        if elementary:
+            labels = [canonical_group(l, site) for l in labels]
+        if site and (site.get("choir_default") or
+                     (elementary and rec.get("_choir"))):
+            choir = choir_ensemble(site["name"])
+            if choir not in labels:
+                labels.append(choir)
+        periods = [] if elementary else (
+            _split_csv(rec.get("class_periods")) or
+            ([str(default_period)] if default_period else []))
+        instrument = (rec.get("primary_instrument") or default_instrument
+                      or None)
+
+        prior = _find_existing(db, rec, school_year)
+        if prior:
+            merged = dict(prior)
+            ens = merged.get("ensembles")
+            if labels and elementary:
+                # One section per school: turning up on a new list means
+                # the child moved section, not joined a second one.
+                ens = _drop_site_classes(ens, site["name"], sections_only=True)
+            for lab in labels:
+                ens = _merge_csv(ens, lab)
+            merged["ensembles"] = ens or None
+            per = merged.get("class_periods")
+            for p in periods:
+                per = _merge_csv(per, p)
+            merged["class_periods"] = per or None
+            for key, val in (("primary_instrument", instrument),
+                             ("secondary_instrument", rec.get("secondary_instrument")),
+                             ("jazz_instrument", rec.get("jazz_instrument")),
+                             ("preferred_name", rec.get("preferred_name")),
+                             ("notes", rec.get("notes"))):
+                if val and not str(merged.get(key) or "").strip():
+                    merged[key] = val
+            merged["provisional"] = 0
+            prior_site = merged.get("site_id")
+            transferred = bool(sid_val and prior_site and prior_site != sid_val)
+            if transferred:
+                old = by_id.get(prior_site)
+                if old:
+                    merged["ensembles"] = _drop_site_classes(
+                        merged["ensembles"], old["name"]) or None
+            db.update_student(prior["id"], merged)
+            db.fill_student_blanks(prior["id"], rec)
+            if sid_val and prior_site != sid_val:
+                db.set_student_site(prior["id"], sid_val)
+                if transferred:
+                    summary["moved"] += 1
+            summary["updated"] += 1
+            if not merged["ensembles"]:
+                summary["no_class"] += 1
+        else:
+            data = {k: v for k, v in rec.items() if not k.startswith("_")}
+            data["school_year"] = school_year
+            data["site_id"] = sid_val
+            data["ensembles"] = ", ".join(labels) or None
+            data["class_periods"] = ", ".join(periods) or None
+            data["primary_instrument"] = instrument
+            data["phone"] = (data.get("phone") or data.get("parent1_phone")
+                             or data.get("parent2_phone") or None)
+            db.add_student(data)
+            summary["added"] += 1
+            if not data["ensembles"]:
+                summary["no_class"] += 1
+        where = site["name"] if site else "(no school)"
+        summary["by_school"][where] = summary["by_school"].get(where, 0) + 1
+    summary["unknown_schools"] = sorted(unknown)
     return summary

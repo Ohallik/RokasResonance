@@ -131,7 +131,7 @@ class FifthGradeView(ttk.Frame):
         # bring the inventory across (once), then load this year's children
         # (every year).  Same wording and same file types as the secondary
         # Import Data wizard, because plenty of people do both jobs.
-        setup = ttk.Frame(outer)
+        setup = WrapBar(outer)
         setup.pack(fill=X, padx=10, pady=(0, 6))
         ttk.Label(setup, text="Start of year:", font=("Segoe UI", 9, "bold"),
                   foreground=muted_fg()).pack(side=LEFT, padx=(0, 8))
@@ -147,9 +147,17 @@ class FifthGradeView(ttk.Frame):
                    bootstyle=(SECONDARY, OUTLINE),
                    command=lambda s=site: self._import_legacy(s)
                    ).pack(side=LEFT, padx=(0, 6))
-        ttk.Button(setup, text="🎓 Import Class List (CSV)",
+        # Takes the district CSV or Roka's roster form; Roka works out
+        # which.  A specialist is not the teacher of record, so Synergy may
+        # refuse them the CSV and hand over a name-and-ID list instead --
+        # pasted into the form, that list is enough.
+        ttk.Button(setup, text="🎓 Import Class List",
                    bootstyle=(SUCCESS, OUTLINE),
                    command=lambda s=site: self._import_roster(s)
+                   ).pack(side=LEFT, padx=(0, 6))
+        ttk.Button(setup, text="📄 Blank Roster Form",
+                   bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda s=site: self._blank_roster_form(s)
                    ).pack(side=LEFT)
 
         inner = ttk.Notebook(outer, bootstyle=SECONDARY)
@@ -280,8 +288,19 @@ class FifthGradeView(ttk.Frame):
         path = filedialog.askopenfilename(
             parent=self.winfo_toplevel(),
             title=f"Class list for {section}",
-            filetypes=[("CSV file", "*.csv"), ("All files", "*.*")])
+            filetypes=[("Class list (CSV or Roka roster form)",
+                        "*.csv *.xlsx *.txt"), ("All files", "*.*")])
         if not path:
+            return
+        if import_service.detect_roster_format(path) != "synergy":
+            # Roka's form (or any list with headings Roka knows): rows that
+            # do not name a section get the one chosen above.
+            from ui.roster_form import import_roster_file
+            if import_roster_file(self.winfo_toplevel(), self.db,
+                                  self.base_dir, self.db.current_school_year(),
+                                  site_id=site["id"], default_class=section,
+                                  path=path):
+                self.refresh()
             return
         try:
             res = import_service.import_students(
@@ -298,6 +317,13 @@ class FifthGradeView(ttk.Frame):
                f"were updated." if res["updated"] else ""),
             title="Class list imported", parent=self.winfo_toplevel())
         self.refresh()
+
+    def _blank_roster_form(self, site):
+        """Roka's blank roster form, for the teacher who cannot get the CSV."""
+        from ui.roster_form import offer_blank_roster_form
+        offer_blank_roster_form(self.winfo_toplevel(), self.db, self.base_dir,
+                                self.db.current_school_year(),
+                                site.get("program") or "band")
 
     def _ask_section(self, site):
         """Which of this school's sections the class list belongs to.

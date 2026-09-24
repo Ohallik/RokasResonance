@@ -94,6 +94,18 @@ class JazzView(ttk.Frame):
         # part is a chair, not a warm-up rotation.
         self._winds = _WindsPanel(body, self.main_db, self.base_dir)
         self._winds.pack(side=LEFT, fill=Y, padx=(6, 0), pady=6)
+        # A student added to the class in Manage Students while this tab
+        # was open did not appear until the tab was switched away and back.
+        # Coming back to the window, or the pointer coming back onto the
+        # tab, checks the class list (one cheap query, and only a redraw
+        # when something actually changed).
+        self.bind("<Enter>", lambda e: self._winds.reload_if_changed(), add="+")
+        try:
+            self.winfo_toplevel().bind(
+                "<FocusIn>", lambda e: self._winds.reload_if_changed(),
+                add="+")
+        except Exception:
+            pass
 
         right = ttk.Labelframe(body, text=" 🥁 Rhythm Section ", padding=6)
         right.pack(side=LEFT, fill=BOTH, expand=True, padx=6, pady=6)
@@ -912,6 +924,8 @@ class _WindsPanel(ttk.Labelframe):
         self._class_touched = False
         self._vars = {}
         self._roster = []
+        self._sig = None
+        self._checked_at = 0.0
 
         if main_db is None:
             self._table = None
@@ -1008,6 +1022,27 @@ class _WindsPanel(ttk.Labelframe):
         except Exception:
             return []
 
+    @staticmethod
+    def _signature(roster):
+        """What the list shows, reduced to something cheap to compare."""
+        return tuple(sorted((r["id"], (r.get("jazz_part") or "").strip(),
+                             (r.get("jazz_instrument")
+                              or r.get("primary_instrument") or "").strip())
+                            for r in roster))
+
+    def reload_if_changed(self):
+        """Redraw only when the class list has changed under us.  Throttled,
+        because the pointer crossing the tab fires this constantly."""
+        import time
+        if self._table is None:
+            return
+        now = time.monotonic()
+        if now - self._checked_at < 1.5:
+            return
+        self._checked_at = now
+        if self._signature(self._students()) != self._sig:
+            self._reload()
+
     # ── render ──────────────────────────────────────────────────────────────
 
     def _reload(self):
@@ -1017,8 +1052,18 @@ class _WindsPanel(ttk.Labelframe):
         roster = self._students()
         # One choice per player, reading as instrument AND part ("Trumpet 2",
         # "Alto Sax 1") -- two dropdowns per row was cramped and confusing,
-        # and the codes ("Tpt 2") meant nothing at a glance.
-        options = [""] + self._sc.jazz_part_choices()
+        # and the codes ("Tpt 2") meant nothing at a glance.  Any instrument
+        # in the class that is not one of the big band's own (a flute, a
+        # clarinet, a french horn) is offered as itself too, so a flute can
+        # be listed as a flute and seated as a flute section.
+        extra = sorted({(r.get("jazz_instrument")
+                         or r.get("primary_instrument") or "").strip()
+                        for r in roster
+                        if self._sc.jazz_extra_instrument(
+                            r.get("jazz_instrument")
+                            or r.get("primary_instrument"))},
+                       key=self._sc.jazz_extra_rank)
+        options = [""] + self._sc.jazz_part_choices(extra=extra)
 
         # Blanks get a first guess, saved as shown, never overwriting a
         # choice.  Saving the guess keeps this list, the seating chart and the
@@ -1041,6 +1086,7 @@ class _WindsPanel(ttk.Labelframe):
 
         self._roster = [r for r in roster if self._sc.jazz_part_band(
             (r.get("jazz_part") or "").strip()) != "rhythm"]
+        self._sig = self._signature(roster)
 
         if not roster:
             ttk.Label(self._table,

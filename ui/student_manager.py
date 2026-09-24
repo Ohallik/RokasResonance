@@ -825,10 +825,46 @@ class StudentManager(_ClassOptionsMixin, ttk.Frame):
                          command=self._import_csv)
         menu.add_command(label="🎼  Update instruments from another school's CSV…",
                          command=self._import_instruments_from_csv)
+        menu.add_separator()
+        # For the teacher who cannot get the district CSV at all: a
+        # specialist sees the simple name-and-ID list and nothing else.
+        menu.add_command(label="📋  Student list (Roka roster form, Excel)…",
+                         command=self._import_roster_form)
+        menu.add_command(label="📄  Get a blank roster form (Excel)…",
+                         command=self._blank_roster_form)
         try:
             menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
         finally:
             menu.grab_release()
+
+    def _import_roster_form(self):
+        """Students from Roka's roster form, filled in -- the same shape as
+        the Equipment window's instrument-list import.  A district CSV
+        picked here by mistake simply runs the CSV import instead."""
+        from ui.roster_form import import_roster_file
+        import os
+        base_dir = os.path.dirname(os.path.abspath(self.db.db_path))
+        year = self._year_var.get() or _current_school_year()
+        high_water = self._max_student_id()
+
+        def synergy(path):
+            dlg = _StudentImportDialog(
+                self.winfo_toplevel(), self.db, [path], year,
+                program_type=self.program_type, site_id=self.site_id)
+            self.wait_window(dlg)
+
+        import_roster_file(self.winfo_toplevel(), self.db, base_dir, year,
+                           site_id=self.site_id, on_synergy=synergy)
+        self._claim_new_students(high_water)
+        self.refresh()
+
+    def _blank_roster_form(self):
+        from ui.roster_form import offer_blank_roster_form
+        import os
+        base_dir = os.path.dirname(os.path.abspath(self.db.db_path))
+        offer_blank_roster_form(self.winfo_toplevel(), self.db, base_dir,
+                                self._year_var.get() or _current_school_year(),
+                                self.program_type)
 
     def _open_numbers_per_part(self):
         from ui.instrumentation_view import open_instrumentation
