@@ -140,6 +140,65 @@ def _icon_for_station(widget, station):
     return None
 
 
+def alt_fields(row):
+    """A roster row's alternate-day setting as engine keys, or {} for a
+    player who is on percussion every day."""
+    try:
+        inst = (row["alt_instrument"] or "").strip()
+    except (KeyError, IndexError, TypeError):
+        return {}
+    if not inst:
+        return {}
+    try:
+        odd = row["alt_odd"]
+    except (KeyError, IndexError, TypeError):
+        odd = 1
+    return {"alt_instrument": inst, "alt_odd": odd is None or bool(odd)}
+
+
+def alt_summary(alt):
+    days = "odd" if alt.get("alt_odd", True) else "even"
+    return f"{alt['alt_instrument']} on {days} days"
+
+
+def load_mallet_inventory(db):
+    """The room's mallet equipment for this year's file, or the most recent
+    year that has a list; None means the built-in default room.  The
+    Percussion tab and the agenda both read it here, so the board on the
+    screen and the one in the planner can't disagree."""
+    import json
+    raw = db.get_program_setting("mallet_inventory")
+    if raw:
+        try:
+            return pr._norm_inventory(json.loads(raw))
+        except Exception:
+            pass
+    # No list saved for this year yet: inherit from the most recent year
+    # that has one.  Buying a new marimba is rare -- the room list carries
+    # forward indefinitely until the teacher edits it.
+    from lesson_plan_db import list_available_school_years, get_lesson_plan_db
+    path = getattr(db, "db_path", "") or ""
+    base_dir = os.path.dirname(os.path.abspath(path))
+    base = os.path.basename(path)
+    cur = (base[len("lesson_plans_"):-len(".db")]
+           if base.startswith("lesson_plans_") and base.endswith(".db") else None)
+    try:
+        years = list_available_school_years(base_dir)    # newest first
+    except Exception:
+        years = []
+    for y in years:
+        if y == cur:
+            continue
+        try:
+            raw = get_lesson_plan_db(base_dir, y).get_program_setting(
+                "mallet_inventory")
+            if raw:
+                return pr._norm_inventory(json.loads(raw))
+        except Exception:
+            continue
+    return None
+
+
 class PercussionRotationView(ttk.Frame):
     def __init__(self, parent, db, main_db=None, base_dir=None):
         super().__init__(parent)
@@ -322,7 +381,7 @@ class PercussionRotationView(ttk.Frame):
         # -- Roster editor --
         roster_frame = ttk.Labelframe(self._content, text=" Percussionists ", padding=4)
         roster_frame.pack(fill=BOTH, expand=True)
-        rbar = ttk.Frame(roster_frame)
+        rbar = WrapBar(roster_frame)
         rbar.pack(fill=X, pady=(0, 4))
         # From the student list FIRST — typing names in by hand is the fallback,
         # not the default path.
@@ -338,6 +397,8 @@ class PercussionRotationView(ttk.Frame):
                    command=lambda: self._move_player(1)).pack(side=LEFT, padx=1)
         ttk.Button(rbar, text="🎚 Limit Rotation…", bootstyle=(WARNING, OUTLINE),
                    command=self._limit_player).pack(side=LEFT, padx=(8, 1))
+        ttk.Button(rbar, text="🎺 Alternate Days…", bootstyle=(INFO, OUTLINE),
+                   command=self._alternate_player).pack(side=LEFT, padx=1)
         self._earn_hint = ttk.Label(
             rbar, text="Check “Full Rotation” once a player passes 5 assessments.",
             font=("Segoe UI", fs(8)), foreground=muted_fg())
@@ -384,31 +445,7 @@ class PercussionRotationView(ttk.Frame):
         return self._inv_cache
 
     def _load_inventory(self):
-        import json
-        raw = self.db.get_program_setting("mallet_inventory")
-        if raw:
-            try:
-                return pr._norm_inventory(json.loads(raw))
-            except Exception:
-                pass
-        # No list saved for this year yet: inherit from the most recent
-        # year that has one.  Buying a new marimba is rare — the room list
-        # carries forward indefinitely until the teacher edits it.
-        from lesson_plan_db import (list_available_school_years,
-                                    get_lesson_plan_db)
-        base_dir = os.path.dirname(os.path.abspath(self.db.db_path))
-        cur = self._year_from_db()
-        for y in list_available_school_years(base_dir):     # newest first
-            if y == cur:
-                continue
-            try:
-                raw = get_lesson_plan_db(base_dir, y).get_program_setting(
-                    "mallet_inventory")
-                if raw:
-                    return pr._norm_inventory(json.loads(raw))
-            except Exception:
-                continue
-        return None
+        return load_mallet_inventory(self.db)
 
     def _stations(self, g=None):
         """The section's own rotation stations, or None for the built-in ring."""
@@ -503,7 +540,8 @@ class PercussionRotationView(ttk.Frame):
         for r in rows:
             mallets_only = not r["full_rotation"]
             payload.append({"name": r["name"], "mallets_only": mallets_only,
-                            "allowed_stations": self._parse_allowed(r)})
+                            "allowed_stations": self._parse_allowed(r),
+                            **alt_fields(r)})
         return payload, rows
 
     @staticmethod
@@ -614,6 +652,9 @@ class PercussionRotationView(ttk.Frame):
             else:
                 rot = ("○  Mallets only (earning)" if is_entry
                        else "○  Mallets only")
+            alt = alt_fields(r)
+            if alt:
+                rot += f"  ·  🎺 {alt_summary(alt)}"
             self._roster.insert("", "end", iid=str(r["id"]), values=(r["name"], rot))
 
     # ───────────────────────────────────────────────────────── day controls ───
@@ -851,6 +892,28 @@ class PercussionRotationView(ttk.Frame):
             return
         val = json.dumps(dlg.allowed) if dlg.allowed else None
         self.db.update_percussion_student(pid, {"allowed_stations": val})
+        self._render()
+        self._roster.selection_set(str(pid))
+
+    def _alternate_player(self):
+        pid = self._selected_player_id()
+        if pid is None:
+            Messagebox.show_warning("Select a player first.",
+                                    title="No Selection", parent=self)
+            return
+        r = self._student_row(pid)
+        if not r:
+            return
+        cur = alt_fields(r)
+        dlg = _AlternateDaysDialog(self.winfo_toplevel(), r["name"],
+                                   cur.get("alt_instrument", ""),
+                                   cur.get("alt_odd", True))
+        self.wait_window(dlg)
+        if dlg.result is None:
+            return
+        inst, odd = dlg.result
+        self.db.update_percussion_student(
+            pid, {"alt_instrument": inst or None, "alt_odd": 1 if odd else 0})
         self._render()
         self._roster.selection_set(str(pid))
 
@@ -1830,6 +1893,82 @@ class _LimitStationsDialog(ttk.Toplevel):
     def _remove(self):
         self.allowed = None
         self.saved = True
+        self.destroy()
+
+
+class _AlternateDaysDialog(ttk.Toplevel):
+    """A player who plays percussion every other day and their concert
+    instrument on the days between: Trumpet, Marimba, Trumpet, Bells..."""
+
+    INSTRUMENTS = ["Flute", "Oboe", "Clarinet", "Bass Clarinet", "Bassoon",
+                   "Alto Sax", "Tenor Sax", "Bari Sax", "Trumpet",
+                   "French Horn", "Trombone", "Euphonium", "Tuba"]
+
+    def __init__(self, parent, name, instrument, odd):
+        super().__init__(master=parent)
+        self.result = None
+        self.title(f"Alternate Days — {name}")
+        self.resizable(False, False)
+        self.grab_set()
+        self.lift()
+
+        hdr = ttk.Frame(self, bootstyle=INFO)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text=f"🎺  {name} — alternate days",
+                  font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, INFO)).pack(pady=10, padx=16, anchor=W)
+
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
+        ttk.Label(body, text="Every other rotation day this student plays "
+                             "their concert instrument instead of percussion. "
+                             "On the days between, they pick up the percussion "
+                             "rotation where they left off.",
+                  font=("Segoe UI", 9), wraplength=400,
+                  justify=LEFT).pack(anchor=W)
+
+        ttk.Label(body, text="Other instrument:",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 0))
+        self._inst = tk.StringVar(value=instrument or "")
+        ttk.Combobox(body, textvariable=self._inst, values=self.INSTRUMENTS,
+                     width=24).pack(anchor=W, pady=(2, 0))
+
+        ttk.Label(body, text="Which days are for that instrument?",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 0))
+        self._odd = tk.BooleanVar(value=bool(odd))
+        ttk.Radiobutton(body, text="Odd days (Day 1, 3, 5…)",
+                        variable=self._odd, value=True).pack(anchor=W, pady=1)
+        ttk.Radiobutton(body, text="Even days (Day 2, 4, 6…)",
+                        variable=self._odd, value=False).pack(anchor=W, pady=1)
+        ttk.Label(body, text="Splitting several players between odd and even "
+                             "days keeps the section the same size every day.",
+                  font=("Segoe UI", 8), foreground=muted_fg(), wraplength=400,
+                  justify=LEFT).pack(anchor=W, pady=(4, 0))
+
+        btn = ttk.Frame(self)
+        btn.pack(fill=X, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Save", bootstyle=SUCCESS,
+                   command=self._save).pack(side=RIGHT, padx=4)
+        if instrument:
+            ttk.Button(btn, text="Percussion every day",
+                       bootstyle=(DANGER, OUTLINE),
+                       command=self._remove).pack(side=LEFT, padx=4)
+        from ui.theme import fit_window
+        fit_window(self, 450, 400)
+
+    def _save(self):
+        inst = self._inst.get().strip()
+        if not inst:
+            Messagebox.show_warning("Pick or type the other instrument.",
+                                    title="Instrument", parent=self)
+            return
+        self.result = (inst, self._odd.get())
+        self.destroy()
+
+    def _remove(self):
+        self.result = ("", True)
         self.destroy()
 
 

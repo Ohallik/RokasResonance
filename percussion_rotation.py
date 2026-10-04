@@ -363,6 +363,33 @@ def _limited_station(student, day, index):
     return allowed[(day - 1 + index) % len(allowed)]
 
 
+# ── Alternate-day players (a wind instrument AND percussion) ──────────────────
+# A trumpet player who also plays percussion spends every other rotation day on
+# the trumpet: Trumpet, Marimba, Trumpet, Bells, Trumpet, Xylophone...  Their
+# percussion only advances on their percussion days, so over two weeks they see
+# the same instruments a full-time percussionist sees in one.
+#
+# ``alt_instrument`` names the other instrument; ``alt_odd`` (default True)
+# puts it on the ODD rotation days, so day 1 is a trumpet day.  The cycle is
+# kept even whenever anyone alternates, so odd/even never flips at the wrap.
+
+def _is_alternating(student):
+    return bool((student.get("alt_instrument") or "").strip())
+
+
+def _on_concert_day(student, day):
+    odd = student.get("alt_odd", True)
+    return (day % 2 == 1) == bool(odd)
+
+
+def _percussion_day(student, day):
+    """How many percussion days this alternating player has had through
+    ``day`` -- the day number their own percussion rotation is on."""
+    if student.get("alt_odd", True):
+        return max(1, day // 2)
+    return max(1, (day + 1) // 2)
+
+
 def build_ring(n, class_type, stations=None):
     """Return the evenly-spread ring of seats for ``n`` full-rotation players.
 
@@ -397,23 +424,34 @@ def cycle_length(students, mallet_subrotation=True, inventory=None,
 
     Station-limited students (``allowed_stations``) sit outside both groups;
     their own list also has to complete within a cycle, so its length counts
-    too."""
+    too.
+
+    An alternate-day player only gets every other day on percussion, so the
+    part of the rotation they're in counts twice; and with anyone alternating
+    the cycle is rounded up to an even number so their trumpet days stay on
+    the same odd/even days round after round."""
     limited = [s for s in students if _is_limited(s)]
     rest = [s for s in students if not _is_limited(s)]
-    full_count = sum(1 for s in rest if not s.get("mallets_only"))
-    mo_count = sum(1 for s in rest if s.get("mallets_only"))
+    full = [s for s in rest if not s.get("mallets_only")]
+    mo = [s for s in rest if s.get("mallets_only")]
     inv = _reduce_inventory(inventory, _reserved_instruments(limited))
     custom = norm_stations(stations)
     ring_floor = max(MIN_RING, len(custom)) if custom else MIN_RING
     lengths = []
-    if full_count:
-        lengths.append(max(full_count, ring_floor))
-    if mo_count:
-        lengths.append(len(_mallet_slot_walk(mo_count, inv))
-                       if mallet_subrotation else 1)
+
+    def need(group, n):
+        lengths.append(n * (2 if any(_is_alternating(s) for s in group) else 1))
+    if full:
+        need(full, max(len(full), ring_floor))
+    if mo:
+        need(mo, len(_mallet_slot_walk(len(mo), inv))
+             if mallet_subrotation else 1)
     for s in limited:
-        lengths.append(len(s.get("allowed_stations") or []) or 1)
-    return max(lengths) if lengths else 1
+        need([s], len(s.get("allowed_stations") or []) or 1)
+    length = max(lengths) if lengths else 1
+    if length % 2 and any(_is_alternating(s) for s in students):
+        length += 1
+    return length
 
 
 # ── Mallet "family" by the scheck students grab (drives color + icon) ─────────
@@ -495,10 +533,46 @@ def day_assignments(students, day, class_type,
     Station-limited students (``allowed_stations``) always take one of their
     own allowed stations — they ignore the ring, the mallets-only walk, AND
     the special-day modes, since the limit is exactly what they can do.
+
+    Alternate-day players (``alt_instrument``) show that instrument on their
+    concert days and otherwise follow their usual rotation at half speed.
+
+    Whatever the mix, no specific mallet instrument ever holds more players
+    than the room's inventory allows: the full-time players keep their spot,
+    and anyone else who would overflow it (a student allowed several
+    instruments, an alternate-day player) moves to their next choice with
+    room, or to a practice pad.  Those flexible players take whichever open
+    station they've gone longest without, so an alternate-day learner still
+    gets around to every instrument.
     """
     if day < 1:
         day = 1
+    args = (students, class_type, mallet_subrotation, inventory, stations)
+    # Who played what on the earlier days of this cycle -- only the flexible
+    # players need it, so a plain section skips the replay entirely.
+    last = {}
+    if any(_flex_rank(s) >= 2 for s in students):
+        for d in range(1, day):
+            for s, st in zip(students, _assign_day(*args, d, MODE_NORMAL, last)):
+                last.setdefault(id(s), {})[st] = d
+    return [(s["name"], st) for s, st in
+            zip(students, _assign_day(*args, day, mode, last))]
 
+
+def _flex_rank(s):
+    """Settling order for the capacity pass: single-instrument locks, then
+    the full-time rotation, then students allowed several stations, then
+    alternate-day players."""
+    if _is_alternating(s):
+        return 3
+    if _is_limited(s):
+        return 0 if len(s.get("allowed_stations") or []) == 1 else 2
+    return 1
+
+
+def _assign_day(students, class_type, mallet_subrotation, inventory, stations,
+                day, mode, last):
+    """One day's stations, in ``students`` order (see day_assignments)."""
     # Limited students are handled first and pulled out of the normal pools.
     limited = [s for s in students if _is_limited(s)]
     limited_index = {id(s): k for k, s in enumerate(limited)}
@@ -509,14 +583,21 @@ def day_assignments(students, day, class_type,
 
     mo = [s for s in rest if s.get("mallets_only")]
     mo_index = {id(s): j for j, s in enumerate(mo)}
+    full = [s for s in rest if not s.get("mallets_only")]
+    ring = build_ring(len(full), class_type, stations)
+    rlen = len(ring)
+
+    def own_day(s):
+        return _percussion_day(s, day) if _is_alternating(s) else day
 
     def learner_station(s):
-        return _mallets_only_station(mo_index[id(s)], len(mo), day,
+        return _mallets_only_station(mo_index[id(s)], len(mo), own_day(s),
                                      inv, mallet_subrotation)
 
     station_by_id = {}
     for s in limited:
-        station_by_id[id(s)] = _limited_station(s, day, limited_index[id(s)])
+        station_by_id[id(s)] = _limited_station(s, own_day(s),
+                                                limited_index[id(s)])
 
     if mode == MODE_ALL_MALLETS:
         for s in rest:
@@ -526,18 +607,95 @@ def day_assignments(students, day, class_type,
         for s in rest:
             station_by_id[id(s)] = ALL_SNARE_LABEL
     else:
-        full = [s for s in rest if not s.get("mallets_only")]
-        ring = build_ring(len(full), class_type, stations)
-        rlen = len(ring)
         # Full-rotation players take ring seats by position; a Mallets seat
         # stays generic "Mallets" (free choice of any open mallet instrument).
         for i, s in enumerate(full):
-            station_by_id[id(s)] = ring[(day - 1 + i) % rlen] if rlen else MALLETS
+            station_by_id[id(s)] = (ring[(own_day(s) - 1 + i) % rlen]
+                                    if rlen else MALLETS)
         # Still-learning players get a specific instrument, cycling all types.
         for s in mo:
             station_by_id[id(s)] = learner_station(s)
 
-    return [(s["name"], station_by_id[id(s)]) for s in students]
+    # An alternate-day player on their concert day isn't in the percussion
+    # section at all today.
+    away = {id(s) for s in students
+            if _is_alternating(s) and _on_concert_day(s, day)}
+    for s in students:
+        if id(s) in away:
+            station_by_id[id(s)] = s["alt_instrument"].strip()
+
+    _fit_capacity(students, station_by_id, away, inventory, ring,
+                  mode, mallet_subrotation, inv, len(mo), last)
+    return [station_by_id[id(s)] for s in students]
+
+
+def _fit_capacity(students, station_by_id, away, inventory, ring, mode,
+                  mallet_subrotation, walk_inv, mo_count, last):
+    """Move players off anything over-full, in place.
+
+    Two things are limited: each specific mallet instrument (the room's
+    inventory), and each seat of the full-rotation ring (one drum set, one
+    BD/SD...).  Full-time players settle first, so the walk and the ring keep
+    their usual even spread; students allowed several stations and
+    alternate-day players settle last and take what's left."""
+    caps = {}
+    for name, cap in _norm_inventory(inventory):
+        caps[name] = caps.get(name, 0) + cap
+    ring_caps = {}
+    if mode == MODE_NORMAL:
+        for label in ring:
+            ring_caps[label] = ring_caps.get(label, 0) + 1
+    ring_ids = {id(s) for s in students
+                if not _is_limited(s) and not s.get("mallets_only")}
+    used, ring_used = {}, {}
+
+    def fits(sid, label):
+        if label in caps and used.get(label, 0) >= caps[label]:
+            return False
+        if (sid in ring_ids and label in ring_caps
+                and ring_used.get(label, 0) >= ring_caps[label]):
+            return False
+        return True
+
+    def take(sid, label):
+        station_by_id[sid] = label
+        if label in caps:
+            used[label] = used.get(label, 0) + 1
+        if sid in ring_ids and label in ring_caps:
+            ring_used[label] = ring_used.get(label, 0) + 1
+
+    def rotated(seq, start):
+        if start in seq:
+            k = seq.index(start)
+            seq = seq[k:] + seq[:k]
+        out = []
+        for x in seq:
+            if x not in out:
+                out.append(x)
+        return out
+
+    def choices(s):
+        want = station_by_id[id(s)]
+        if _is_limited(s):
+            return rotated(list(s.get("allowed_stations") or []), want), PAD
+        if s.get("mallets_only"):
+            if mode == MODE_ALL_SNARE or not mallet_subrotation:
+                return [want], want
+            return rotated(_mallet_slot_walk(mo_count, walk_inv), want), PAD
+        if mode == MODE_NORMAL and ring:
+            return rotated(list(ring), want), want
+        return [want], want
+
+    order = sorted((s for s in students if id(s) not in away), key=_flex_rank)
+    for s in order:
+        sid = id(s)
+        opts, fallback = choices(s)
+        open_ = [o for o in opts if fits(sid, o)]
+        if open_ and _flex_rank(s) >= 2:
+            # Longest since they last played it wins; never-played first.
+            seen = last.get(sid, {})
+            open_.sort(key=lambda o: seen.get(o, 0))
+        take(sid, open_[0] if open_ else fallback)
 
 
 def full_grid(students, class_type, days=None,

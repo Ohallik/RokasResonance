@@ -968,7 +968,7 @@ class InventoryManager(ttk.Frame):
         lb = tk.Listbox(win, font=("Segoe UI", 9), height=min(len(active), 10), width=48)
         lb.pack(fill=BOTH, expand=True, padx=16)
         for a in active:
-            lb.insert(END, f"{a.get('student_name') or '?'}   (out {a.get('date_assigned') or '—'})")
+            lb.insert(END, f"{display_person(a.get('student_name') or '') or '?'}   (out {a.get('date_assigned') or '—'})")
         lb.selection_set(0)
         result = {"c": None}
 

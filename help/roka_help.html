@@ -411,8 +411,10 @@
     <li>Press <span class="btn-ref">📤 Check Out</span>.</li>
     <li>Pick the student from the list and check the return date. The list holds
     the children at that instrument's own school, so a Medina cello cannot go
-    out to a child at Clyde Hill by mistake. Start typing to narrow it.</li>
-    <li>Leave the rental fee checked unless this student has already paid.</li>
+    out to a child at Clyde Hill by mistake. Start typing a first or last
+    name and the matches appear right under the box, best first: Enter takes
+    the highlighted one, or use the down arrow to pick another.</li>
+    <li>Pick the rental fee: school year, summer, or another amount.</li>
   </ol>
   <p>Checking in is the same, with <span class="btn-ref">📥 Check In</span>.</p>
 
@@ -444,6 +446,9 @@
   waive or mark these paid in <a href="#budget">Budget</a>, under Student Fees.</p>
   <p>Summer rentals are a separate, cheaper fee (20 dollars unless you have
   changed it).</p>
+  <p>For anything else, pick <b>Other amount</b> and type it in (a late start,
+  a reduced fee). Typing 0 records the loan as free: it shows as a waived fee,
+  so it will not turn up later under Missing fees.</p>
 
   <h3>Other things on this screen</h3>
   <ul>
@@ -953,7 +958,14 @@
       <b>n/a</b> for a loan that never needs one (a pair of sticks). Or select
       several and use <span class="btn-ref">📄 Contract in</span>,
       <span class="btn-ref">📄 Not needed</span> or
-      <span class="btn-ref">📄 Still missing</span></li>
+      <span class="btn-ref">📄 Still missing</span>. Contracts and instruments
+      only appear on rental fees.</li>
+    <li>A fee for something students wear (a polo, a concert shirt, a
+      hoodie) gets a <b>Size</b> column instead. Click a row's Size and type
+      it right there: "am" becomes Adult M, "yl" Youth L, "2xl" Adult 2XL.
+      Enter or the down arrow saves and moves to the next student (up arrow
+      goes back), so a whole class goes in without leaving the keyboard. Sort
+      by it or export it for the order.</li>
     <li>Change what each fee type costs with
       <span class="btn-ref">Manage Fee Types</span></li>
     <li>Filter by class period, and click any column heading to sort — the
@@ -1029,7 +1041,10 @@
   <ol class="steps">
     <li>Choose the class period, or combine ensembles for a concert.</li>
     <li>Set how many seats are in each row and how you want students sorted.</li>
-    <li><span class="btn-ref">Save</span> the chart so it comes back next time.</li>
+    <li><span class="btn-ref">Save</span> the chart so it comes back next time.
+    If you close Teacher Tools (or Roka) with changes you haven't saved, it
+    asks whether to save the chart first. A chart you just saved, or only
+    opened, closes without asking.</li>
   </ol>
 
   <p>Rows are color coded to match velcro carpet markers.
@@ -1238,6 +1253,11 @@
       in play.</li>
     <li><span class="btn-ref">🎚 Limit Rotation…</span> keeps a particular student
       off a particular station.</li>
+    <li><span class="btn-ref">🎺 Alternate Days…</span> is for a student who
+      plays percussion every other day and a wind instrument on the days
+      between (Trumpet, Marimba, Trumpet, Bells…). Pick the instrument and
+      whether it is on the odd or even days; on their percussion days they
+      carry on through the rotation where they left off.</li>
     <li><span class="btn-ref">⭐ Special Day…</span> overrides one day, for a
       concert or an assembly.</li>
     <li><span class="btn-ref">🗓 Full Grid</span> shows the whole cycle at once,
@@ -1463,12 +1483,19 @@
       agenda, so the section can see where they are without asking.
       <span class="btn-ref">⏸ Pause</span> on that pane skips a day the
       section is not on instruments; the rotation holds and picks up next
-      class.</li>
+      class. Click the <b>Day 4 of 11</b> line to move the rotation to a
+      different day (say, back to Day 1); it carries on from there.</li>
     <li>A jazz class shows its rhythm-section warm-up rotation in the same
       spot, with the same <span class="btn-ref">⏸ Pause</span>, plus
       <span class="btn-ref">⭐ Special…</span> to hand-pick who sits where
-      today (a guest drummer, one pianist with one bassist). A special day
-      holds the rotation the way a paused one does.</li>
+      today (a guest drummer, one pianist with one bassist) and
+      <span class="btn-ref">✎ Day</span> to move the rotation to another day.
+      A special day holds the rotation the way a paused one does.</li>
+    <li><b>Meets:</b> beside the week strip says which weekdays this class
+      meets. Untick the rest for a jazz band that meets on Tuesdays only, or a
+      weekly after-school ensemble: the days step from meeting to meeting and
+      the rotation only moves on days the group actually meets. Each jazz band
+      keeps its own days.</li>
     <li>The banner shows how long until this class next performs, counted from
       its own concerts on the planner, not another class's.</li>
   </ul>

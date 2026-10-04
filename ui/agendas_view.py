@@ -392,14 +392,17 @@ class AgendasView(ttk.Frame):
         cyc = self._jazz_cycle()
         if cyc <= 0:
             return 1
-        cal = self._calendar()
-        if cal:
-            idx = scal.school_day_index(cal, self._date)
-        else:
-            start, _end = self._year_bounds()
-            idx = spine._school_days_between(start, self._date)
-        idx -= self._jazz_held_before_today()
-        return ((idx - 1) % cyc) + 1
+        held = self._load_jazz_pause_set() | set(self._load_jazz_specials())
+        n = self._rotation_count(held, self._load_anchors(self._jazz_anchor_key()))
+        return ((n - 1) % cyc) + 1
+
+    def _jazz_anchor_key(self):
+        eid = self._jazz_eid
+        return f"agenda_jazz_anchor_{eid}" if eid else "agenda_jazz_anchor_none"
+
+    def _set_jazz_day(self):
+        self._ask_rotation_day(self._jazz_anchor_key(), self._jazz_day(),
+                               self._jazz_cycle())
 
     def _jazz_rotation(self):
         """Today's rhythm-section board: nothing on a paused day, the hand-set
@@ -495,12 +498,6 @@ class AgendasView(ttk.Frame):
         if m.pop(self._date.isoformat(), None) is not None:
             self.db.set_program_setting(self._jazz_special_key(), json.dumps(m))
 
-    def _jazz_held_before_today(self):
-        """Rotation slots to give back: paused and special days already gone."""
-        iso = self._date.isoformat()
-        held = self._load_jazz_pause_set() | set(self._load_jazz_specials())
-        return sum(1 for d in held if d < iso)
-
     def _edit_jazz_special(self):
         """Set (or clear) today's hand-picked rhythm section."""
         import jazz_rotation as jr
@@ -571,7 +568,7 @@ class AgendasView(ttk.Frame):
             side=RIGHT, padx=(10, 2))
         bg_combo.bind("<<ComboboxSelected>>", self._on_bg_change)
 
-        nav = ttk.Frame(self)
+        nav = WrapBar(self)
         nav.pack(fill=X, padx=10, pady=(6, 0))
 
         def navbtn(text, cmd, w=4):
@@ -596,8 +593,16 @@ class AgendasView(ttk.Frame):
                                   foreground=muted_fg())
         self._ctx_lbl.pack(fill=X, padx=12, pady=(2, 0))
 
-        self._week_bar = ttk.Frame(self)
-        self._week_bar.pack(fill=X, padx=10, pady=(4, 0))
+        wk_row = WrapBar(self)
+        wk_row.pack(fill=X, padx=10, pady=(4, 0))
+        self._week_bar = ttk.Frame(wk_row)
+        self._week_bar.pack(side=LEFT)
+        # Which weekdays this class meets.  A jazz band that meets Tuesdays
+        # only, or a weekly after-school ensemble, unticks the rest: its
+        # days skip straight from meeting to meeting and its rotation only
+        # moves on days it actually meets.
+        self._meets_bar = ttk.Frame(wk_row)
+        self._meets_bar.pack(side=RIGHT, padx=(0, 4))
 
         self._canvas = tk.Canvas(self, highlightthickness=0)
         vsb = ttk.Scrollbar(self, orient=VERTICAL, command=self._canvas.yview)
@@ -624,14 +629,11 @@ class AgendasView(ttk.Frame):
     # ─────────────────────────────────────────────────────────── data / ctx ───
 
     def refresh(self):
+        self.__dict__.pop("_meets_cache", None)
         if self._is_jazz:
             self._sync_jazz_selection()
-        cal = self._calendar()
-        if cal and not scal.is_school_day(cal, self._date):
-            nd = scal.next_school_day(cal, self._date) or \
-                scal.prev_school_day(cal, self._date)
-            if nd:
-                self._date = nd
+        if not self._is_class_day(self._date):
+            self._date = self._snap(self._date)
         self._load_day()
         self._render()
 
@@ -639,11 +641,10 @@ class AgendasView(ttk.Frame):
         return scal.get_calendar(self._year())
 
     def _snap(self, d):
-        cal = self._calendar()
-        if cal:
-            return (scal.next_school_day(cal, d) or
-                    scal.prev_school_day(cal, d) or _snap_weekday(d))
-        return _snap_weekday(d)
+        """``d``, or the class's next meeting (its last one, past the end of
+        the year)."""
+        return (self._step_class_day(d, 1) or self._step_class_day(d, -1)
+                or _snap_weekday(d))
 
     def _year(self):
         base = os.path.basename(self.db.db_path)
@@ -897,21 +898,22 @@ class AgendasView(ttk.Frame):
 
     # ─────────────────────────────────────────────────────────── navigation ───
 
+    def _step_class_day(self, d, step):
+        """The nearest day this class meets, from ``d`` in direction ``step``
+        (d itself counts), or None past the end of the year."""
+        start, end = self._year_bounds()
+        d = min(max(d, start), end)
+        while start <= d <= end:
+            if self._is_class_day(d):
+                return d
+            d += timedelta(days=step)
+        return None
+
     def _shift_day(self, delta):
-        cal = self._calendar()
-        if cal:
-            step = timedelta(days=1)
-            nd = (scal.next_school_day(cal, self._date + step) if delta > 0
-                  else scal.prev_school_day(cal, self._date - step))
-            if nd:
-                self._date = nd
-        else:
-            d = self._date
-            for _ in range(14):
-                d += timedelta(days=delta)
-                if d.weekday() < 5:
-                    break
-            self._date = d
+        step = 1 if delta > 0 else -1
+        nd = self._step_class_day(self._date + timedelta(days=step), step)
+        if nd:
+            self._date = nd
         self.refresh()
 
     def _shift_week(self, delta):
@@ -1291,6 +1293,7 @@ class AgendasView(ttk.Frame):
             text="Saved ✓" if self._saved else "Auto-generated (unsaved)")
         self._ctx_lbl.config(text=self._curriculum_line())
         self._render_section_toggle()
+        self._render_meets_bar()
         self._render_week_bar()
         self._img_refs = []
         for w in self._inner.winfo_children():
@@ -1332,6 +1335,19 @@ class AgendasView(ttk.Frame):
             parts.append(f"school day {scal.school_day_index(cal, self._date)}")
         return "    ·    ".join(parts)
 
+    def _render_meets_bar(self):
+        for w in self._meets_bar.winfo_children():
+            w.destroy()
+        meets = self._meets() or set(range(5))
+        ttk.Label(self._meets_bar, text="Meets:",
+                  font=("Segoe UI", fs(9))).pack(side=LEFT, padx=(0, 4))
+        for wd, lbl in enumerate(WEEKDAYS):
+            on = wd in meets
+            ttk.Button(self._meets_bar, text=lbl[:2], width=3,
+                       bootstyle=(SECONDARY if on else (SECONDARY, OUTLINE)),
+                       command=lambda w=wd: self._toggle_meets(w)
+                       ).pack(side=LEFT, padx=1)
+
     def _render_week_bar(self):
         for w in self._week_bar.winfo_children():
             w.destroy()
@@ -1342,6 +1358,11 @@ class AgendasView(ttk.Frame):
             if cal and not scal.is_school_day(cal, d):
                 _tk(tk.Label, self._week_bar, text=f"{lbl} {d.day}\nno school",
                     width=8, fg=muted_fg(),
+                    font=("Segoe UI", fs(8))).pack(side=LEFT, padx=2)
+                continue
+            if not self._meets_on(d):
+                _tk(tk.Label, self._week_bar, text=f"{lbl} {d.day}\ndoesn't meet",
+                    width=10, fg=muted_fg(),
                     font=("Segoe UI", fs(8))).pack(side=LEFT, padx=2)
                 continue
             selected = (d == self._date)
@@ -1476,15 +1497,21 @@ class AgendasView(ttk.Frame):
         # bootstyle, not foreground: "warning" is a ttkbootstrap style name, and
         # handing it to foreground raises TclError mid-render, which takes the
         # whole agenda down with it.
-        lbl = ttk.Label(status,
-                        text=("Rotation paused" if paused else
-                              (f"Day {day} of {cycle}" if cycle else "No players")),
-                        font=("Segoe UI", fs(8), "bold"))
-        if paused:
-            lbl.configure(bootstyle=WARNING)
+        if cycle and not paused:
+            # The day number is the control: click it to move the rotation
+            # to another day, which it then carries on from.
+            ttk.Button(status, text=f"Day {day} of {cycle} ✎",
+                       bootstyle=(INFO, LINK), padding=0,
+                       command=self._set_perc_day).pack(side=LEFT)
         else:
-            lbl.configure(foreground=muted_fg())
-        lbl.pack(side=LEFT)
+            lbl = ttk.Label(status,
+                            text="Rotation paused" if paused else "No players",
+                            font=("Segoe UI", fs(8), "bold"))
+            if paused:
+                lbl.configure(bootstyle=WARNING)
+            else:
+                lbl.configure(foreground=muted_fg())
+            lbl.pack(side=LEFT)
         ttk.Button(status, text=("▶ Resume" if paused else "⏸ Pause"),
                    bootstyle=((WARNING, OUTLINE) if paused else (SECONDARY, OUTLINE)),
                    command=self._toggle_perc_pause).pack(side=RIGHT)
@@ -1556,6 +1583,9 @@ class AgendasView(ttk.Frame):
                        bootstyle=((WARNING, OUTLINE) if special
                                   else (SECONDARY, OUTLINE)),
                        command=self._edit_jazz_special).pack(side=RIGHT, padx=(0, 4))
+        if not paused and not special:
+            ttk.Button(ctl, text="✎ Day", bootstyle=(INFO, OUTLINE),
+                       command=self._set_jazz_day).pack(side=RIGHT, padx=(0, 4))
         if paused:
             ttk.Label(body, text="No rotation today — it holds and picks up "
                                  "here next class.",
@@ -2651,19 +2681,18 @@ class AgendasView(ttk.Frame):
                     allowed = v if isinstance(v, list) and v else None
             except Exception:
                 allowed = None
+            from ui.percussion_rotation_view import alt_fields
             out.append({"name": r["name"],
                         "mallets_only": is_entry and not r["full_rotation"],
-                        "allowed_stations": allowed})
+                        "allowed_stations": allowed, **alt_fields(r)})
         return out
 
     def _perc_inventory(self):
-        raw = self.db.get_program_setting("mallet_inventory")
-        if raw:
-            try:
-                return pr._norm_inventory(json.loads(raw))
-            except Exception:
-                pass
-        return None
+        # Same lookup as the Percussion tab, including inheriting last
+        # year's list -- reading only this year's setting put the agenda on
+        # the built-in room (3 bell sets) while the tab honored hers.
+        from ui.percussion_rotation_view import load_mallet_inventory
+        return load_mallet_inventory(self.db)
 
     @staticmethod
     def _perc_stations(group):
@@ -2725,27 +2754,149 @@ class AgendasView(ttk.Frame):
                                     json.dumps(sorted(paused)))
         self.refresh()
 
-    def _paused_before_today(self):
-        """Rotation slots to give back: paused days already gone by."""
-        iso = self._date.isoformat()
-        return sum(1 for d in self._load_pause_set() if d < iso)
+    def _perc_anchor_key(self):
+        sid = self._section_id()
+        return (f"agenda_perc_anchor_{sid}" if sid is not None
+                else "agenda_perc_anchor_none")
 
-    def _rotation_day(self, payload, group=None):
-        cal = self._calendar()
-        if cal:
-            idx = scal.school_day_index(cal, self._date)
-        else:
-            start, _end = self._year_bounds()
-            idx = spine._school_days_between(start, self._date)
-        idx -= self._paused_before_today()
-        cycle = pr.cycle_length(
+    def _perc_cycle(self, payload, group):
+        return pr.cycle_length(
             payload, mallet_subrotation=self._perc_subrotation(group),
             inventory=self._perc_inventory(),
             stations=self._perc_stations(group),
             class_type=(group["class_type"] if group else None))
+
+    def _rotation_day(self, payload, group=None):
+        cycle = self._perc_cycle(payload, group)
         if cycle <= 0:
             return 1, 1
-        return ((idx - 1) % cycle) + 1, cycle
+        n = self._rotation_count(self._load_pause_set(),
+                                 self._load_anchors(self._perc_anchor_key()))
+        return ((n - 1) % cycle) + 1, cycle
+
+    def _set_perc_day(self):
+        group = self._section_group()
+        payload = self._perc_payload(group) if group else []
+        if not payload:
+            return
+        day, cycle = self._rotation_day(payload, group)
+        self._ask_rotation_day(self._perc_anchor_key(), day, cycle)
+
+    # ── rotation day counting, shared by percussion and jazz ─────────────────
+    # A rotation advances one step per class meeting.  It holds on a paused
+    # day, skips days the class doesn't meet (Jazz 2 on Tuesdays only), and
+    # can be set to a particular day ("Day 1 from today") -- after which it
+    # carries on from there.
+
+    def _meets_key(self):
+        return f"agenda_meets_{self._group}"
+
+    def _meets(self):
+        """Weekdays this class meets (0 = Mon), or None for every school day.
+        Cached per storage key: the day counting asks once per calendar day."""
+        key = self._meets_key()
+        cache = self.__dict__.setdefault("_meets_cache", {})
+        if key not in cache:
+            cache[key] = self._read_meets(key)
+        return cache[key]
+
+    def _read_meets(self, key):
+        raw = self.db.get_program_setting(key)
+        if not raw:
+            return None
+        try:
+            vals = {int(x) for x in json.loads(raw)}
+        except (ValueError, TypeError):
+            return None
+        vals &= set(range(5))
+        return vals if vals and vals != set(range(5)) else None
+
+    def _toggle_meets(self, wd):
+        cur = self._meets() or set(range(5))
+        cur ^= {wd}
+        if not cur:
+            return                    # a class has to meet SOME day
+        self.db.set_program_setting(
+            self._meets_key(),
+            "" if cur == set(range(5)) else json.dumps(sorted(cur)))
+        self.__dict__.pop("_meets_cache", None)
+        self._date = self._snap(self._date)
+        self.refresh()
+
+    def _meets_on(self, d):
+        m = self._meets()
+        return m is None or d.weekday() in m
+
+    def _is_class_day(self, d):
+        cal = self._calendar()
+        if cal:
+            ok = scal.is_school_day(cal, d)
+        else:
+            ok = d.weekday() < 5
+        return ok and self._meets_on(d)
+
+    def _meeting_index(self, d):
+        """1-based count of this class's meetings from the first day of
+        school through ``d``."""
+        cal = self._calendar()
+        if self._meets() is None:
+            if cal:
+                return scal.school_day_index(cal, d)
+            start, _end = self._year_bounds()
+            return spine._school_days_between(start, d)
+        start, _end = self._year_bounds()
+        n, cur = 0, start
+        while cur <= d:
+            if self._is_class_day(cur):
+                n += 1
+            cur += timedelta(days=1)
+        return n
+
+    def _load_anchors(self, key):
+        """{iso date: rotation day} -- days the teacher set by hand."""
+        raw = self.db.get_program_setting(key)
+        if not raw:
+            return {}
+        try:
+            m = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+        return ({k: int(v) for k, v in m.items()}
+                if isinstance(m, dict) else {})
+
+    def _rotation_count(self, held, anchors):
+        """Rotation steps through today, not yet wrapped by the cycle.
+
+        Held (paused) days give their step back.  The latest day set by hand
+        on or before today restarts the count there."""
+        iso = self._date.isoformat()
+        held = {h for h in held
+                if h <= iso and (_parse_date(h) is None
+                                 or self._is_class_day(_parse_date(h)))}
+        idx = self._meeting_index(self._date)
+        past = [a for a in anchors if a <= iso]
+        if past:
+            a = max(past)
+            ad = _parse_date(a)
+            base = self._meeting_index(ad) if ad else idx
+            gone = sum(1 for h in held if a <= h < iso)
+            return anchors[a] + (idx - base) - gone
+        return idx - sum(1 for h in held if h < iso)
+
+    def _ask_rotation_day(self, key, day, cycle):
+        anchors = self._load_anchors(key)
+        iso = self._date.isoformat()
+        dlg = _SetDayDialog(self.winfo_toplevel(), self._date, day, cycle,
+                            has_anchor=iso in anchors)
+        self.wait_window(dlg)
+        if dlg.result is None:
+            return
+        if dlg.result == "auto":
+            anchors.pop(iso, None)
+        else:
+            anchors[iso] = int(dlg.result)
+        self.db.set_program_setting(key, json.dumps(anchors) if anchors else "")
+        self.refresh()
 
     def _perc_assignments(self, group):
         payload = self._perc_payload(group)
@@ -2775,6 +2926,63 @@ class AgendasView(ttk.Frame):
         self._present = None
         self._load_day()
         self._render()
+
+
+class _SetDayDialog(ttk.Toplevel):
+    """Move a rotation to a particular day ("Day 4" -> "Day 1").  From this
+    date on it continues forward from the day picked."""
+
+    def __init__(self, parent, day_date, day, cycle, has_anchor=False):
+        super().__init__(master=parent)
+        self.result = None
+        self.title("Set Rotation Day")
+        self.resizable(False, False)
+        self.grab_set()
+        self.lift()
+
+        body = ttk.Frame(self, padding=16)
+        body.pack(fill=BOTH, expand=True)
+        ttk.Label(body, text=f"{day_date.strftime('%A, %B ')}{day_date.day}",
+                  font=("Segoe UI", fs(11), "bold")).pack(anchor=W)
+        row = ttk.Frame(body)
+        row.pack(anchor=W, pady=(10, 4))
+        ttk.Label(row, text="Today is Day",
+                  font=("Segoe UI", fs(10))).pack(side=LEFT)
+        self._var = tk.StringVar(value=str(day))
+        spin = ttk.Spinbox(row, from_=1, to=max(1, cycle), width=4,
+                           textvariable=self._var, wrap=True)
+        spin.pack(side=LEFT, padx=6)
+        ttk.Label(row, text=f"of {cycle}",
+                  font=("Segoe UI", fs(10))).pack(side=LEFT)
+        ttk.Label(body, text="The rotation carries on from here: the next "
+                             "class is the day after this one.",
+                  font=("Segoe UI", fs(8)), foreground=muted_fg(),
+                  wraplength=300, justify=LEFT).pack(anchor=W)
+        self._cycle = max(1, cycle)
+
+        btn = ttk.Frame(body)
+        btn.pack(fill=X, pady=(14, 0))
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Save", bootstyle=SUCCESS,
+                   command=self._save).pack(side=RIGHT, padx=4)
+        if has_anchor:
+            ttk.Button(btn, text="Undo for today", bootstyle=(DANGER, OUTLINE),
+                       command=self._auto).pack(side=LEFT, padx=4)
+        spin.focus_set()
+        spin.bind("<Return>", lambda e: self._save())
+
+    def _save(self):
+        try:
+            n = int(self._var.get())
+        except (TypeError, ValueError):
+            return
+        self.result = min(max(1, n), self._cycle)
+        self.destroy()
+
+    def _auto(self):
+        self.result = "auto"
+        self.destroy()
 
 
 class _JazzSpecialDialog(ttk.Toplevel):

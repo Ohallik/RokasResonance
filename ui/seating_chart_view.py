@@ -106,6 +106,46 @@ class SeatingChartView(ttk.Frame):
         self._refresh_chart_list()
         self._update_roster_label()
         self._regenerate()
+        self._mark_clean()
+
+    # ── unsaved-chart check ──────────────────────────────────────────────────
+    # Compared, not flagged: the arrangement (and name) as last saved, loaded
+    # or freshly generated, against what's on screen now.  A chart saved ten
+    # seconds ago matches and never prompts; one hand-arranged since does,
+    # however the change was made.
+
+    def _signature(self):
+        try:
+            return json.dumps({"layout": self._layout_ids(),
+                               "name": self._name_var.get().strip()},
+                              sort_keys=True, default=str)
+        except Exception:
+            return None
+
+    def _mark_clean(self):
+        self._clean_sig = self._signature()
+
+    def has_unsaved_changes(self):
+        """True when a chart with people in it differs from its last save
+        (or, for a chart never saved, from how it was first generated)."""
+        base = getattr(self, "_clean_sig", None)
+        if base is None or not self._has_arrangement():
+            return False
+        return self._signature() != base
+
+    def save_before_closing(self):
+        """Offer to save an unsaved chart.  False means stay open (Cancel,
+        or the save didn't happen)."""
+        if not self.has_unsaved_changes():
+            return True
+        name = self._name_var.get().strip() or "Untitled Chart"
+        ans = Messagebox.yesnocancel(
+            f"Do you want to save the seating chart “{name}” before leaving?",
+            title="Unsaved Seating Chart", parent=self)
+        if ans == "Yes":
+            self._save_chart()
+            return not self.has_unsaved_changes()
+        return ans == "No"
 
     # ─────────────────────────────────────────────────────────────── build ────
 
@@ -1409,6 +1449,7 @@ class SeatingChartView(ttk.Frame):
             layout = None
         self._regenerate(from_layout=layout)
         self._dirty = False
+        self._mark_clean()
 
     def _apply_program_defaults(self):
         """Turn off the options that belong to another program.
@@ -1441,6 +1482,7 @@ class SeatingChartView(ttk.Frame):
         self._chart_var.set("")
         self._update_roster_label()
         self._regenerate()
+        self._mark_clean()
 
     def _has_arrangement(self):
         """Is anybody actually seated?  An empty grid has nothing to keep."""
@@ -1499,6 +1541,7 @@ class SeatingChartView(ttk.Frame):
                                   title="Save Failed", parent=self)
             return
         self._dirty = False
+        self._mark_clean()
         self._refresh_chart_list()
         self._chart_var.set(name)
         Messagebox.show_info("Seating chart saved.", title="Saved", parent=self)
@@ -1767,6 +1810,9 @@ class SeatingChartView(ttk.Frame):
         return False
 
     def refresh(self):
+        # Roster changes picked up here aren't the teacher's edits: a chart
+        # that was clean before the refresh stays clean after it.
+        was_clean = not self.has_unsaved_changes()
         self._refresh_chart_list()
         # Coming back to this tab must not scrap hand-placed seating.  The
         # arrangement on screen reflows exactly as it is, picking up roster
@@ -1781,6 +1827,8 @@ class SeatingChartView(ttk.Frame):
             self._regenerate(from_layout=self._layout_ids())
         else:
             self._regenerate()
+        if was_clean:
+            self._mark_clean()
 
 
 # ══════════════════════════════════════════════════════════════ dialogs ══════

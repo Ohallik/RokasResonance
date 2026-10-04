@@ -12,7 +12,7 @@ from ttkbootstrap.constants import *
 from collections import Counter
 from datetime import date
 from ui.theme import fs
-from ui.names import display_full, display_last_first
+from ui.names import display_full, display_last_first, display_person
 
 
 # The hand-written UI reference that used to live here has been removed.
@@ -179,7 +179,7 @@ def _build_inventory_summary(db) -> str:
             lines.append(f"\nActive checkouts ({len(checkouts)} total):")
             for c in checkouts:
                 line = (
-                    f"  {c.get('student_name') or '?'} — "
+                    f"  {display_person(c.get('student_name') or '') or '?'} — "
                     f"{c.get('description') or '?'}"
                     + (f" [{c.get('barcode') or c.get('district_no') or ''}]" if (c.get('barcode') or c.get('district_no')) else "")
                     + (f" (since {c['date_assigned']})" if c.get('date_assigned') else "")
@@ -396,7 +396,7 @@ def _build_uniform_summary(db) -> str:
         if out:
             lines.append(f"Currently assigned ({len(out)}):")
             for c in out[:200]:
-                who = c.get("student_name") or "?"
+                who = display_person(c.get("student_name") or "") or "?"
                 what = " ".join(str(x) for x in (c.get("garment_type"),
                                                  c.get("size"),
                                                  c.get("item_number")) if x)
@@ -847,7 +847,7 @@ class ChatDialog(ttk.Toplevel):
                 parts.append(f"  Last serviced: {inst.get('last_service')}")
             if active:
                 parts.append(
-                    f"  Checked out to: {active['student_name']} since {active['date_assigned']}"
+                    f"  Checked out to: {display_person(active['student_name'])} since {active['date_assigned']}"
                 )
             else:
                 parts.append("  Status: Available")

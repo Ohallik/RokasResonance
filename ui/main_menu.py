@@ -10,6 +10,7 @@ from ttkbootstrap.constants import *
 from PIL import Image, ImageTk
 from ui.theme import (fs, muted_fg, subtle_fg, link_fg, register_nav_styles,
                       nav_color, best_fg)
+from ui.names import display_person
 
 # Earlier builds kept choir and orchestra repertoire in their own files beside
 # the profile database.  Switching program type then swapped the Music Manager
@@ -1193,8 +1194,14 @@ class MainMenu(ttk.Frame):
         # window when it has run: the hub can move itself to the new year, but
         # it cannot know about an open Student Manager showing the old one.
         hub.bind("<<YearRolledOver>>", lambda e: self._after_year_rollover())
-        win.protocol("WM_DELETE_WINDOW",
-                     lambda: self._on_child_close("lesson_plans"))
+        # An unsaved seating chart gets one "save it first?" on the way out,
+        # here and when the whole app closes (main.py looks for win._hub).
+        win._hub = hub
+
+        def close():
+            if hub.confirm_close():
+                self._on_child_close("lesson_plans")
+        win.protocol("WM_DELETE_WINDOW", close)
         self._windows["lesson_plans"] = win
 
     def _open_active_checkouts(self):
@@ -1239,7 +1246,7 @@ class MainMenu(ttk.Frame):
                 is_item = not c["instrument_id"]
                 label = (c["description"] or "") + ("  (item)" if is_item else "")
                 tree.insert("", "end", iid=f"co:{c['id']}", values=(
-                    c["student_name"] or "",
+                    display_person(c["student_name"] or ""),
                     label,
                     c["category"] or "",
                     c["barcode"] or c["district_no"] or "",

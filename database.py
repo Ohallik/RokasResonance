@@ -12,6 +12,25 @@ import time
 from datetime import datetime
 
 
+def _display_person(name):
+    """A stored full name without middle initials, for anything shown
+    (see ui/names.py; the raw name stays in the record for matching)."""
+    try:
+        from ui.names import display_person
+        return display_person(name)
+    except Exception:
+        return (name or "").strip()
+
+
+def _display_full(row):
+    """First (or preferred) + last name for display, no middle initial."""
+    try:
+        from ui.names import display_full
+        return display_full(row)
+    except Exception:
+        return f"{row.get('first_name') or ''} {row.get('last_name') or ''}".strip()
+
+
 def school_name_variants(school_name: str):
     """Ways the teacher's school may be written in front of an ensemble name.
     'Chinook Middle School' -> ['Chinook Middle School', 'Chinook MS',
@@ -689,8 +708,10 @@ class Database:
             # it in for fees written before this existed).  contract_received
             # tracks the signed rental contract, which the office wants along
             # with the money.
+            # size is the shirt size ordered, for a polo or concert-shirt fee.
             for col, decl in (("checkout_id", "INTEGER"),
-                              ("contract_received", "INTEGER DEFAULT 0")):
+                              ("contract_received", "INTEGER DEFAULT 0"),
+                              ("size", "TEXT")):
                 try:
                     conn.execute(f"ALTER TABLE student_fees ADD COLUMN {col} {decl}")
                     conn.commit()
@@ -2319,7 +2340,7 @@ KEEPING IT
                 continue
             if r["student_id"] is None and _key(r["student_name"]) in seen_names:
                 continue
-            nm = (r["student_name"] or "").strip()
+            nm = _display_person(r["student_name"] or "")
             if not nm:
                 continue
             # find or create a row for this off-roster holder
@@ -3144,7 +3165,8 @@ KEEPING IT
                             student_name: str, date_assigned: str, notes: str = "",
                             due_date: str = "", rental_type: str = "school_year",
                             charge_fee: bool = True,
-                            fee_per_instrument: bool = False) -> int:
+                            fee_per_instrument: bool = False,
+                            rental_amount=None) -> int:
         with self._connect() as conn:
             # Both schools' instruments are in one list; only one of them is
             # this child's.  Checked before the row is written, so a refused
@@ -3172,7 +3194,8 @@ KEEPING IT
             try:
                 self._auto_add_rental_fee(student_id, date_assigned, rental_type,
                                           per_instrument=fee_per_instrument,
-                                          checkout_id=checkout_id)
+                                          checkout_id=checkout_id,
+                                          amount=rental_amount)
             except Exception:
                 pass
         return checkout_id
@@ -3190,7 +3213,8 @@ KEEPING IT
 
     def _auto_add_rental_fee(self, student_id: int, date_assigned: str,
                              rental_type: str = "school_year",
-                             per_instrument: bool = False, checkout_id=None):
+                             per_instrument: bool = False, checkout_id=None,
+                             amount=None):
         """The rental fee for one check-out.
 
         ``per_instrument`` bills this instrument on its own line, which is what
@@ -3200,17 +3224,23 @@ KEEPING IT
 
         ``checkout_id`` is the loan being billed; the fee is tied to it, so the
         fee window can say WHICH baritone each $75 is for.  A loan that already
-        has its fee is never billed twice."""
+        has its fee is never billed twice.
+
+        ``amount`` overrides the fee type's usual amount (the check-out
+        screen's "Other amount").  $0 is recorded as a waived fee, so the
+        loan reads as settled rather than as one Missing fees should flag."""
         year = self.academic_year_of(date_assigned)
         if rental_type == "summer":
-            name, amount, want = "Instrument Rental (Summer)", 20.0, "summer"
+            name, default, want = "Instrument Rental (Summer)", 20.0, "summer"
         else:
-            name, amount, want = "Instrument Rental (School Year)", 75.0, "school year"
+            name, default, want = "Instrument Rental (School Year)", 75.0, "school year"
         for t in self.get_fee_types():
             n = t["name"] or ""
             if n.lower().startswith("instrument rental") and want in n.lower():
-                name, amount = n, float(t["default_amount"] or amount)
+                name, default = n, float(t["default_amount"] or default)
                 break
+        amount = default if amount is None else max(0.0, float(amount))
+        status = "unpaid" if amount > 0 else "waived"
         if per_instrument:
             # One fee per instrument actually in the student's hands, and no
             # more.  Billing is reconciled against their OPEN loans, so running
@@ -3233,9 +3263,9 @@ KEEPING IT
                     (student_id, name, year)).fetchone()[0]
             if n_fees < max(n_open, 1):
                 self.add_student_fee(student_id, name, year, amount,
-                                     checkout_id=checkout_id)
+                                     status=status, checkout_id=checkout_id)
         else:
-            self.ensure_student_fee(student_id, name, year, amount)
+            self.ensure_student_fee(student_id, name, year, amount, status=status)
 
     @staticmethod
     def academic_year_of(date_str: str) -> str:
@@ -3581,7 +3611,7 @@ KEEPING IT
                 if desc.lower().startswith("condition at return:"):
                     parts = desc.split(".", 1)
                     desc = parts[1].strip() if len(parts) > 1 and parts[1].strip() else note
-                who = (r["student_name"] or "").strip()
+                who = _display_person(r["student_name"] or "")
                 full_notes = note
                 if who:
                     full_notes = f"Reported at check-in from {who}. {note}"
@@ -3706,13 +3736,20 @@ KEEPING IT
             args["site"] = site_id
         with self._connect() as conn:
             rows = [dict(r) for r in conn.execute(
-                f"""SELECT t.*, (s.first_name || ' ' || s.last_name) AS student_name
+                f"""SELECT t.*, s.first_name AS _fn, s.last_name AS _ln,
+                          s.preferred_name AS _pn
                    FROM budget_transactions t
                    LEFT JOIN students s ON s.id = t.student_id
                    WHERE t.txn_date >= :lo AND t.txn_date <= :hi {site_sql}
                    ORDER BY t.txn_date DESC""", args).fetchall()]
             for r in rows:
                 r["source"] = "manual"
+                # Shown in the ledger: first (or preferred) + last, never
+                # the district record's middle initial.
+                fn, ln, pn = r.pop("_fn", None), r.pop("_ln", None), r.pop("_pn", None)
+                r["student_name"] = (_display_full({"first_name": fn, "last_name": ln,
+                                                    "preferred_name": pn})
+                                     if (fn or ln) else "")
             # Auto-linked repair expenses (actual costs) in the same window
             reps = conn.execute(
                 """SELECT r.id, r.act_cost, r.date_repaired, r.date_added, r.description,
@@ -4276,6 +4313,23 @@ KEEPING IT
                 (student_id, fee_type, school_year, amount, status,
                  checkout_id or None))
             return cur.lastrowid
+
+    def set_student_fee_size(self, fee_id, size):
+        """The size a student ordered, for an apparel fee (a polo, a concert
+        shirt).  Blank clears it."""
+        with self._connect() as conn:
+            conn.execute("UPDATE student_fees SET size=? WHERE id=?",
+                         ((size or "").strip() or None, fee_id))
+
+    @staticmethod
+    def is_apparel_fee_type(name) -> bool:
+        """Fees for something a student wears -- the ones worth recording a
+        size on.  Matched on whole words in the fee name."""
+        import re
+        return bool(re.search(
+            r"\b(polo|polos|shirts?|t-shirts?|tees?|hoodies?|sweatshirts?|"
+            r"jackets?|uniforms?|apparel|attire|robes?|dress(es)?|tux(edo)?s?|"
+            r"gowns?|vests?|jerseys?)\b", (name or "").lower()))
 
     def set_student_fee_status(self, fee_id, status, date_paid=None):
         with self._connect() as conn:

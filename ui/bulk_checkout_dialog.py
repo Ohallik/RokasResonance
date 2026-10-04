@@ -9,6 +9,8 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import date as dt_date, datetime
 from ui.names import display_full
+from ui.names import display_person
+from ui.checkout_dialog import rank_names
 
 
 def _default_return_date() -> dt_date:
@@ -238,7 +240,7 @@ class BulkCheckoutDialog(ttk.Toplevel):
         self._ac_container.pack_propagate(False)
         self._ac_container.config(height=1)
         self._ac_listbox = tk.Listbox(self._ac_container, font=("Segoe UI", 9),
-                                       selectmode=SINGLE, activestyle="underline",
+                                       selectmode=SINGLE, activestyle="underline", exportselection=False,
                                        relief="flat", bd=0)
         self._ac_listbox.pack(fill=BOTH, expand=True)
 
@@ -249,6 +251,7 @@ class BulkCheckoutDialog(ttk.Toplevel):
                               lambda e: (self._collapse_ac(),
                                          self._student_entry.focus_set()))
         self._student_entry.bind("<Down>", self._focus_ac_list)
+        self._student_entry.bind("<Return>", self._take_top_match, add="+")
         self._student_entry.bind("<Escape>", lambda e: self._collapse_ac())
 
         # ── Instrument info (filled from DB) ───────────────────────────────
@@ -284,30 +287,10 @@ class BulkCheckoutDialog(ttk.Toplevel):
         self._due_date_entry.pack(anchor=W, pady=(2, 0))
 
         # ── Rental fee type ────────────────────────────────────────────────
-        # Auto-added to Budget ▸ Student Fees. School-year ($75) by default;
-        # June checkouts default to the summer ($20) fee.
-        ttk.Label(date_frame, text="Rental Fee:",
-                  font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 0))
-        self._rental_type_var = tk.StringVar(
-            value="summer" if datetime.today().month == 6 else "school_year")
-        ttk.Radiobutton(date_frame, text=f"School Year ({self._rental_label('school_year')})",
-                        variable=self._rental_type_var, value="school_year").pack(anchor=W)
-        ttk.Radiobutton(date_frame, text=f"Summer ({self._rental_label('summer')})",
-                        variable=self._rental_type_var, value="summer").pack(anchor=W)
-
-
-    def _rental_label(self, rental_type: str) -> str:
-        """Fee amount for the rental type, read from configured fee types."""
-        want = "summer" if rental_type == "summer" else "school year"
-        default_amt = 20.0 if rental_type == "summer" else 75.0
-        try:
-            for t in self.db.get_fee_types():
-                n = (t["name"] or "").lower()
-                if n.startswith("instrument rental") and want in n:
-                    return f"${float(t['default_amount'] or default_amt):.0f}"
-        except Exception:
-            pass
-        return f"${default_amt:.0f}"
+        # Auto-added to Budget ▸ Student Fees: school year, summer, or an
+        # amount typed in.
+        from ui.checkout_dialog import RentalFeePicker
+        self._rental = RentalFeePicker(date_frame, self.db, pady=(10, 0))
 
 
     # ───────────────────────────────────────────────────── Check In tab ─────
@@ -581,7 +564,7 @@ class BulkCheckoutDialog(ttk.Toplevel):
         desc = self._ci_instrument.get("description", "")
         barcode = (self._ci_instrument.get("barcode") or
                    self._ci_instrument.get("district_no") or "")
-        student_name = self._ci_checkout.get("student_name", "")
+        student_name = display_person(self._ci_checkout.get("student_name", ""))
 
         self._ci_log_tree.insert("", 0, values=(desc, barcode, student_name, date_returned))
 
@@ -634,7 +617,7 @@ class BulkCheckoutDialog(ttk.Toplevel):
 
         if active:
             self._set_status(
-                f"Already checked out to {active['student_name']}. "
+                f"Already checked out to {display_person(active['student_name'])}. "
                 "Check it in first.", error=True)
         else:
             self._set_status(f"Instrument found: {instrument['description']}", error=False)
@@ -657,7 +640,7 @@ class BulkCheckoutDialog(ttk.Toplevel):
             return
         student = self.db.find_student_by_student_id(sid)
         if student:
-            name = f"{student['first_name']} {student['last_name']}"
+            name = display_full(student)
             self._ac_selecting = True
             self._student_var.set(name)
             self._ac_selecting = False
@@ -675,14 +658,25 @@ class BulkCheckoutDialog(ttk.Toplevel):
         if not text:
             self._collapse_ac()
             return
-        matches = [name for name, _ in self._student_list if text in name.lower()]
+        matches = rank_names(text, [name for name, _ in self._student_list])
         self._ac_listbox.delete(0, END)
         if matches:
-            for m in matches[:8]:
+            for m in matches:
                 self._ac_listbox.insert(END, m)
-            self._ac_container.config(height=min(len(matches), 8) * 18 + 4)
+            # The top match is highlighted: Enter takes it without a trip
+            # to the list first.
+            self._ac_listbox.selection_set(0)
+            self._ac_container.config(height=len(matches) * 18 + 4)
         else:
             self._collapse_ac()
+
+    def _take_top_match(self, event=None):
+        if self._ac_listbox.size() == 0:
+            return None
+        if not self._ac_listbox.curselection():
+            self._ac_listbox.selection_set(0)
+        self._on_ac_select()
+        return "break"
 
     def _collapse_ac(self):
         self._ac_listbox.delete(0, END)
@@ -720,13 +714,19 @@ class BulkCheckoutDialog(ttk.Toplevel):
         active = self.db.get_active_checkout(self._instrument["id"])
         if active:
             self._set_status(
-                f"Already checked out to {active['student_name']}. "
+                f"Already checked out to {display_person(active['student_name'])}. "
                 "Check it in first.", error=True)
             return False
 
         if not self._student_var.get().strip():
             self._set_status("Enter a student name.", error=True)
             self._student_entry.focus_set()
+            return False
+
+        try:
+            self._rental.choice()
+        except ValueError as e:
+            self._set_status(str(e), error=True)
             return False
 
         return True
@@ -753,12 +753,11 @@ class BulkCheckoutDialog(ttk.Toplevel):
         except Exception:
             due_date = _default_return_date().strftime("%Y-%m-%d")
 
-        rental_type = getattr(self, "_rental_type_var", None)
-        rental_type = rental_type.get() if rental_type else "school_year"
+        rental_type, amount = self._rental.choice()
         checkout_id = self.db.checkout_instrument(
             self._instrument["id"], student_id, student_name,
             date_assigned, due_date=due_date, rental_type=rental_type,
-            fee_per_instrument=True,
+            rental_amount=amount, fee_per_instrument=True,
         )
 
         # Generate form if requested

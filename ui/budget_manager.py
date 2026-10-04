@@ -14,7 +14,7 @@ from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
 
 from ui.ensembles import ensembles_for, all_class_options
-from ui.names import display_last_first
+from ui.names import display_last_first, display_first_of
 from ui.theme import px
 from ui.theme import WrapBar
 
@@ -1123,12 +1123,20 @@ class _FeesDialog(ttk.Toplevel):
                    command=self._add_class).pack(side=LEFT, padx=2)
         ttk.Button(tb, text="⧉ Duplicate", bootstyle=(SUCCESS, OUTLINE),
                    command=self._duplicate).pack(side=LEFT, padx=2)
-        ttk.Button(tb, text="⚖ Missing fees…", bootstyle=(WARNING, OUTLINE),
-                   command=self._reconcile).pack(side=LEFT, padx=2)
-        ttk.Button(tb, text="🎺 Instrument…", bootstyle=(INFO, OUTLINE),
-                   command=self._link_instrument).pack(side=LEFT, padx=2)
-        ttk.Button(tb, text="🔗 Tie to instruments", bootstyle=(INFO, OUTLINE),
-                   command=self._tie_all).pack(side=LEFT, padx=2)
+        # Instrument rentals have a loan, a horn and a signed contract behind
+        # them; a polo or a field trip has none of that.  These controls are
+        # shown only while a rental fee is picked (see _show_fee_controls).
+        self._rental_only = []
+
+        def rental_only(w, **pack):
+            w.pack(**pack)
+            self._rental_only.append((w, pack))
+        rental_only(ttk.Button(tb, text="⚖ Missing fees…", bootstyle=(WARNING, OUTLINE),
+                               command=self._reconcile), side=LEFT, padx=2)
+        rental_only(ttk.Button(tb, text="🎺 Instrument…", bootstyle=(INFO, OUTLINE),
+                               command=self._link_instrument), side=LEFT, padx=2)
+        rental_only(ttk.Button(tb, text="🔗 Tie to instruments", bootstyle=(INFO, OUTLINE),
+                               command=self._tie_all), side=LEFT, padx=2)
         ttk.Separator(tb, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=2)
         ttk.Button(tb, text="✉️ Email families…", bootstyle=INFO,
                    command=self._email_unpaid).pack(side=LEFT, padx=2)
@@ -1147,28 +1155,26 @@ class _FeesDialog(ttk.Toplevel):
                    command=lambda: self._set_status("unpaid")).pack(side=LEFT, padx=2)
         ttk.Button(tb2, text="🚫 Waive", bootstyle=(SECONDARY, OUTLINE),
                    command=lambda: self._set_status("waived")).pack(side=LEFT, padx=2)
-        ttk.Separator(tb2, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=2)
-        ttk.Button(tb2, text="📄 Contract in", bootstyle=(SUCCESS, OUTLINE),
-                   command=lambda: self._set_contract(1)).pack(side=LEFT, padx=2)
-        ttk.Button(tb2, text="📄 Not needed", bootstyle=(SECONDARY, OUTLINE),
-                   command=lambda: self._set_contract(2)).pack(side=LEFT, padx=2)
-        ttk.Button(tb2, text="📄 Still missing", bootstyle=(WARNING, OUTLINE),
-                   command=lambda: self._set_contract(0)).pack(side=LEFT, padx=2)
+        rental_only(ttk.Separator(tb2, orient=VERTICAL),
+                    side=LEFT, fill=Y, padx=8, pady=2)
+        rental_only(ttk.Button(tb2, text="📄 Contract in", bootstyle=(SUCCESS, OUTLINE),
+                               command=lambda: self._set_contract(1)), side=LEFT, padx=2)
+        rental_only(ttk.Button(tb2, text="📄 Not needed", bootstyle=(SECONDARY, OUTLINE),
+                               command=lambda: self._set_contract(2)), side=LEFT, padx=2)
+        rental_only(ttk.Button(tb2, text="📄 Still missing", bootstyle=(WARNING, OUTLINE),
+                               command=lambda: self._set_contract(0)), side=LEFT, padx=2)
         ttk.Separator(tb2, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=8, pady=2)
         ttk.Button(tb2, text="🗑️ Remove", bootstyle=(DANGER, OUTLINE),
                    command=self._remove).pack(side=LEFT, padx=2)
+        self._bars = (tb, tb2)
 
-        ttk.Label(self, text="Check the ☐ boxes (or Ctrl/Shift-click rows) to select "
-                             "several, then Paid / Waive / Contract in. Click a row's "
-                             "Contract box to step it: missing ☐ → in ☑ → not needed. "
-                             "Double-click a row's Instrument to say which horn the "
-                             "fee is for, or to add a fee for one that has none.",
-                  font=("Segoe UI", 8), foreground="#888", wraplength=860,
-                  justify=LEFT).pack(anchor=W, padx=14)
+        self._hint = ttk.Label(self, text="", font=("Segoe UI", 8), foreground="#888",
+                               wraplength=860, justify=LEFT)
+        self._hint.pack(anchor=W, padx=14)
 
         frame = ttk.Frame(self); frame.pack(fill=BOTH, expand=True, padx=12, pady=8)
         cols = ("chk", "name", "grade", "period", "ensembles", "amount",
-                "status", "contract", "inst")
+                "status", "contract", "inst", "size")
         sb = ttk.Scrollbar(frame, orient=VERTICAL)
         self.tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="extended",
                                  yscrollcommand=sb.set, bootstyle=INFO)
@@ -1176,21 +1182,23 @@ class _FeesDialog(ttk.Toplevel):
         self.tree.pack(fill=BOTH, expand=True)
         heads = {"chk": "✓", "name": "Student", "grade": "Grade", "period": "Per",
                  "ensembles": "Ensembles", "amount": "Amount", "status": "Status",
-                 "contract": "Contract", "inst": "Instrument"}
+                 "contract": "Contract", "inst": "Instrument", "size": "Size"}
         widths = {"chk": 34, "name": 185, "grade": 48, "period": 44,
                   "ensembles": 150, "amount": 74, "status": 74,
-                  "contract": 70, "inst": 175}
+                  "contract": 70, "inst": 175, "size": 100}
         for c in cols:
             self.tree.heading(c, text=heads[c], anchor=W,
                               command=(self._toggle_all_header if c == "chk"
                                        else (lambda col=c: self._sort_rows(col))))
             self.tree.column(c, width=widths[c],
-                             anchor=(CENTER if c in ("chk", "contract") else W))
+                             anchor=(CENTER if c in ("chk", "contract", "size") else W))
         self.tree.tag_configure("paid", foreground="#1a7a1a")
         self.tree.tag_configure("waived", foreground="#888")
         self.tree.tag_configure("unpaid", foreground="#b00000")
         self.tree.bind("<Button-1>", self._on_click, add="+")
         self.tree.bind("<Double-1>", self._on_double, add="+")
+        # A size box floats over its cell; scrolling would leave it behind.
+        self.tree.bind("<MouseWheel>", lambda e: self._end_size_edit(), add="+")
         self._count = ttk.Label(self, text="", foreground="#666")
         self._count.pack(anchor=W, padx=14)
 
@@ -1225,6 +1233,7 @@ class _FeesDialog(ttk.Toplevel):
         self._reload_list()
 
     def _reload_list(self):
+        self._end_size_edit()
         self.tree.delete(*self.tree.get_children())
         fee = self._fee_var.get()
         if not fee:
@@ -1235,8 +1244,12 @@ class _FeesDialog(ttk.Toplevel):
             # student has -- which is how two baritones read as a duplicate.
             self.db.heal_fee_instrument_links(fee, self.school_year)
         rows = [dict(r) for r in self.db.get_student_fees(fee, self.school_year)]
+        rental = self.db.is_rental_fee_type(fee)
+        sized = (not rental and (self.db.is_apparel_fee_type(fee)
+                                 or any((r.get("size") or "").strip() for r in rows)))
+        self._show_fee_controls(rental, sized)
         for r in rows:
-            r["_insts"] = self.db.fee_instrument_label(r)
+            r["_insts"] = self.db.fee_instrument_label(r) if rental else ""
             r["_pers"] = [p.strip() for p in
                           (r.get("class_periods") or "").split(",") if p.strip()]
         # Every period 0-7, always — the filter has to fit whoever is
@@ -1267,6 +1280,7 @@ class _FeesDialog(ttk.Toplevel):
             "status": lambda r: (r.get("status") or ""),
             "contract": lambda r: {0: 0, 1: 1, 2: 2}.get(int(r.get("contract_received") or 0), 0),
             "inst": lambda r: (r.get("_insts") or "").lower(),
+            "size": lambda r: self._size_key(r.get("size")),
         }
         rows.sort(key=keyers.get(col, keyers["name"]), reverse=rev)
         present = {r["id"] for r in rows}
@@ -1285,13 +1299,166 @@ class _FeesDialog(ttk.Toplevel):
                 r["status"].title(),
                 self._contract_glyph(r.get("contract_received")),
                 r["_insts"],
+                r.get("size") or "",
             ))
-        n_no_contract = sum(1 for r in rows
-                            if int(r.get("contract_received") or 0) == 0
+        parts = [f"{len(rows)} student(s)", f"{n_unpaid} unpaid"]
+        if rental:
+            n_no_contract = sum(1 for r in rows
+                                if int(r.get("contract_received") or 0) == 0
+                                and r["status"] != "waived")
+            parts.append(f"{n_no_contract} without a contract")
+        elif sized:
+            n_no_size = sum(1 for r in rows if not (r.get("size") or "").strip()
                             and r["status"] != "waived")
-        self._count.config(text=f"{len(rows)} student(s) • {n_unpaid} unpaid "
-                                f"• {n_no_contract} without a contract "
-                                f"• {len(self._checked)} selected")
+            parts.append(f"{n_no_size} without a size")
+        parts.append(f"{len(self._checked)} selected")
+        self._count.config(text=" • ".join(parts))
+
+    def _show_fee_controls(self, rental, sized):
+        """Columns, buttons and the hint line for the kind of fee picked:
+        a rental shows its contract and instrument, a polo its size, and
+        anything else just who owes what."""
+        cols = ["chk", "name", "grade", "period", "ensembles", "amount", "status"]
+        if rental:
+            cols += ["contract", "inst"]
+        elif sized:
+            cols += ["size"]
+        self.tree.configure(displaycolumns=cols)
+        for w, pack in self._rental_only:
+            shown = w.winfo_manager() == "pack"
+            if rental and not shown:
+                w.pack(**pack)
+            elif not rental and shown:
+                w.pack_forget()
+        for bar in self._bars:
+            bar._schedule()
+        hint = ("Check the ☐ boxes (or Ctrl/Shift-click rows) to select several, "
+                "then Paid / Waive")
+        if rental:
+            hint += (" / Contract in. Click a row's Contract box to step it: "
+                     "missing ☐ → in ☑ → not needed. Double-click a row's "
+                     "Instrument to say which horn the fee is for, or to add a "
+                     "fee for one that has none.")
+        elif sized:
+            hint += (". Click a row's Size and type it (am, yl, 2xl...); Enter or "
+                     "the arrow keys save and move to the next student.")
+        else:
+            hint += "."
+        self._hint.config(text=hint)
+
+    # Grades 5-12 instrumental: nobody is smaller than Youth M or bigger than
+    # Adult 2XL often enough to clutter the list (anything else can be typed).
+    SIZES = ["Youth M", "Youth L", "Youth XL", "Adult S", "Adult M",
+             "Adult L", "Adult XL", "Adult 2XL"]
+
+    @classmethod
+    def _normalize_size(cls, text):
+        """What a teacher types, turned into the list's wording: "am",
+        "a m", "adult m" and "m" all become "Adult M"; "yl" becomes
+        "Youth L"; "xxl" and "2x" become "Adult 2XL".  No Youth/Adult means
+        Adult.  Anything unrecognized is kept as typed."""
+        raw = (text or "").strip()
+        s = raw.upper().replace(" ", "").replace("-", "").replace(".", "")
+        if not s:
+            return ""
+        group = "Adult"
+        for word, g in (("YOUTH", "Youth"), ("ADULT", "Adult"),
+                        ("Y", "Youth"), ("A", "Adult")):
+            if s.startswith(word) and len(s) > len(word):
+                s, group = s[len(word):], g
+                break
+        words = {"SMALL": "S", "SM": "S", "MEDIUM": "M", "MED": "M",
+                 "LARGE": "L", "LG": "L", "XLARGE": "XL", "EXTRALARGE": "XL",
+                 "XXL": "2XL", "2X": "2XL", "XX": "2XL", "XXLARGE": "2XL",
+                 "XXXL": "3XL", "3X": "3XL", "XS": "XS", "X": "XL"}
+        s = words.get(s, s)
+        if s in ("XS", "S", "M", "L", "XL", "2XL", "3XL"):
+            return f"{group} {s}"
+        return raw
+
+    # ── inline Size editing ──────────────────────────────────────────────────
+    # A box opens right in the Size cell.  Type ("am", "yl", "2xl") and
+    # Enter / Down saves and moves to the next student, Up to the one above,
+    # Esc backs out, so a class's sizes go in without a window per kid.
+
+    def _start_size_edit(self, iid):
+        self._end_size_edit()
+        if not self.tree.exists(iid):
+            return
+        self.tree.see(iid)
+        self.tree.update_idletasks()
+        box = self.tree.bbox(iid, "size")
+        if not box:
+            return
+        x, y, w, h = box
+        self.tree.selection_set(iid)
+        var = tk.StringVar(value=self.tree.set(iid, "size"))
+        # A plain entry: a combobox is taller than a list row and clipped
+        # what was typed.  Typing is the fast path anyway, and it's
+        # corrected to the list wording ("yl" -> "Youth L") on the way out.
+        ed = tk.Entry(self.tree, textvariable=var, font=("Segoe UI", 9),
+                      relief="solid", bd=1, justify="center")
+        ed.place(x=x, y=y, width=w, height=h)
+        ed._iid, ed._var = iid, var
+        self._size_ed = ed
+        ed.focus_set()
+        ed.select_range(0, "end")
+        ed.icursor("end")
+
+        def go(step):
+            self._end_size_edit(step=step)
+            return "break"
+        for key in ("<Return>", "<KP_Enter>", "<Down>", "<Tab>"):
+            ed.bind(key, lambda e: go(1))
+        ed.bind("<Up>", lambda e: go(-1))
+        ed.bind("<Escape>", lambda e: (self._end_size_edit(save=False), "break")[1])
+
+        def focus_out(_e):
+            def check():
+                if self._size_ed is ed:
+                    self._end_size_edit()
+            self.after_idle(check)
+        ed.bind("<FocusOut>", focus_out)
+
+    def _end_size_edit(self, save=True, step=0):
+        ed = getattr(self, "_size_ed", None)
+        if ed is None:
+            return
+        self._size_ed = None
+        iid = ed._iid
+        if save and self.tree.exists(iid):
+            size = self._normalize_size(ed._var.get())
+            if size != self.tree.set(iid, "size"):
+                self.db.set_student_fee_size(int(iid), size)
+                self.tree.set(iid, "size", size)
+        try:
+            ed.destroy()
+        except tk.TclError:
+            pass
+        if step and self.tree.exists(iid):
+            nxt = self.tree.next(iid) if step > 0 else self.tree.prev(iid)
+            if nxt:
+                self._start_size_edit(nxt)
+            else:
+                self.tree.focus_set()
+
+    @staticmethod
+    def _size_key(size):
+        """Shirt sizes in wearing order (Youth M < ... < Adult S < ... <
+        Adult 2XL), then anything else alphabetically, blanks last."""
+        s = (size or "").strip().upper().replace(" ", "")
+        if not s:
+            return (2, 0, "")
+        for word, short in (("YOUTH", "Y"), ("ADULT", "A")):
+            if s.startswith(word):
+                s = short + s[len(word):]
+        order = ["YXS", "YS", "YM", "YL", "YXL", "XS", "S", "M", "L", "XL",
+                 "XXL", "2XL", "XXXL", "3XL", "4XL"]
+        bare = s[1:] if s.startswith("A") and s[1:] in order else s
+        bare = {"XXL": "2XL", "XXXL": "3XL"}.get(bare, bare)
+        if bare in order:
+            return (0, order.index(bare), "")
+        return (1, 0, s)
 
     def _changed(self):
         """Tell the Budget ledger behind this window that money moved."""
@@ -1536,8 +1703,13 @@ class _FeesDialog(ttk.Toplevel):
         fit_window(win, 680, 540)
 
     def _col_number(self, name):
-        """The '#n' id Treeview uses for a named column."""
-        return f"#{list(self.tree['columns']).index(name) + 1}"
+        """The '#n' id Treeview uses for a named column -- counted among the
+        DISPLAYED columns, which change with the fee picked.  None when that
+        column isn't showing."""
+        shown = list(self.tree["displaycolumns"])
+        if not shown or shown[0] == "#all":
+            shown = list(self.tree["columns"])
+        return f"#{shown.index(name) + 1}" if name in shown else None
 
     def _on_click(self, event):
         if self.tree.identify("region", event.x, event.y) != "cell":
@@ -1556,6 +1728,9 @@ class _FeesDialog(ttk.Toplevel):
             nxt = (state + 1) % 3
             self.db.set_student_fee_contract(fid, nxt)
             self.tree.set(iid, "contract", self._contract_glyph(nxt))
+            return
+        if col == self._col_number("size"):
+            self.after_idle(lambda: self._start_size_edit(iid))
             return
         if col != "#1":
             return
@@ -1924,17 +2099,22 @@ class _FeesDialog(ttk.Toplevel):
             txt.delete("1.0", "end"); txt.insert("1.0", "; ".join(emails))
             _fill_template()
 
-        who = ttk.Frame(win)
-        who.pack(anchor=W, padx=14, pady=(12, 0))
-        ttk.Label(who, text="Who:", font=("Segoe UI", 9, "bold")).pack(side=LEFT, padx=(0, 6))
-        for val, text in (("unpaid", "Still owe payment"),
-                          ("contract", "No signed contract yet"),
-                          ("either", "Either")):
-            ttk.Radiobutton(who, text=text, value=val, variable=mode,
-                            command=_refresh).pack(side=LEFT, padx=(0, 10))
-        info.pack(anchor=W, padx=14, pady=(6, 4))
-        ttk.Checkbutton(win, text="Only those who also have an instrument checked out",
-                        variable=only_out, bootstyle=INFO, command=_refresh).pack(anchor=W, padx=14)
+        # Contracts and instruments only exist behind a rental fee; a polo
+        # reminder is just "still owe payment".
+        rental = self.db.is_rental_fee_type(fee)
+        if rental:
+            who = ttk.Frame(win)
+            who.pack(anchor=W, padx=14, pady=(12, 0))
+            ttk.Label(who, text="Who:", font=("Segoe UI", 9, "bold")).pack(side=LEFT, padx=(0, 6))
+            for val, text in (("unpaid", "Still owe payment"),
+                              ("contract", "No signed contract yet"),
+                              ("either", "Either")):
+                ttk.Radiobutton(who, text=text, value=val, variable=mode,
+                                command=_refresh).pack(side=LEFT, padx=(0, 10))
+        info.pack(anchor=W, padx=14, pady=(12 if not rental else 6, 4))
+        if rental:
+            ttk.Checkbutton(win, text="Only those who also have an instrument checked out",
+                            variable=only_out, bootstyle=INFO, command=_refresh).pack(anchor=W, padx=14)
         txt.pack(fill=X, padx=14, pady=(4, 0))
 
         def _copy():
@@ -2119,18 +2299,22 @@ class _FeesDialog(ttk.Toplevel):
         if not rows:
             Messagebox.show_info("No students on this fee.", title="Nothing to Export", parent=self)
             return
+        rental = self.db.is_rental_fee_type(fee)
         wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Fees"
         ws.append(["Last Name", "First Name", "Grade", "Period", "Ensembles", "Amount",
-                   "Status", "Date Paid", "Contract", "Instrument"])
+                   "Status", "Date Paid"]
+                  + (["Contract", "Instrument"] if rental else ["Size"]))
         for c in ws[1]:
             c.font = Font(bold=True, color="FFFFFF"); c.fill = PatternFill("solid", fgColor="2E7D32")
         for r in rows:
-            ws.append([r["last_name"], r["first_name"], r["grade"] or "",
+            r = dict(r)
+            extra = ([{1: "yes", 2: "not needed"}.get(int(r.get("contract_received") or 0), ""),
+                      self.db.fee_instrument_label(r)] if rental
+                     else [r.get("size") or ""])
+            ws.append([r["last_name"], display_first_of(r), r["grade"] or "",
                        (r["class_periods"] or "").replace(",", "/"),
                        r["ensembles"] or "", float(r["amount"] or 0), r["status"],
-                       r["date_paid"] or "",
-                       {1: "yes", 2: "not needed"}.get(int(r.get("contract_received") or 0), ""),
-                       self.db.fee_instrument_label(r)])
+                       r["date_paid"] or ""] + extra)
         from tkinter import filedialog
         import datetime as _d
         path = filedialog.asksaveasfilename(

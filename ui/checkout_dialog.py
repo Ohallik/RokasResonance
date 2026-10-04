@@ -8,6 +8,7 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime, date as dt_date
 from ui.names import display_full
+from ui.names import display_person
 from ui.theme import muted_fg
 
 
@@ -15,7 +16,7 @@ def _record_needed_repair(parent, db, instrument_id, date, notes, student_name=N
     """Create a pending repair record for an instrument returned in
     'Needs Repair' condition, and offer to open it for more detail."""
     desc = (notes or "").strip() or "Returned needing repair (details TBD)"
-    who = (student_name or "").strip()
+    who = display_person(student_name or "")
     full_notes = notes or ""
     if who:
         full_notes = (f"Reported at check-in from {who}. {notes}" if notes
@@ -31,6 +32,81 @@ def _record_needed_repair(parent, db, instrument_id, date, notes, student_name=N
         })
     except Exception:
         pass
+
+
+def rank_names(text, names, limit=8):
+    """Roster names matching what's been typed so far, best first: names
+    whose first or last name starts with it ("Sas" -> Sasha ...), then any
+    other name containing it.  Each group keeps the roster's own order."""
+    low = (text or "").strip().lower()
+    if not low:
+        return []
+    starts, contains = [], []
+    for n in names:
+        nl = n.lower()
+        if nl.startswith(low) or any(w.startswith(low) for w in nl.split()):
+            starts.append(n)
+        elif low in nl:
+            contains.append(n)
+    return (starts + contains)[:limit]
+
+
+class RentalFeePicker:
+    """The rental fee choice on a check-out screen: the school-year fee, the
+    summer fee, or an amount typed in (a late-start discount, a free loan).
+    The two standard amounts come from the teacher's fee types."""
+
+    def __init__(self, parent, db, pady=(14, 0)):
+        self.db = db
+        ttk.Label(parent, text="Rental Fee:",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=pady)
+        # June checkouts default to the summer fee.
+        self._type = tk.StringVar(
+            value="summer" if datetime.today().month == 6 else "school_year")
+        box = ttk.Frame(parent)
+        box.pack(anchor=W, pady=(2, 0))
+        ttk.Radiobutton(box, text=f"School Year ({self._label('school_year')})",
+                        variable=self._type, value="school_year").pack(anchor=W)
+        ttk.Radiobutton(box, text=f"Summer ({self._label('summer')})",
+                        variable=self._type, value="summer").pack(anchor=W)
+        other = ttk.Frame(box)
+        other.pack(anchor=W)
+        ttk.Radiobutton(other, text="Other amount:  $", variable=self._type,
+                        value="custom").pack(side=LEFT)
+        self._amount = tk.StringVar()
+        entry = ttk.Entry(other, textvariable=self._amount, width=7)
+        entry.pack(side=LEFT)
+        # Typing an amount IS choosing it.
+        entry.bind("<Key>", lambda e: self._type.set("custom"), add="+")
+        entry.bind("<FocusIn>", lambda e: self._type.set("custom"), add="+")
+
+    def _label(self, rental_type):
+        want = "summer" if rental_type == "summer" else "school year"
+        default_amt = 20.0 if rental_type == "summer" else 75.0
+        try:
+            for t in self.db.get_fee_types():
+                n = (t["name"] or "").lower()
+                if n.startswith("instrument rental") and want in n:
+                    return f"${float(t['default_amount'] or default_amt):.0f}"
+        except Exception:
+            pass
+        return f"${default_amt:.0f}"
+
+    def choice(self):
+        """(rental_type, amount) for checkout_instrument.  ``amount`` is None
+        for a standard fee; $0 means no fee.  Raises ValueError when "Other"
+        is picked without a usable amount."""
+        if self._type.get() != "custom":
+            return self._type.get(), None
+        raw = self._amount.get().strip().lstrip("$").replace(",", "")
+        try:
+            amount = round(float(raw), 2)
+        except ValueError:
+            raise ValueError("Type the rental amount in the Other box "
+                             "(for example 40, or 0 for no fee).")
+        if amount < 0:
+            raise ValueError("The rental amount can't be negative.")
+        return "school_year", amount
 
 
 class CheckoutDialog(ttk.Toplevel):
@@ -127,19 +203,6 @@ class CheckoutDialog(ttk.Toplevel):
             self._build_checkin_form(main)
 
 
-    def _rental_label(self, rental_type: str) -> str:
-        """Fee name + amount for the rental type, read from configured fee types."""
-        want = "summer" if rental_type == "summer" else "school year"
-        default_amt = 20.0 if rental_type == "summer" else 75.0
-        try:
-            for t in self.db.get_fee_types():
-                n = (t["name"] or "").lower()
-                if n.startswith("instrument rental") and want in n:
-                    return f"${float(t['default_amount'] or default_amt):.0f}"
-        except Exception:
-            pass
-        return f"${default_amt:.0f}"
-
     def _build_checkout_form(self, parent):
         form = tk.LabelFrame(parent, text=" Check Out Details ", padx=8, pady=6,
                              font=("Segoe UI", 9, "bold"))
@@ -183,6 +246,17 @@ class CheckoutDialog(ttk.Toplevel):
                                            width=40, values=self._all_names)
         self._student_entry.pack(fill=X, pady=(2, 0))
         self._student_entry.focus_set()
+        # Matches appear right under the box as she types, best first, with
+        # the top one highlighted: Enter takes it, Down walks the list.  The
+        # dropdown arrow still shows the whole roster for browsing.  The list
+        # floats over the fields below rather than pushing them down: this
+        # dialog is a fixed size, and pushing hid the rental fee choices.
+        self._ac_container = ttk.Frame(form, relief="solid", borderwidth=1)
+        self._ac_container.pack_propagate(False)
+        self._ac_listbox = tk.Listbox(self._ac_container, font=("Segoe UI", 9),
+                                      selectmode=SINGLE, activestyle="none",
+                                      exportselection=False, relief="flat", bd=0)
+        self._ac_listbox.pack(fill=BOTH, expand=True)
         if not self._all_names:
             ttk.Label(form,
                       text="No students on this school's roster yet.  Import a "
@@ -201,19 +275,10 @@ class CheckoutDialog(ttk.Toplevel):
         self._due_date_entry.pack(anchor=W, pady=(2, 0))
 
         # ── Rental Fee Type ────────────────────────────────────────────────────
-        # A rental fee is auto-added to Budget ▸ Student Fees. Default to the
-        # $75 school-year fee; June checkouts default to the $20 summer fee.
-        self._rental_type_var = tk.StringVar(
-            value="summer" if datetime.today().month == 6 else "school_year")
+        # A rental fee is auto-added to Budget ▸ Student Fees.
+        self._rental = None
         if self._charges_fees:
-            ttk.Label(form, text="Rental Fee:",
-                      font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(14, 0))
-            rt = ttk.Frame(form)
-            rt.pack(anchor=W, pady=(2, 0))
-            ttk.Radiobutton(rt, text=f"School Year ({self._rental_label('school_year')})",
-                            variable=self._rental_type_var, value="school_year").pack(anchor=W)
-            ttk.Radiobutton(rt, text=f"Summer ({self._rental_label('summer')})",
-                            variable=self._rental_type_var, value="summer").pack(anchor=W)
+            self._rental = RentalFeePicker(form, self.db)
         else:
             ttk.Label(form, text="This school's loans carry no rental fee.",
                       font=("Segoe UI", 8), foreground=muted_fg()).pack(
@@ -222,21 +287,79 @@ class CheckoutDialog(ttk.Toplevel):
         # ── Bind Events ────────────────────────────────────────────────────────
         self._student_var.trace_add("write", self._on_name_changed)
         self._student_entry.bind("<<ComboboxSelected>>", self._on_ac_select)
+        self._student_entry.bind("<Down>", self._focus_ac_list)
+        self._student_entry.bind("<Return>", self._take_top_match)
+        self._student_entry.bind("<Escape>", lambda e: self._collapse_ac())
+        self._ac_listbox.bind("<ButtonRelease-1>", self._pick_from_list)
+        self._ac_listbox.bind("<Return>", self._pick_from_list)
+        self._ac_listbox.bind("<Up>", self._list_up)
+        self._ac_listbox.bind("<Escape>", lambda e: (
+            self._collapse_ac(), self._student_entry.focus_set()))
 
     def _on_name_changed(self, *args):
-        """Narrow the list as she types, and bind the child once the name is
-        an exact one -- typing a name in full has to count as choosing it."""
+        """Show the best matches under the box as she types, and bind the
+        child once the name is an exact one -- typing a name in full has to
+        count as choosing it."""
         if self._ac_selecting:
             return
         text = self._student_var.get().strip()
-        low = text.lower()
         self._selected_student_id = self._id_for(text)
-        matches = [n for n in self._all_names if low in n.lower()] if low \
-            else list(self._all_names)
-        try:
-            self._student_entry.config(values=matches or self._all_names)
-        except Exception:
-            pass
+        matches = rank_names(text, self._all_names)
+        if not matches or (len(matches) == 1 and self._selected_student_id):
+            self._collapse_ac()
+            return
+        self._ac_listbox.delete(0, END)
+        for m in matches:
+            self._ac_listbox.insert(END, m)
+        self._ac_listbox.selection_set(0)
+        import tkinter.font as tkfont
+        row = tkfont.Font(font=self._ac_listbox.cget("font")).metrics("linespace") + 1
+        self._ac_container.place(in_=self._student_entry, x=0, rely=1.0,
+                                 relwidth=1.0, height=len(matches) * row + 6)
+        self._ac_container.lift()
+
+    def _collapse_ac(self):
+        self._ac_listbox.delete(0, END)
+        self._ac_container.place_forget()
+
+    def _focus_ac_list(self, event=None):
+        if self._ac_listbox.size() == 0:
+            return None                  # let the dropdown open as usual
+        self._ac_listbox.focus_set()
+        self._ac_listbox.selection_clear(0, END)
+        self._ac_listbox.selection_set(0)
+        self._ac_listbox.activate(0)
+        return "break"
+
+    def _list_up(self, event=None):
+        sel = self._ac_listbox.curselection()
+        if not sel or sel[0] == 0:
+            self._student_entry.focus_set()
+            self._student_entry.icursor(END)
+            return "break"
+        return None
+
+    def _take_top_match(self, event=None):
+        if self._ac_listbox.size() == 0:
+            return None
+        sel = self._ac_listbox.curselection()
+        self._choose_name(self._ac_listbox.get(sel[0] if sel else 0))
+        return "break"
+
+    def _pick_from_list(self, event=None):
+        sel = self._ac_listbox.curselection()
+        if sel:
+            self._choose_name(self._ac_listbox.get(sel[0]))
+        return "break"
+
+    def _choose_name(self, name):
+        self._ac_selecting = True
+        self._student_var.set(name)
+        self._ac_selecting = False
+        self._selected_student_id = self._id_for(name)
+        self._collapse_ac()
+        self._student_entry.focus_set()
+        self._student_entry.icursor(END)
 
     def _id_for(self, name):
         """The student behind an exactly-typed name, or None."""
@@ -252,6 +375,7 @@ class CheckoutDialog(ttk.Toplevel):
         self._ac_selecting = True
         self._selected_student_id = self._id_for(self._student_var.get())
         self._ac_selecting = False
+        self._collapse_ac()
 
     def _default_return_date(self) -> dt_date:
         today = dt_date.today()
@@ -264,7 +388,7 @@ class CheckoutDialog(ttk.Toplevel):
         form.pack(fill=BOTH, expand=True, pady=(0, 8))
         form.columnconfigure(1, weight=1)
 
-        student = self.checkout_data.get("student_name", "")
+        student = display_person(self.checkout_data.get("student_name", ""))
         date_out = self.checkout_data.get("date_assigned", "")
 
         ttk.Label(form, text="Currently Assigned To:", font=("Segoe UI", 9, "bold")).grid(
@@ -328,11 +452,17 @@ class CheckoutDialog(ttk.Toplevel):
         except Exception:
             due_date = ""
 
-        rental_type = getattr(self, "_rental_type_var", None)
-        rental_type = rental_type.get() if rental_type else "school_year"
+        rental_type, amount = "school_year", None
+        if getattr(self, "_rental", None) is not None:
+            try:
+                rental_type, amount = self._rental.choice()
+            except ValueError as e:
+                Messagebox.show_warning(str(e), title="Rental Fee",
+                                        parent=self.winfo_toplevel())
+                return
         self.db.checkout_instrument(
             self.instrument_id, student_id, student_name, date_assigned,
-            due_date=due_date, rental_type=rental_type,
+            due_date=due_date, rental_type=rental_type, rental_amount=amount,
             charge_fee=getattr(self, "_charges_fees", True),
             fee_per_instrument=True,
         )
@@ -555,7 +685,7 @@ class ItemCheckoutDialog(ttk.Toplevel):
         self._ac_container.pack_propagate(False)
         self._ac_container.config(height=1)
         self._ac_listbox = tk.Listbox(self._ac_container, font=("Segoe UI", 9),
-                                      selectmode=SINGLE, activestyle="underline",
+                                      selectmode=SINGLE, activestyle="underline", exportselection=False,
                                       relief="flat", bd=0)
         self._ac_listbox.pack(fill=BOTH, expand=True)
 
@@ -583,6 +713,7 @@ class ItemCheckoutDialog(ttk.Toplevel):
         self._ac_listbox.bind("<<ListboxSelect>>", self._on_ac_select)
         self._ac_listbox.bind("<Return>", self._on_ac_select)
         self._name_entry.bind("<Down>", self._focus_ac_list)
+        self._name_entry.bind("<Return>", self._take_top_match, add="+")
 
     def _default_return_date(self) -> dt_date:
         today = dt_date.today()
@@ -597,14 +728,25 @@ class ItemCheckoutDialog(ttk.Toplevel):
         if not text:
             self._collapse_ac()
             return
-        matches = [name for name, _ in self._student_list if text in name.lower()]
+        matches = rank_names(text, [name for name, _ in self._student_list])
         self._ac_listbox.delete(0, END)
         if matches:
-            for m in matches[:8]:
+            for m in matches:
                 self._ac_listbox.insert(END, m)
-            self._ac_container.config(height=min(len(matches), 8) * 18 + 4)
+            # The top match is highlighted: Enter takes it without a trip
+            # to the list first.
+            self._ac_listbox.selection_set(0)
+            self._ac_container.config(height=len(matches) * 18 + 4)
         else:
             self._collapse_ac()
+
+    def _take_top_match(self, event=None):
+        if self._ac_listbox.size() == 0:
+            return None
+        if not self._ac_listbox.curselection():
+            self._ac_listbox.selection_set(0)
+        self._on_ac_select()
+        return "break"
 
     def _collapse_ac(self):
         self._ac_listbox.delete(0, END)

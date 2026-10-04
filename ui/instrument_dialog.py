@@ -4,6 +4,7 @@ ui/instrument_dialog.py - Add / Edit instrument dialog
 
 import tkinter as tk
 import ttkbootstrap as ttk
+from ui.names import display_person
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
@@ -248,7 +249,8 @@ class InstrumentDialog(ttk.Toplevel):
 
         actives = self.db.get_active_checkouts_for_instrument(self.instrument_id)
         if actives:
-            names = ", ".join(a["student_name"] or "?" for a in actives)
+            names = ", ".join(display_person(a["student_name"] or "") or "?"
+                              for a in actives)
             ttk.Label(self._action_bar, text=f"Checked out to {names}",
                       font=("Segoe UI", 8), foreground="#8B4000").pack(side=LEFT, padx=(0, 8))
             ttk.Button(self._action_bar, text="📥 Check In", bootstyle=INFO,
@@ -293,7 +295,7 @@ class InstrumentDialog(ttk.Toplevel):
         lb = tk.Listbox(win, font=("Segoe UI", 9), height=min(len(actives), 8), width=44)
         lb.pack(fill=BOTH, expand=True, padx=16)
         for a in actives:
-            lb.insert("end", f"{a.get('student_name') or '?'}   (out {a.get('date_assigned') or '—'})")
+            lb.insert("end", f"{display_person(a.get('student_name') or '') or '?'}   (out {a.get('date_assigned') or '—'})")
         lb.selection_set(0)
         res = {"c": None}
         def _ok():

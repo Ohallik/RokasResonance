@@ -16,6 +16,7 @@ from datetime import datetime
 
 from ui.theme import fs, muted_fg, fit_window
 from ui.uniform_dialog import StudentPicker
+from ui.names import display_person
 
 
 class UniformScanDialog(ttk.Toplevel):
@@ -94,7 +95,8 @@ class UniformScanDialog(ttk.Toplevel):
         u = dict(u)
         self._out_uniform = u
         ac = self.db.get_active_uniform_checkout(u["id"])
-        extra = f"\n⚠ Currently out to {ac['student_name']}" if ac else ""
+        extra = (f"\n⚠ Currently out to {display_person(ac['student_name'])}"
+                 if ac else "")
         self._out_info.config(
             text=f"{u['garment_type']}  #{u['item_number']}  "
                  f"(size {u['size'] or '—'}){extra}")
@@ -179,7 +181,7 @@ class UniformScanDialog(ttk.Toplevel):
         self._in_btn.config(state="normal")
         self._in_info.config(
             text=f"{u['garment_type']} #{u['item_number']} is out to "
-                 f"{self._in_checkout['student_name']}.")
+                 f"{display_person(self._in_checkout['student_name'])}.")
 
     def _do_in(self):
         if not self._in_checkout:
@@ -188,7 +190,7 @@ class UniformScanDialog(ttk.Toplevel):
                                 datetime.today().strftime("%Y-%m-%d"))
         self._log_msg(f"IN   {self._in_uniform['garment_type']} "
                       f"#{self._in_uniform['item_number']} ← "
-                      f"{self._in_checkout['student_name']}")
+                      f"{display_person(self._in_checkout['student_name'])}")
         self._in_bc.set("")
         self._in_uniform = None
         self._in_checkout = None

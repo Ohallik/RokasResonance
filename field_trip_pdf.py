@@ -857,8 +857,9 @@ def build_student_list(trip, students, path, teacher_name="", school_name=""):
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="2E5FA3")
         c.alignment = Alignment(horizontal="left")
+    from ui.names import display_first_of
     for r in rows:
-        ws.append([r["last_name"], r["first_name"], r["grade"],
+        ws.append([r["last_name"], display_first_of(r), r["grade"],
                    r["student_id"], r["ensembles"]])
 
     for col, width in zip("ABCDE", (20, 18, 8, 14, 34)):

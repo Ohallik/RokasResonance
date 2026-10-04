@@ -515,6 +515,17 @@ class LessonPlanDatabase:
                 conn.commit()
             except Exception:
                 pass
+            # Migration: alternate-day players -- a trumpet player who plays
+            # percussion every other day.  alt_instrument names the other
+            # instrument (NULL = percussion every day); alt_odd = 1 puts it
+            # on the odd rotation days.
+            for col, decl in (("alt_instrument", "TEXT"),
+                              ("alt_odd", "INTEGER DEFAULT 1")):
+                try:
+                    conn.execute(f"ALTER TABLE percussion_students ADD COLUMN {col} {decl}")
+                    conn.commit()
+                except Exception:
+                    pass
             # Migration: a section may define its OWN rotation stations (JSON
             # list of {"name", "share"}).  NULL = the built-in 40/40/20 ring —
             # so every existing section keeps the rotation it already had.
@@ -1212,7 +1223,8 @@ class LessonPlanDatabase:
 
     def update_percussion_student(self, student_id, data):
         cols = [c for c in ["name", "full_rotation", "assessments_passed",
-                            "is_active", "sort_order", "allowed_stations"] if c in data]
+                            "is_active", "sort_order", "allowed_stations",
+                            "alt_instrument", "alt_odd"] if c in data]
         if not cols:
             return
         set_clause = ", ".join(f"{c}=?" for c in cols)

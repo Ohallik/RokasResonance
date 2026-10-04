@@ -15,6 +15,7 @@ from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime, date as dt_date
 
 from ui.theme import fit_window, fs, muted_fg
+from ui.names import display_person
 from ui.names import display_full
 
 CONDITION_OPTIONS = ["New", "Excellent", "Good", "Fair", "Poor", "Needs Repair",
@@ -438,7 +439,7 @@ class UniformCheckoutDialog(ttk.Toplevel):
                              font=("Segoe UI", fs(9), "bold"))
         form.pack(fill=BOTH, expand=True, pady=(0, 8))
         form.columnconfigure(1, weight=1)
-        student = self.checkout_data.get("student_name", "")
+        student = display_person(self.checkout_data.get("student_name", ""))
         ttk.Label(form, text="Assigned To:", font=("Segoe UI", fs(9), "bold")).grid(
             row=0, column=0, sticky=W, pady=4)
         ttk.Label(form, text=student, font=("Segoe UI", fs(9))).grid(

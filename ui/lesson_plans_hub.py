@@ -297,6 +297,19 @@ class LessonPlansHub(ttk.Frame):
                   foreground=muted_fg(), justify="center").pack(pady=(8, 0))
         return outer
 
+    def confirm_close(self):
+        """Called before Teacher Tools closes: offer to save a seating chart
+        that changed since it was last saved.  False = stay open."""
+        seating = self._seating
+        if seating is None or not hasattr(seating, "save_before_closing"):
+            return True
+        try:
+            if seating.has_unsaved_changes():
+                self._notebook.select(seating)
+            return seating.save_before_closing()
+        except Exception:
+            return True                 # never trap the teacher in the window
+
     def _tabs(self):
         core = [self._seating, self._percussion, self._jazz,
                 self._performances, self._agendas]

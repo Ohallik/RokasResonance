@@ -858,6 +858,15 @@ def main():
     _pending = {}
 
     def on_close():
+        # Teacher Tools may hold an unsaved seating chart; it asks first.
+        for w in app.winfo_children():
+            hub = getattr(w, "_hub", None)
+            if hub is not None:
+                try:
+                    if not hub.confirm_close():
+                        return
+                except Exception:
+                    pass
         _pending["db"] = getattr(app, "_current_db", None)
         _pending["data_dir"] = getattr(app, "_current_data_dir", None)
         _pending["profile"] = getattr(app, "_current_profile_name", None)
