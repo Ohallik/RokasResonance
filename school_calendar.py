@@ -180,6 +180,26 @@ def school_day_index(cal, d):
 SCHOOL_DAYS_PER_WEEK = 5
 
 
+def school_week_index(cal, d, is_day=None):
+    """1-based count of school WEEKS (Mon-Fri weeks with at least one school
+    day, or one ``is_day(date)`` day) from the first day through ``d``.
+    Break weeks don't count, so "every other week" keeps alternating across
+    winter break instead of skipping a turn.  0 before the year starts."""
+    if is_day is None:
+        is_day = (lambda x: is_school_day(cal, x)) if cal else \
+            (lambda x: x.weekday() < 5)
+    start = cal["first_day"] if cal else date(
+        d.year if d.month >= 8 else d.year - 1, 9, 1)
+    if d < start:
+        return 0
+    weeks, cur = set(), start
+    while cur <= d:
+        if is_day(cur):
+            weeks.add(cur - timedelta(days=cur.weekday()))
+        cur += timedelta(days=1)
+    return len(weeks)
+
+
 def add_school_days(cal, d, days):
     """``days`` school days after (or before, if negative) ``d``.
 

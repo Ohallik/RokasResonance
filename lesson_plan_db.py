@@ -519,8 +519,11 @@ class LessonPlanDatabase:
             # percussion every other day.  alt_instrument names the other
             # instrument (NULL = percussion every day); alt_odd = 1 puts it
             # on the odd rotation days.
+            # alt_every = 'day' (every other day) or 'week' (whole school
+            # weeks: a trumpet week, then a percussion week).
             for col, decl in (("alt_instrument", "TEXT"),
-                              ("alt_odd", "INTEGER DEFAULT 1")):
+                              ("alt_odd", "INTEGER DEFAULT 1"),
+                              ("alt_every", "TEXT DEFAULT 'day'")):
                 try:
                     conn.execute(f"ALTER TABLE percussion_students ADD COLUMN {col} {decl}")
                     conn.commit()
@@ -1224,7 +1227,7 @@ class LessonPlanDatabase:
     def update_percussion_student(self, student_id, data):
         cols = [c for c in ["name", "full_rotation", "assessments_passed",
                             "is_active", "sort_order", "allowed_stations",
-                            "alt_instrument", "alt_odd"] if c in data]
+                            "alt_instrument", "alt_odd", "alt_every"] if c in data]
         if not cols:
             return
         set_clause = ", ".join(f"{c}=?" for c in cols)

@@ -371,20 +371,38 @@ def _limited_station(student, day, index):
 #
 # ``alt_instrument`` names the other instrument; ``alt_odd`` (default True)
 # puts it on the ODD rotation days, so day 1 is a trumpet day.  The cycle is
-# kept even whenever anyone alternates, so odd/even never flips at the wrap.
+# kept even whenever anyone alternates by day, so odd/even never flips at the
+# wrap.
+#
+# ``alt_every = "week"`` alternates whole school weeks instead: a trumpet week,
+# then a percussion week.  ``alt_odd`` then means the odd school WEEKS.  The
+# caller passes the school-week number (the agenda knows the calendar); with
+# none, five rotation days count as a week.
 
 def _is_alternating(student):
     return bool((student.get("alt_instrument") or "").strip())
 
 
-def _on_concert_day(student, day):
-    odd = student.get("alt_odd", True)
-    return (day % 2 == 1) == bool(odd)
+def _alt_weekly(student):
+    return (student.get("alt_every") or "day") == "week"
+
+
+def _on_concert_day(student, day, week=None):
+    odd = bool(student.get("alt_odd", True))
+    if _alt_weekly(student):
+        if week is None:
+            week = (day - 1) // 5 + 1
+        return (week % 2 == 1) == odd
+    return (day % 2 == 1) == odd
 
 
 def _percussion_day(student, day):
     """How many percussion days this alternating player has had through
-    ``day`` -- the day number their own percussion rotation is on."""
+    ``day`` -- the day number their own percussion rotation is on.  (A
+    week-alternator's percussion days come in runs, so the capacity pass's
+    longest-since-played choice does the rotating for them.)"""
+    if _alt_weekly(student):
+        return day
     if student.get("alt_odd", True):
         return max(1, day // 2)
     return max(1, (day + 1) // 2)
@@ -449,7 +467,8 @@ def cycle_length(students, mallet_subrotation=True, inventory=None,
     for s in limited:
         need([s], len(s.get("allowed_stations") or []) or 1)
     length = max(lengths) if lengths else 1
-    if length % 2 and any(_is_alternating(s) for s in students):
+    if length % 2 and any(_is_alternating(s) and not _alt_weekly(s)
+                          for s in students):
         length += 1
     return length
 
@@ -507,8 +526,9 @@ def station_summary(n, class_type, stations=None):
 
 def day_assignments(students, day, class_type,
                     mallet_subrotation=True, mode=MODE_NORMAL,
-                    inventory=None, stations=None):
+                    inventory=None, stations=None, week=None):
     """Compute the station for every player on rotation ``day`` (1-based).
+    ``week`` is the school-week number, for players who alternate by week.
 
     ``students`` is an ordered list of dicts with at least:
         ``name``          - display name
@@ -553,10 +573,12 @@ def day_assignments(students, day, class_type,
     last = {}
     if any(_flex_rank(s) >= 2 for s in students):
         for d in range(1, day):
-            for s, st in zip(students, _assign_day(*args, d, MODE_NORMAL, last)):
+            # Earlier days' weeks, near enough: five rotation days a week.
+            wk = None if week is None else week - (day - d) // 5
+            for s, st in zip(students, _assign_day(*args, d, MODE_NORMAL, last, wk)):
                 last.setdefault(id(s), {})[st] = d
     return [(s["name"], st) for s, st in
-            zip(students, _assign_day(*args, day, mode, last))]
+            zip(students, _assign_day(*args, day, mode, last, week))]
 
 
 def _flex_rank(s):
@@ -571,7 +593,7 @@ def _flex_rank(s):
 
 
 def _assign_day(students, class_type, mallet_subrotation, inventory, stations,
-                day, mode, last):
+                day, mode, last, week=None):
     """One day's stations, in ``students`` order (see day_assignments)."""
     # Limited students are handled first and pulled out of the normal pools.
     limited = [s for s in students if _is_limited(s)]
@@ -619,7 +641,7 @@ def _assign_day(students, class_type, mallet_subrotation, inventory, stations,
     # An alternate-day player on their concert day isn't in the percussion
     # section at all today.
     away = {id(s) for s in students
-            if _is_alternating(s) and _on_concert_day(s, day)}
+            if _is_alternating(s) and _on_concert_day(s, day, week)}
     for s in students:
         if id(s) in away:
             station_by_id[id(s)] = s["alt_instrument"].strip()

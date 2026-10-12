@@ -153,12 +153,40 @@ def alt_fields(row):
         odd = row["alt_odd"]
     except (KeyError, IndexError, TypeError):
         odd = 1
-    return {"alt_instrument": inst, "alt_odd": odd is None or bool(odd)}
+    try:
+        every = (row["alt_every"] or "day").strip() or "day"
+    except (KeyError, IndexError, TypeError):
+        every = "day"
+    return {"alt_instrument": inst, "alt_odd": odd is None or bool(odd),
+            "alt_every": every}
 
 
-def alt_summary(alt):
-    days = "odd" if alt.get("alt_odd", True) else "even"
-    return f"{alt['alt_instrument']} on {days} days"
+def current_school_week(db, d=None):
+    """This school week's number (1 = the first week of school), from the
+    year's calendar -- what "this week / next week" mean for players who
+    alternate by week."""
+    import school_calendar as scal
+    from datetime import date as _date
+    d = d or _date.today()
+    base = os.path.basename(getattr(db, "db_path", "") or "")
+    year = (base[len("lesson_plans_"):-len(".db")]
+            if base.startswith("lesson_plans_") and base.endswith(".db") else None)
+    try:
+        return max(1, scal.school_week_index(scal.get_calendar(year), d))
+    except Exception:
+        return 1
+
+
+def alt_summary(alt, week=None):
+    inst = alt["alt_instrument"]
+    odd = alt.get("alt_odd", True)
+    if alt.get("alt_every") == "week":
+        if week:
+            this = (week % 2 == 1) == bool(odd)
+            return (f"{inst} this week, percussion next" if this
+                    else f"percussion this week, {inst} next")
+        return f"{inst} every other week"
+    return f"{inst} on {'odd' if odd else 'even'} days"
 
 
 def load_mallet_inventory(db):
@@ -632,7 +660,8 @@ class PercussionRotationView(ttk.Frame):
         assignments = pr.day_assignments(
             payload, day, g["class_type"],
             mallet_subrotation=bool(g["mallet_subrotation"]), mode=mode,
-            inventory=self._inventory(), stations=stations)
+            inventory=self._inventory(), stations=stations,
+            week=current_school_week(self.db))
         self._board.delete(*self._board.get_children())
         for name, station in assignments:
             icon = _icon_for_station(self._board, station)
@@ -654,7 +683,7 @@ class PercussionRotationView(ttk.Frame):
                        else "○  Mallets only")
             alt = alt_fields(r)
             if alt:
-                rot += f"  ·  🎺 {alt_summary(alt)}"
+                rot += f"  ·  🎺 {alt_summary(alt, current_school_week(self.db))}"
             self._roster.insert("", "end", iid=str(r["id"]), values=(r["name"], rot))
 
     # ───────────────────────────────────────────────────────── day controls ───
@@ -905,15 +934,18 @@ class PercussionRotationView(ttk.Frame):
         if not r:
             return
         cur = alt_fields(r)
+        week = current_school_week(self.db)
         dlg = _AlternateDaysDialog(self.winfo_toplevel(), r["name"],
                                    cur.get("alt_instrument", ""),
-                                   cur.get("alt_odd", True))
+                                   cur.get("alt_odd", True),
+                                   every=cur.get("alt_every", "day"), week=week)
         self.wait_window(dlg)
         if dlg.result is None:
             return
-        inst, odd = dlg.result
+        inst, odd, every = dlg.result
         self.db.update_percussion_student(
-            pid, {"alt_instrument": inst or None, "alt_odd": 1 if odd else 0})
+            pid, {"alt_instrument": inst or None, "alt_odd": 1 if odd else 0,
+                  "alt_every": every})
         self._render()
         self._roster.selection_set(str(pid))
 
@@ -1904,9 +1936,10 @@ class _AlternateDaysDialog(ttk.Toplevel):
                    "Alto Sax", "Tenor Sax", "Bari Sax", "Trumpet",
                    "French Horn", "Trombone", "Euphonium", "Tuba"]
 
-    def __init__(self, parent, name, instrument, odd):
+    def __init__(self, parent, name, instrument, odd, every="day", week=1):
         super().__init__(master=parent)
         self.result = None
+        self._week = max(1, int(week or 1))
         self.title(f"Alternate Days — {name}")
         self.resizable(False, False)
         self.grab_set()
@@ -1920,10 +1953,10 @@ class _AlternateDaysDialog(ttk.Toplevel):
 
         body = ttk.Frame(self)
         body.pack(fill=BOTH, expand=True, padx=16, pady=10)
-        ttk.Label(body, text="Every other rotation day this student plays "
-                             "their concert instrument instead of percussion. "
-                             "On the days between, they pick up the percussion "
-                             "rotation where they left off.",
+        ttk.Label(body, text="This student switches between their concert "
+                             "instrument and percussion. On their percussion "
+                             "days they pick up the rotation where they left "
+                             "off.",
                   font=("Segoe UI", 9), wraplength=400,
                   justify=LEFT).pack(anchor=W)
 
@@ -1933,17 +1966,25 @@ class _AlternateDaysDialog(ttk.Toplevel):
         ttk.Combobox(body, textvariable=self._inst, values=self.INSTRUMENTS,
                      width=24).pack(anchor=W, pady=(2, 0))
 
-        ttk.Label(body, text="Which days are for that instrument?",
+        ttk.Label(body, text="How often do they switch?",
                   font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(10, 0))
+        self._every = tk.StringVar(value=every if every in ("day", "week") else "day")
+        for val, text in (("day", "Every other day"),
+                          ("week", "Every other week (a whole school week each)")):
+            ttk.Radiobutton(body, text=text, variable=self._every, value=val,
+                            command=self._show_when).pack(anchor=W, pady=1)
+
+        self._when_lbl = ttk.Label(body, text="", font=("Segoe UI", 9, "bold"))
+        self._when_lbl.pack(anchor=W, pady=(10, 0))
+        # odd = the concert instrument is on the odd days / odd school weeks.
         self._odd = tk.BooleanVar(value=bool(odd))
-        ttk.Radiobutton(body, text="Odd days (Day 1, 3, 5…)",
-                        variable=self._odd, value=True).pack(anchor=W, pady=1)
-        ttk.Radiobutton(body, text="Even days (Day 2, 4, 6…)",
-                        variable=self._odd, value=False).pack(anchor=W, pady=1)
-        ttk.Label(body, text="Splitting several players between odd and even "
-                             "days keeps the section the same size every day.",
+        self._when_box = ttk.Frame(body)
+        self._when_box.pack(anchor=W, fill=X)
+        ttk.Label(body, text="Splitting several players between the two keeps "
+                             "the section the same size every day.",
                   font=("Segoe UI", 8), foreground=muted_fg(), wraplength=400,
                   justify=LEFT).pack(anchor=W, pady=(4, 0))
+        self._show_when()
 
         btn = ttk.Frame(self)
         btn.pack(fill=X, padx=16, pady=12)
@@ -1956,7 +1997,27 @@ class _AlternateDaysDialog(ttk.Toplevel):
                        bootstyle=(DANGER, OUTLINE),
                        command=self._remove).pack(side=LEFT, padx=4)
         from ui.theme import fit_window
-        fit_window(self, 450, 400)
+        fit_window(self, 450, 470)
+
+    def _show_when(self):
+        """Odd/even days, or this/next week -- whichever the choice needs.
+        Weeks are put as "this week" and "next week" because nobody knows
+        which school week number it is."""
+        for w in self._when_box.winfo_children():
+            w.destroy()
+        if self._every.get() == "week":
+            self._when_lbl.config(text="When are they on that instrument?")
+            this_odd = self._week % 2 == 1        # odd value meaning "this week"
+            for odd, text in ((this_odd, "This week, then every other week"),
+                              (not this_odd, "Next week, then every other week")):
+                ttk.Radiobutton(self._when_box, text=text, variable=self._odd,
+                                value=odd).pack(anchor=W, pady=1)
+        else:
+            self._when_lbl.config(text="Which days are for that instrument?")
+            ttk.Radiobutton(self._when_box, text="Odd days (Day 1, 3, 5…)",
+                            variable=self._odd, value=True).pack(anchor=W, pady=1)
+            ttk.Radiobutton(self._when_box, text="Even days (Day 2, 4, 6…)",
+                            variable=self._odd, value=False).pack(anchor=W, pady=1)
 
     def _save(self):
         inst = self._inst.get().strip()
@@ -1964,11 +2025,11 @@ class _AlternateDaysDialog(ttk.Toplevel):
             Messagebox.show_warning("Pick or type the other instrument.",
                                     title="Instrument", parent=self)
             return
-        self.result = (inst, self._odd.get())
+        self.result = (inst, self._odd.get(), self._every.get())
         self.destroy()
 
     def _remove(self):
-        self.result = ("", True)
+        self.result = ("", True, "day")
         self.destroy()
 
 

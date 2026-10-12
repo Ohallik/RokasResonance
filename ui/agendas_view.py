@@ -2331,6 +2331,18 @@ class AgendasView(ttk.Frame):
 
     # ── images (stored in the day as base64 so they ride DB backups) ──
 
+    def _image_size(self, val):
+        """(width, height) of an item's picture, or None."""
+        import io
+        try:
+            from PIL import Image
+            data = self._image_bytes(val)
+            if not data:
+                return None
+            return Image.open(io.BytesIO(data)).size
+        except Exception:
+            return None
+
     def _thumb(self, val, target_w):
         import io
         try:
@@ -2908,8 +2920,15 @@ class AgendasView(ttk.Frame):
         asg = pr.day_assignments(payload, day, group["class_type"],
                                  mallet_subrotation=self._perc_subrotation(group),
                                  inventory=self._perc_inventory(),
-                                 stations=self._perc_stations(group))
+                                 stations=self._perc_stations(group),
+                                 week=self._school_week())
         return asg, day, cycle
+
+    def _school_week(self):
+        """Which school week this date is in (weeks this class meets), for
+        players who alternate a whole week at a time."""
+        return scal.school_week_index(self._calendar(), self._date,
+                                      is_day=self._is_class_day)
 
     # ────────────────────────────────────────────────────────────── present ───
 
@@ -3106,6 +3125,14 @@ class _PresentWindow(ttk.Toplevel):
     below uses the full width; collapse it once players are set.
     """
 
+    # Point sizes on the projector.  Kids at the back of the room asked for
+    # bigger: agenda lines are 20 pt (detail lines 18), headers a step above.
+    LINE_PT, DETAIL_PT, HDR_PT, CHECK_PT = 20, 18, 22, 28
+    BANNER_PT, PANEL_PT = 18, 15
+    # A picture at least this many times wider than tall is a line of music
+    # (a rhythm); it stretches to the full width of the screen.
+    WIDE_RATIO = 4.0
+
     def __init__(self, parent, view):
         super().__init__(master=parent)
         self.view = view
@@ -3116,6 +3143,7 @@ class _PresentWindow(ttk.Toplevel):
         self._timer_end = 0.0
         self._timer_remaining = 0
         self._perc_collapsed = False
+        self._banner_collapsed = False
         self._perc_widget = None
         if getattr(view, "_fullscreen", True):
             try:
@@ -3258,7 +3286,22 @@ class _PresentWindow(ttk.Toplevel):
 
     def _hdr(self, parent, text, bg=HDR_BG, fg=HDR_FG):
         return _tk(tk.Label, parent, text=text, bg=bg, fg=fg, anchor="w",
-                   font=("Segoe UI", fs(15), "bold"), padx=10, pady=3)
+                   font=("Segoe UI", fs(self.HDR_PT), "bold"), padx=10, pady=3)
+
+    def _screen_w(self):
+        """Usable width of the projection, for wrapping and wide pictures."""
+        try:
+            w = self._canvas.winfo_width()
+        except Exception:
+            w = 0
+        if w < 300:
+            w = (self.winfo_screenwidth() if getattr(self.view, "_fullscreen", True)
+                 else 1200)
+        return w
+
+    def _toggle_banner(self):
+        self._banner_collapsed = not self._banner_collapsed
+        self.rebuild()
 
     def rebuild(self):
         try:
@@ -3284,11 +3327,7 @@ class _PresentWindow(ttk.Toplevel):
                 pass
             self._perc_widget = None
 
-        banner = _tk(tk.Frame, self._banner_host, bg=bg)
-        banner.pack(fill=X, padx=20, pady=(8, 6))
-        self._present_banner_text(banner, "Reminders", day.get("reminders", []), bg)
-        self._present_banner_text(banner, "Announcements",
-                                  day.get("announcements", []), bg)
+        self._build_banner(day, bg)
 
         for section in day.get("sections", []):
             self._present_section(section, bg)
@@ -3296,15 +3335,53 @@ class _PresentWindow(ttk.Toplevel):
         self._build_perc_panel(bg)
         self.after_idle(lambda: AgendasView._restore_scroll(self._canvas, top))
 
-    def _present_banner_text(self, parent, title, lines, bg):
+    def _build_banner(self, day, bg):
+        """Reminders + Announcements across the top, with a hide button --
+        at projector size they can crowd the agenda itself.  Hidden, they
+        shrink to one small button that brings them back."""
+        rem = day.get("reminders", []) or []
+        ann = day.get("announcements", []) or []
+        if not (rem or ann):
+            return
+        if self._banner_collapsed:
+            row = _tk(tk.Frame, self._banner_host, bg=bg)
+            row.pack(fill=X, padx=20, pady=(4, 0))
+            _tk(tk.Button, row, text="📋 Reminders & Announcements  ▾",
+                bg=BAN_BG, fg=BAN_FG, activebackground=BAN_BG,
+                activeforeground=BAN_FG, bd=0, cursor="hand2", relief="flat",
+                padx=10, pady=2, font=("Segoe UI", fs(12), "bold"),
+                command=self._toggle_banner).pack(side=LEFT)
+            return
+        banner = _tk(tk.Frame, self._banner_host, bg=bg)
+        banner.pack(fill=X, padx=20, pady=(8, 6))
+        cols = [c for c in (rem, ann) if c]
+        wrap = max(300, (self._screen_w() - 140) // max(1, len(cols)) - 40)
+        # The hide button rides in the FIRST column's header: the right end
+        # of the banner is under the floating percussion panel.
+        self._present_banner_text(banner, "Reminders", rem, bg, wrap,
+                                  hide_btn=True)
+        self._present_banner_text(banner, "Announcements", ann, bg, wrap,
+                                  hide_btn=not rem)
+
+    def _present_banner_text(self, parent, title, lines, bg, wrap=460,
+                             hide_btn=False):
         if not lines:
             return                              # hide an empty banner column
         col = _tk(tk.Frame, parent, bg=bg)
         col.pack(side=LEFT, fill=Y, padx=(0, 40), anchor=N)
-        self._hdr(col, title, bg=BAN_BG, fg=BAN_FG).pack(fill=X)
+        head = _tk(tk.Frame, col, bg=BAN_BG)
+        head.pack(fill=X)
+        self._hdr(head, title, bg=BAN_BG, fg=BAN_FG).pack(side=LEFT, fill=X,
+                                                           expand=True)
+        if hide_btn:
+            _tk(tk.Button, head, text="▴ hide", bg=BAN_BG, fg=BAN_FG,
+                activebackground=BAN_BG, activeforeground=BAN_FG, bd=0,
+                cursor="hand2", relief="flat", padx=8,
+                font=("Segoe UI", fs(11), "bold"),
+                command=self._toggle_banner).pack(side=RIGHT)
         for ln in lines:
             _tk(tk.Label, col, text="•  " + ln, bg=bg, fg=_auto_fg(bg),
-                font=("Segoe UI", fs(14)), wraplength=460,
+                font=("Segoe UI", fs(self.BANNER_PT)), wraplength=wrap,
                 justify=LEFT, anchor=W).pack(fill=X)
 
     # ── floating, collapsible percussion panel ──
@@ -3358,9 +3435,9 @@ class _PresentWindow(ttk.Toplevel):
                 _tk(tk.Label, r, text="  ", background=_station_color(station),
                     relief="solid", bd=1).pack(side=LEFT)
             _tk(tk.Label, r, text=name, bg=bg, fg=_auto_fg(bg), width=10,
-                anchor="w", font=("Segoe UI", fs(12), "bold")).pack(side=LEFT, padx=6)
+                anchor="w", font=("Segoe UI", fs(self.PANEL_PT), "bold")).pack(side=LEFT, padx=6)
             _tk(tk.Label, r, text=station, bg=bg, fg=_auto_fg(bg),
-                font=("Segoe UI", fs(12))).pack(side=LEFT)
+                font=("Segoe UI", fs(self.PANEL_PT))).pack(side=LEFT)
         panel.place(relx=1.0, y=8, anchor="ne", x=-10)
         self._perc_widget = panel
 
@@ -3403,9 +3480,9 @@ class _PresentWindow(ttk.Toplevel):
                 _tk(tk.Label, r, image=ic, bg=bg).pack(side=LEFT)
             else:
                 _tk(tk.Label, r, text=seat, bg=bg, fg=_auto_fg(bg), width=12,
-                    anchor="w", font=("Segoe UI", fs(12), "bold")).pack(side=LEFT)
+                    anchor="w", font=("Segoe UI", fs(self.PANEL_PT), "bold")).pack(side=LEFT)
             _tk(tk.Label, r, text=", ".join(names) if names else "—", bg=bg,
-                fg=_auto_fg(bg), font=("Segoe UI", fs(12))).pack(side=LEFT, padx=(8, 0))
+                fg=_auto_fg(bg), font=("Segoe UI", fs(self.PANEL_PT))).pack(side=LEFT, padx=(8, 0))
         panel.place(relx=1.0, y=8, anchor="ne", x=-10)
         self._perc_widget = panel
 
@@ -3418,7 +3495,7 @@ class _PresentWindow(ttk.Toplevel):
         lbl = _tk(tk.Label, parent,
                   text="☑" if self.view._is_done(iso, item) else "☐",
                   bg=bg, fg=_auto_fg(bg), cursor="hand2",
-                  font=("Segoe UI", fs(24)))
+                  font=("Segoe UI", fs(self.CHECK_PT)))
 
         def click(_e=None):
             val = not self.view._is_done(iso, item)
@@ -3461,7 +3538,14 @@ class _PresentWindow(ttk.Toplevel):
         row.pack(fill=X, pady=2, anchor=W)
         self._big_check(row, item, bg).pack(side=LEFT, anchor=N)
         w = int(item.get("img_w") or 380)
-        img = self.view._thumb(item["image"], min(1800, max(200, w)))
+        size = self.view._image_size(item["image"])
+        if size and size[0] >= self.WIDE_RATIO * size[1]:
+            # A rhythm line: fill the screen left to right, whatever the
+            # projector's width, instead of whatever size it was pasted at.
+            w = self._screen_w() - fs(self.CHECK_PT) * 2 - 70
+            img = self.view._thumb(item["image"], max(200, w))
+        else:
+            img = self.view._thumb(item["image"], min(1800, max(200, w)))
         if img is not None:
             self._img_refs.append(img)
             _tk(tk.Label, row, image=img, bg=bg).pack(side=LEFT, padx=6)
@@ -3477,18 +3561,20 @@ class _PresentWindow(ttk.Toplevel):
             # no check box of its own.
             _tk(tk.Label, row, text="", bg=bg, width=4).pack(side=LEFT)
             self._rich_text(row, item, "◦  " + (item.get("text") or ""), bg,
-                            fg, lbg, size=14, offset=3)
+                            fg, lbg, size=self.DETAIL_PT, offset=3)
             return
         if kind in ("missing", "static"):
             # Fixed text, no check box (missing names, or a song's locked
             # personnel dropped under the piece), indented under the checkboxes.
             _tk(tk.Label, row, text="", bg=bg, width=3).pack(side=LEFT)
             _tk(tk.Label, row, text=missing_text or item.get("text", ""), bg=bg,
-                fg=_auto_fg(bg), font=("Segoe UI", fs(14)), wraplength=1100,
+                fg=_auto_fg(bg), font=("Segoe UI", fs(self.DETAIL_PT)),
+                wraplength=self._screen_w() - 160,
                 justify=LEFT).pack(side=LEFT)
             return
         self._big_check(row, item, bg).pack(side=LEFT, padx=(0, 2))
-        self._rich_text(row, item, item.get("text", ""), bg, fg, lbg, size=16)
+        self._rich_text(row, item, item.get("text", ""), bg, fg, lbg,
+                        size=self.LINE_PT)
 
     def _rich_text(self, row, item, text, bg, fg, lbg, size=16, offset=0):
         """One projected line.  Plain lines stay ordinary labels; a line with
@@ -3497,7 +3583,7 @@ class _PresentWindow(ttk.Toplevel):
         runs = item.get("runs") or []
         if not runs:
             _tk(tk.Label, row, text=text, bg=lbg, fg=fg,
-                font=("Segoe UI", fs(size)), wraplength=1050,
+                font=("Segoe UI", fs(size)), wraplength=self._screen_w() - 200,
                 justify=LEFT, padx=(6 if lbg != bg else 0)).pack(side=LEFT,
                                                                  padx=8)
             return
