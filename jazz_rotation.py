@@ -124,6 +124,21 @@ def normalize_locked(locked, valid_seats):
     return out
 
 
+def unique_players(players):
+    """Players with any repeat of a name dropped (the first one is kept).
+
+    Adding the same student to a band twice used to make them count twice
+    on every seat they cover -- a drummer listed twice looked like two
+    drummers, and the cycle never came out even."""
+    out, seen = [], set()
+    for p in players or []:
+        key = (p.get("name") or "").strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(p)
+    return out
+
+
 def eligible_players(seat, players, used=None):
     """Roster-ordered players who can cover ``seat`` and aren't placed yet."""
     used = used or set()
@@ -226,8 +241,11 @@ def _assign_one_day(seats, players, day, locked, pools, hist):
     # 3) Rescue pass — a player may still be benched only because a seat they
     #    can play is full of players who each have somewhere ELSE to go (e.g. a
     #    piano-only student stuck behind a pianist who also plays vibes).
-    #    Shuffle one movable occupant out so the stuck player gets a seat.
-    #    Repeats until no further rescue is possible.
+    #    Shuffle one movable occupant out so the stuck player gets a seat --
+    #    but only when the stuck player is at least as DUE for that seat as
+    #    the occupant.  Otherwise a drums-only student took the kit back
+    #    every single day and the two drummers who also play vibes never
+    #    got a turn.  Repeats until no further rescue is possible.
     changed = True
     while changed:
         changed = False
@@ -240,6 +258,9 @@ def _assign_one_day(seats, players, day, locked, pools, hist):
                 for occ in list(assign[seat]):
                     if occ in locked_names:
                         continue
+                    if (hist.key(seat, p["name"], 0)[:2]
+                            > hist.key(seat, occ, 0)[:2]):
+                        continue                # it's the occupant's turn
                     op = by_name.get(occ)
                     if not op:
                         continue
@@ -262,6 +283,7 @@ def _simulate(seats, players, days, locked=None, pools=None):
     """Boards for days 1..``days`` in order, each built on what came before.
     Yields ``(day, assignments, bench, hist)``."""
     hist = _History()
+    players = unique_players(players)
     for d in range(1, max(1, days) + 1):
         asg, bench = _assign_one_day(seats, players, d, locked, pools, hist)
         hist.record(d, asg)
@@ -349,6 +371,7 @@ def cycle_length(seats, players, locked=None, pools=None):
     lengthens the cycle.  If no day within the search window comes out even —
     the only drummer also wants a piano turn, say — the fairest day found is
     used instead."""
+    players = unique_players(players)
     seatlist = normalize_seats(seats)
     names = [n for n, _ in seatlist]
     locked = normalize_locked(locked, names)
@@ -387,3 +410,24 @@ def describe_seat_coverage(seats, players):
     teacher can spot a seat nobody can cover, or one everyone piles onto."""
     return [(name, cap, [p["name"] for p in eligible_players(name, players)])
             for name, cap in normalize_seats(seats)]
+
+
+def pair_classes_to_bands(class_labels, bands):
+    """Which jazz band each jazz CLASS is.  ``bands`` is ``[(id, name)]``.
+
+    A class and a band with the same name pair up first ("Jazz 2" is Jazz 2);
+    whatever is left pairs in order, so a renamed band still lands on the
+    right class.  Returns ``{class label: band id}``; a class with no band
+    left over is missing from it."""
+    def norm(t):
+        return " ".join((t or "").lower().split())
+    out, free = {}, list(bands or [])
+    for lbl in class_labels or []:
+        hit = next((b for b in free if norm(b[1]) == norm(lbl)), None)
+        if hit:
+            out[lbl] = hit[0]
+            free.remove(hit)
+    for lbl in class_labels or []:
+        if lbl not in out and free:
+            out[lbl] = free.pop(0)[0]
+    return out

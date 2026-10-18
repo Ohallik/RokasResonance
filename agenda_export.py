@@ -51,7 +51,7 @@ def _fmt_date(d):
 def _segment(text, runs):
     """Split a line into (chunk, {tags}) pieces so overlapping bold/italic/
     underline/highlight spans come out right in both renderers."""
-    text = text or ""
+    text = (text or "").replace("\t", " ")   # a pasted mid-line tab
     marks = [set() for _ in range(len(text))]
     for r in (runs or []):
         try:

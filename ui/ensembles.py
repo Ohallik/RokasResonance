@@ -457,11 +457,16 @@ def instruments_for(program_type: str):
     """Primary/secondary instrument choices for the picker."""
     if program_type == "choir":
         return CHOIR_PARTS + ["Other"]
+    # Band and orchestra each list their own instruments first, then the
+    # other program's: a cellist from orchestra joins the jazz band's
+    # rhythm section, a percussionist sits in with the orchestra, and
+    # "Other" was the only way to record either.  Numbered string parts
+    # (Violin 1/2, ...) let directors zone and shuffle within a part.
     if program_type == "orchestra":
-        # String orchestra: strings only.  Numbered parts (Violin 1/2, …)
-        # let directors zone and shuffle within a part.
-        return ORCHESTRA_INSTRUMENTS + ["Other"]
-    return BAND_INSTRUMENTS + ["Other"]
+        own, other = ORCHESTRA_INSTRUMENTS, BAND_INSTRUMENTS
+    else:
+        own, other = BAND_INSTRUMENTS, ORCHESTRA_INSTRUMENTS
+    return list(own) + [i for i in other if i not in own] + ["Other"]
 
 
 def roster_ensembles(main_db, school_year=None, site_id=None):

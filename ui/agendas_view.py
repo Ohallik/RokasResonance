@@ -109,6 +109,11 @@ def _tk(cls, parent, **kw):
     """Create a plain tk widget whose color options actually stick under
     ttkbootstrap (see module docstring)."""
     colors = {k: kw.pop(k) for k in list(kw) if k in _COLOR_KEYS}
+    # ttkbootstrap 1.x (what the installer is built with) also forces a
+    # 1px highlight border onto a Text, which boxed every formatted
+    # agenda line on the projector; set the border options after too.
+    colors.update({k: kw[k] for k in ("highlightthickness", "bd",
+                                      "borderwidth", "relief") if k in kw})
     w = cls(parent, **kw)
     if colors:
         w.configure(**colors)
@@ -241,7 +246,7 @@ class AgendasView(ttk.Frame):
                      "book": cfg["book"], "class_type": class_type,
                      "periods": cfg.get("periods") or []}
         self._store_id = cfg["id"]
-        self._jazz_eid = self._first_jazz_eid() if self._is_jazz else None
+        self._jazz_eid = self._class_jazz_eid() if self._is_jazz else None
         self._group = self._jazz_store_key() if self._is_jazz else self._store_id
         self._date = _snap_weekday(date.today())
         self._day = None
@@ -317,6 +322,31 @@ class AgendasView(ttk.Frame):
         ens = self._jazz_ensembles()
         return ens[0]["id"] if ens else None
 
+    def _jazz_class_labels(self):
+        import class_registry
+        try:
+            return [k["label"] for k in class_registry.load_classes(
+                        self.base_dir, self._program_type())
+                    if class_registry.class_config(k)["is_jazz"]]
+        except Exception:
+            return [self._cfg["label"]]
+
+    def _class_jazz_eid(self, ens=None):
+        """The band THIS class is -- the Jazz 2 tab is Jazz 2, not whichever
+        band happens to be first (see jazz_rotation.pair_classes_to_bands)."""
+        import jazz_rotation as jr
+        if ens is None:
+            ens = self._jazz_ensembles()
+        pairs = jr.pair_classes_to_bands(
+            self._jazz_class_labels(), [(e["id"], e["name"]) for e in ens])
+        eid = pairs.get(self._cfg["label"])
+        return eid if eid is not None else (ens[0]["id"] if ens else None)
+
+    def _jazz_bands_unpaired(self, ens):
+        """More bands than jazz classes (one class running two bands): only
+        then does the agenda need its own band toggle."""
+        return len(ens) > len(self._jazz_class_labels())
+
     def _jazz_store_key(self):
         return f"jazz_{self._jazz_eid}" if self._jazz_eid else "jazz_none"
 
@@ -330,8 +360,9 @@ class AgendasView(ttk.Frame):
         on the Jazz tab) and rebuild the toolbar toggle."""
         ens = self._jazz_ensembles()
         self._jazz_ids = [e["id"] for e in ens]
-        if self._jazz_eid not in self._jazz_ids:
-            self._jazz_eid = self._jazz_ids[0] if self._jazz_ids else None
+        if (self._jazz_eid not in self._jazz_ids
+                or not self._jazz_bands_unpaired(ens)):
+            self._jazz_eid = self._class_jazz_eid(ens)
         self._group = self._jazz_store_key()
         self._render_jazz_selector(ens)
 
@@ -348,6 +379,8 @@ class AgendasView(ttk.Frame):
                       font=("Segoe UI", fs(9)),
                       foreground=muted_fg()).pack(side=LEFT, padx=(6, 0))
             return
+        if not self._jazz_bands_unpaired(ens):
+            return              # the class tab above already picks the band
         ttk.Label(self._jazz_bar, text="Band:",
                   font=("Segoe UI", fs(9))).pack(side=LEFT, padx=(14, 4))
         self._jazz_var = tk.StringVar(
@@ -1813,7 +1846,8 @@ class AgendasView(ttk.Frame):
             line_start = txt.index("end-1c")
             sl = int(line_start.split(".")[0])
             off = 1 if item.get("indent") else 0
-            txt.insert("end", ("\t" if off else "") + (item.get("text") or ""))
+            txt.insert("end", ("\t" if off else "")
+                       + (item.get("text") or "").replace("\t", " "))
             for s, e, tag in (item.get("runs") or []):
                 try:
                     txt.tag_add(tag, f"{sl}.{int(s) + off}",
@@ -1866,7 +1900,11 @@ class AgendasView(ttk.Frame):
         for ln in range(1, last + 1):
             raw = txt.get(f"{ln}.0", f"{ln}.end")
             indent = 1 if raw.startswith("\t") else 0
-            text = raw[1:] if indent else raw
+            # A tab inside a line (pasted from a document) jumped to the
+            # next tab stop on the projector -- a wide gap mid-sentence.
+            # Only a LEADING tab means anything (indent); the rest become
+            # spaces, one for one, so the formatting runs still line up.
+            text = (raw[1:] if indent else raw).replace("\t", " ")
             runs = []
             for tag in self._FMT_TAGS:
                 ranges = txt.tag_ranges(tag)
@@ -3581,6 +3619,7 @@ class _PresentWindow(ttk.Toplevel):
         formatting renders through a read-only Text so bold / italic /
         underline / highlighter show exactly as typed."""
         runs = item.get("runs") or []
+        text = (text or "").replace("\t", " ")     # see _parse_text_block
         if not runs:
             _tk(tk.Label, row, text=text, bg=lbg, fg=fg,
                 font=("Segoe UI", fs(size)), wraplength=self._screen_w() - 200,

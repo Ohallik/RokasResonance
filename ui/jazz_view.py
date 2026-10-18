@@ -330,9 +330,30 @@ class JazzView(ttk.Frame):
         if not e:
             return
         self._show_placeholder(False)
+        self._merge_duplicate_players(e["id"])
         self._day_var.set(str(e["current_day"] or 1))
-        self._winds.refresh(e["name"])
+        bands = [(b["id"], b["name"])
+                 for b in self.db.get_jazz_ensembles(self._year())]
+        self._winds.refresh(e["name"], bands=bands, band_id=e["id"])
         self._render()
+
+    def _merge_duplicate_players(self, eid):
+        """A student added to the same band twice (Add Players had no check)
+        is folded back into one row: the first one keeps its place and gains
+        any instruments the copy had."""
+        first = {}
+        for r in self.db.get_jazz_players(eid):
+            key = (r["name"] or "").strip().lower()
+            if key not in first:
+                first[key] = (r["id"], _loads(r["parts"], []))
+                continue
+            pid, parts = first[key]
+            extra = [x for x in _loads(r["parts"], []) if x not in parts]
+            if extra:
+                parts = parts + extra
+                first[key] = (pid, parts)
+                self.db.update_jazz_player(pid, {"parts": _dumps(parts)})
+            self.db.delete_jazz_player(r["id"])
 
     def _ensemble(self):
         if self._selected_id is None:
@@ -579,8 +600,20 @@ class JazzView(ttk.Frame):
         self.wait_window(dlg)
         if not dlg.names:
             return
+        have = {(r["name"] or "").strip().lower()
+                for r in self.db.get_jazz_players(e["id"])}
+        skipped = []
         for name in dlg.names:
+            key = name.strip().lower()
+            if key in have:
+                skipped.append(name)
+                continue
+            have.add(key)
             self.db.add_jazz_player(e["id"], name, _dumps([]))
+        if skipped:
+            Messagebox.show_info(
+                f"Already in {e['name']}: {', '.join(skipped)}.",
+                title="Already Added", parent=self)
         self.refresh()
         self._render()
 
@@ -935,22 +968,25 @@ class _WindsPanel(ttk.Labelframe):
                       wraplength=220, justify=LEFT).pack(anchor=W, pady=8)
             return
 
-        top = ttk.Frame(self)
+        # Normally each band IS a class (the band tabs pick both), so the
+        # class picker only appears when there are more jazz classes than
+        # bands.  A picker alongside the band tabs let them disagree --
+        # Jazz 1's rhythm section beside Jazz 2's winds.
+        self._top = ttk.Frame(self)
         self._classes = self._jazz_classes()
         self._class_var = tk.StringVar(
             value=self._classes[0] if self._classes else "")
-        if len(self._classes) > 1:
-            top.pack(fill=X, pady=(0, 4))
-            ttk.Label(top, text="Class:",
-                      font=("Segoe UI", fs(9), "bold")).pack(side=LEFT)
-            combo = ttk.Combobox(top, textvariable=self._class_var,
-                                 state="readonly", width=20,
-                                 values=self._classes)
-            combo.pack(side=LEFT, padx=(4, 0))
-            combo.bind("<<ComboboxSelected>>", self._class_picked)
+        ttk.Label(self._top, text="Class:",
+                  font=("Segoe UI", fs(9), "bold")).pack(side=LEFT)
+        combo = ttk.Combobox(self._top, textvariable=self._class_var,
+                             state="readonly", width=20,
+                             values=self._classes)
+        combo.pack(side=LEFT, padx=(4, 0))
+        combo.bind("<<ComboboxSelected>>", self._class_picked)
 
         box = ttk.Frame(self)
         box.pack(fill=BOTH, expand=True)
+        self._box = box
         # Wide enough for name + instrument + the part dropdown, and it
         # follows the app font size so Large fonts don't clip the dropdown.
         canvas = tk.Canvas(box, highlightthickness=0, width=fs(9) * 36)
@@ -998,18 +1034,30 @@ class _WindsPanel(ttk.Labelframe):
         self._class_touched = True
         self._reload()
 
-    def refresh(self, band_name):
-        """Follow the selected band: with several jazz classes, an untouched
-        class picker tracks the band whose name matches a class label."""
+    def refresh(self, band_name, bands=None, band_id=None):
+        """Follow the selected band: its class is the one paired with it
+        (same name first, then in order -- jazz_rotation.pair_classes_to_bands).
+        Only with more jazz classes than bands is there a picker, and only
+        there does a hand-picked class stick."""
         if self._table is None:
             return
+        import jazz_rotation as jr
         self._band_name = band_name
-        if (band_name and not self._class_touched
-                and len(self._classes) > 1):
-            match = next((c for c in self._classes
-                          if c.lower() == band_name.lower()), None)
-            if match:
-                self._class_var.set(match)
+        bands = bands or ([(band_id, band_name)] if band_name else [])
+        extra = len(self._classes) > len(bands)
+        if extra and len(self._classes) > 1:
+            self._top.pack(fill=X, pady=(0, 4), before=self._box)
+        else:
+            self._top.pack_forget()
+            self._class_touched = False
+        if not self._class_touched:
+            pairs = jr.pair_classes_to_bands(self._classes, bands)
+            mine = next((c for c, b in pairs.items() if b == band_id), None)
+            if mine is None and band_name:
+                mine = next((c for c in self._classes
+                             if c.lower() == band_name.lower()), None)
+            if mine:
+                self._class_var.set(mine)
         self._reload()
 
     def _students(self):
