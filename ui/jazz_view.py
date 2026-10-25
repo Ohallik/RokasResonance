@@ -388,8 +388,13 @@ class JazzView(ttk.Frame):
             return []
         out = []
         for r in self.db.get_jazz_players(e["id"]):
+            try:
+                home = (r["home_part"] or "").strip()
+            except (KeyError, IndexError):
+                home = ""
             out.append({"id": r["id"], "name": r["name"],
-                        "parts": jr._clean_seats(_loads(r["parts"], []))})
+                        "parts": jr._clean_seats(_loads(r["parts"], [])),
+                        "home_part": home})
         return out
 
     # ─────────────────────────────────────────────────────────────── render ───
@@ -490,15 +495,14 @@ class JazzView(ttk.Frame):
             if ic is not None:
                 self._board_icons.append(ic)
             self._board.insert("", "end", text="", values=(seat, shown), **kw)
-        if bench:
-            self._bench_lbl.config(text="Waiting / rotating out:  " + ", ".join(bench))
-        else:
-            self._bench_lbl.config(text="")
+        self._bench_lbl.config(text=jr.bench_text(bench, players))
 
     def _render_roster(self):
         self._roster.delete(*self._roster.get_children())
         for p in self._players_payload():
             parts = ", ".join(p["parts"]) if p["parts"] else "— (no instruments set)"
+            if p.get("home_part"):
+                parts += f"   ·   otherwise {p['home_part']}"
             self._roster.insert("", "end", iid=str(p["id"]), values=(p["name"], parts))
 
     def _render_songs(self):
@@ -596,7 +600,7 @@ class JazzView(ttk.Frame):
         if not e:
             Messagebox.show_warning("Create a jazz band first.", title="No Band", parent=self)
             return
-        dlg = _AddPlayersDialog(self.winfo_toplevel())
+        dlg = _AddPlayersDialog(self.winfo_toplevel(), target=e["name"])
         self.wait_window(dlg)
         if not dlg.names:
             return
@@ -631,10 +635,12 @@ class JazzView(ttk.Frame):
         if not player:
             return
         dlg = _PlayerPartsDialog(self.winfo_toplevel(), player["name"],
-                                 self._seat_names(e), player["parts"])
+                                 self._seat_names(e), player["parts"],
+                                 home=player.get("home_part", ""))
         self.wait_window(dlg)
         if dlg.saved:
-            self.db.update_jazz_player(pid, {"parts": _dumps(dlg.parts)})
+            self.db.update_jazz_player(pid, {"parts": _dumps(dlg.parts),
+                                             "home_part": dlg.home or None})
             self._render()
             self._roster.selection_set(str(pid))
 
@@ -938,7 +944,8 @@ class _PartLimitsDialog(ttk.Toplevel):
 class _WindsPanel(ttk.Labelframe):
     """The wind players and who covers which part, in plain sight.
 
-    Parts save on the STUDENT (students.jazz_part) the moment one is picked --
+    Parts save per BAND (database jazz_band_parts) the moment one is
+    picked -- Jazz 1 and Jazz 2 can put the same student on different parts --
     the same store the jazz seating chart reads, so a chair set here is
     already set there.  More than one player on a part is fine; middle school
     doubles written parts all the time.  Rhythm players are not listed here:
@@ -990,6 +997,7 @@ class _WindsPanel(ttk.Labelframe):
         # Wide enough for name + instrument + the part dropdown, and it
         # follows the app font size so Large fonts don't clip the dropdown.
         canvas = tk.Canvas(box, highlightthickness=0, width=fs(9) * 36)
+        self._canvas = canvas
         sb = ttk.Scrollbar(box, orient=VERTICAL, command=canvas.yview)
         canvas.configure(yscrollcommand=sb.set)
         sb.pack(side=RIGHT, fill=Y)
@@ -1064,9 +1072,14 @@ class _WindsPanel(ttk.Labelframe):
         try:
             years = self.main_db.get_school_years()
             year = years[0] if years else None
-            return [dict(r) for r in self.main_db.get_students_for_email(
+            rows = [dict(r) for r in self.main_db.get_students_for_email(
                 school_year=year, ensemble=self._class_var.get(),
                 level=None)]
+            own = self.main_db.get_jazz_band_parts(self._class_var.get())
+            for r in rows:
+                if r["id"] in own:
+                    r["jazz_part"] = own[r["id"]]
+            return rows
         except Exception:
             return []
 
@@ -1125,7 +1138,8 @@ class _WindsPanel(ttk.Labelframe):
             guessed = self._sc.jazz_auto_parts(blanks, taken=taken)
             if guessed:
                 try:
-                    self.main_db.set_jazz_parts(guessed)
+                    self.main_db.set_jazz_parts(guessed,
+                                                band=self._class_var.get())
                 except Exception:
                     pass
                 for r in roster:
@@ -1156,8 +1170,19 @@ class _WindsPanel(ttk.Labelframe):
             cb = ttk.Combobox(row, textvariable=v, values=options, width=13,
                               state="readonly")
             cb.pack(side=LEFT, padx=(4, 6))
+            # The mouse wheel turned a dropdown it passed over -- and every
+            # change saves at once, so scrolling the list quietly moved
+            # players to other parts.  Over a dropdown it scrolls the list.
+            cb.bind("<MouseWheel>", self._wheel_list)
             cb.bind("<<ComboboxSelected>>",
                     lambda e, sid=r["id"]: self._picked(sid))
+
+    def _wheel_list(self, event):
+        try:
+            self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        except (tk.TclError, AttributeError):
+            pass
+        return "break"
 
     def _picked(self, sid):
         """A part was chosen: save it at once -- there is no Save button to
@@ -1168,7 +1193,8 @@ class _WindsPanel(ttk.Labelframe):
             return
         part = self._sc.jazz_part_from_label(v.get())
         try:
-            self.main_db.set_jazz_parts({sid: part})
+            self.main_db.set_jazz_parts({sid: part},
+                                        band=self._class_var.get())
         except Exception as e:
             Messagebox.show_error("Could not save the part:\n%s" % e,
                                   title="Winds", parent=self)
@@ -1178,17 +1204,20 @@ class _WindsPanel(ttk.Labelframe):
 
 
 class _AddPlayersDialog(ttk.Toplevel):
-    def __init__(self, parent):
+    def __init__(self, parent, target=""):
         super().__init__(master=parent)
         self.names = []
-        self.title("Add Players")
+        self.title(f"Add to {target} (Jazz rhythm section)" if target
+                   else "Add Players")
         self.resizable(False, False)
         self.grab_set()
         self.lift()
 
         hdr = ttk.Frame(self, bootstyle=SUCCESS)
         hdr.pack(fill=X)
-        ttk.Label(hdr, text="Add Rhythm-Section Players", font=("Segoe UI", 12, "bold"),
+        ttk.Label(hdr, text=(f"Add to {target}'s rhythm section" if target
+                             else "Add Rhythm-Section Players"),
+                  font=("Segoe UI", 12, "bold"),
                   bootstyle=(INVERSE, SUCCESS)).pack(pady=10, padx=16, anchor=W)
 
         body = ttk.Frame(self)
@@ -1219,10 +1248,11 @@ class _AddPlayersDialog(ttk.Toplevel):
 class _PlayerPartsDialog(ttk.Toplevel):
     """Check the seats one player can cover."""
 
-    def __init__(self, parent, name, seats, current):
+    def __init__(self, parent, name, seats, current, home=""):
         super().__init__(master=parent)
         self.saved = False
         self.parts = list(current)
+        self.home = home or ""
         self.title(f"Instruments — {name}")
         self.resizable(False, True)
         self.grab_set()
@@ -1251,6 +1281,20 @@ class _PlayerPartsDialog(ttk.Toplevel):
             ttk.Checkbutton(body, text=s, variable=var, bootstyle=PRIMARY).pack(anchor=W, pady=1)
             self._vars.append((s, var))
 
+        # A wind player who drums some days plays their own instrument the
+        # rest; naming it shows them "on Trombone" instead of "waiting".
+        ttk.Separator(body).pack(fill=X, pady=(10, 6))
+        ttk.Label(body, text="When not in the rhythm section, plays:",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=W)
+        from ui.ensembles import BAND_INSTRUMENTS, ORCHESTRA_INSTRUMENTS
+        self._home = tk.StringVar(value=self.home)
+        ttk.Combobox(body, textvariable=self._home, width=24,
+                     values=[""] + BAND_INSTRUMENTS + [
+                         i for i in ORCHESTRA_INSTRUMENTS
+                         if i not in BAND_INSTRUMENTS]).pack(anchor=W, pady=(2, 0))
+        ttk.Label(body, text="Leave blank for a rhythm-section-only player.",
+                  font=("Segoe UI", 8), foreground=muted_fg()).pack(anchor=W)
+
         btn = ttk.Frame(self)
         btn.pack(fill=X, padx=16, pady=12)
         ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
@@ -1258,9 +1302,10 @@ class _PlayerPartsDialog(ttk.Toplevel):
         ttk.Button(btn, text="Save", bootstyle=SUCCESS, command=self._save).pack(side=RIGHT, padx=4)
 
         from ui.theme import fit_window
-        fit_window(self, 360, 420)
+        fit_window(self, 380, 520)
 
     def _save(self):
+        self.home = self._home.get().strip()
         self.parts = [s for s, var in self._vars if var.get()]
         self.saved = True
         self.destroy()

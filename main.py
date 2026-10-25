@@ -777,6 +777,16 @@ def main():
     # Apply font scaling after Tk root exists
     apply_global_font_scaling()
 
+    # The mouse wheel over a dropdown changed its value, and many of Roka's
+    # dropdowns save the moment they change -- scrolling a list of students
+    # quietly moved them to other jazz parts.  The wheel now leaves a
+    # dropdown alone and the list underneath scrolls instead.
+    for _seq in ("<MouseWheel>", "<Shift-MouseWheel>"):
+        try:
+            app.bind_class("TCombobox", _seq, lambda e: None)
+        except Exception:
+            pass
+
     # Pick initial profile (no dialog on first launch)
     if not profiles:
         # Show the main window before the Querybox so the dialog has a visible parent

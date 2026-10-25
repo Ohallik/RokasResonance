@@ -529,6 +529,14 @@ class LessonPlanDatabase:
                     conn.commit()
                 except Exception:
                     pass
+            # Migration: a jazz rhythm player's own instrument for the days
+            # they are not in the rhythm section (a trombonist who drums
+            # some days is on trombone the rest, not waiting).
+            try:
+                conn.execute("ALTER TABLE jazz_players ADD COLUMN home_part TEXT")
+                conn.commit()
+            except Exception:
+                pass
             # Migration: a section may define its OWN rotation stations (JSON
             # list of {"name", "share"}).  NULL = the built-in 40/40/20 ring —
             # so every existing section keeps the rotation it already had.
@@ -1470,7 +1478,8 @@ class LessonPlanDatabase:
             return cur.lastrowid
 
     def update_jazz_player(self, player_id, data):
-        cols = [c for c in ["name", "parts", "sort_order", "is_active"] if c in data]
+        cols = [c for c in ["name", "parts", "sort_order", "is_active",
+                            "home_part"] if c in data]
         if not cols:
             return
         set_clause = ", ".join(f"{c}=?" for c in cols)

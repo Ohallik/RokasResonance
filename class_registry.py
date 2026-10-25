@@ -119,6 +119,16 @@ TEMPLATES = {
                 "Fits a percussion ensemble too -- everyone starts in the "
                 "full rotation.",
     },
+    # An all-percussion group, often after school: everyone rotates, wind
+    # players who play percussion only here included, through the
+    # instruments the teacher lists for it (Rotation Stations).
+    "perc_ensemble": {
+        "label": "Percussion Ensemble", "book": None, "class_type": "int_adv",
+        "percussion": True,
+        "desc": "A percussion-only group (class or after school): a rotation "
+                "through the instruments you list for it, wind players who "
+                "play percussion only here included.",
+    },
     "jazz": {
         "label": "Jazz", "book": None, "class_type": None, "percussion": False,
         "desc": "Simple warm-up + sheet music with the jazz rhythm-section "
@@ -131,7 +141,7 @@ TEMPLATE_ORDER = ["generic", "band_5", "orch_5",
                   "band_entry", "band_intermediate", "band_advanced",
                   "orch_mshs", "choir_mshs", "jazz_choir",
                   "guitar", "steel_drum", "piano",
-                  "hs_band_winds", "hs_band_perc", "jazz"]
+                  "hs_band_winds", "hs_band_perc", "perc_ensemble", "jazz"]
 
 
 def template_desc(template):

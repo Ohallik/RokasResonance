@@ -500,6 +500,7 @@ _TMPL_DISPLAY = {
     "guitar_steel": "MS/HS Guitar / Steel Drum",   # retired; see class_registry
     "hs_band_winds": "HS Band (Winds)",
     "hs_band_perc": "HS Band (Percussion)",
+    "perc_ensemble": "Percussion Ensemble",
     "jazz": "Jazz",
 }
 

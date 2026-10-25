@@ -453,7 +453,10 @@
   <h3>Other things on this screen</h3>
   <ul>
     <li><span class="btn-ref">🎒 Check Out Item</span> is for the small things:
-      a mute, a lyre, a method book.</li>
+      a mute, a lyre, a method book. It has its own button on the toolbar,
+      so it works even with an instrument highlighted in the list. Press
+      Esc, or click below the last row, to let go of a highlighted
+      instrument.</li>
     <li><span class="btn-ref">🏫 Loan to Another School</span> records an
       instrument that has physically left your building. Loaned instruments are
       not offered to your students while they are out.</li>
@@ -464,7 +467,10 @@
       one combined PDF in alphabetical order, or both. A student with two
       instruments gets two forms, one per instrument.</li>
     <li><span class="btn-ref">📋 Checkouts</span> lists everything currently out,
-      and lets you return several at once.</li>
+      with each student's class and period. Click a column heading to sort
+      (by Instrument to bring all the lyres back in after a gig, by Period
+      to do one class at a time; click again to reverse). Shift- or
+      Ctrl-click to pick several, then <b>Return Selected</b>.</li>
   </ul>
 
   <div class="note"><p>Two students really can share one instrument, so Roka
@@ -1028,7 +1034,11 @@
       actually teach. Add, rename or remove them, and the tabs follow.</li>
     <li><span class="btn-ref">🔢 Numbers Per Part…</span> answers the copier
       question: how many flute parts does this class need. Check more than one
-      class to get the combined count for a piece two groups are both playing.</li>
+      class to get the combined count for a piece two groups are both playing.
+      <b>Copies</b> counts the students whose main instrument it is;
+      <b>+ Extras</b> counts the students who list it as their secondary
+      instrument in Manage Students, so you can decide whether to print a
+      few more for the part-time players.</li>
   </ul>
 
   <a class="top" href="#tools">Back to top</a>
@@ -1248,9 +1258,20 @@
 
   <ul>
     <li><span class="btn-ref">🎓 From Student List…</span> pulls the
-      percussionists straight off your roster.</li>
+      percussionists straight off your roster. Check <b>Show wind players
+      too</b> to add a wind player who plays percussion only in this group
+      (a percussion ensemble, say).</li>
+    <li>A group that meets after school, with no class period, is set up
+      with <span class="btn-ref">➕ New Section</span> and <b>Meets outside a
+      class period</b>. Add a <b>Percussion Ensemble</b> class in Manage
+      Classes to give it its own agenda.</li>
     <li><span class="btn-ref">🎛 Rotation Stations…</span> changes which seats are
-      in play.</li>
+      in play. Remove a station (no drum set for this period?) and nobody is
+      ever put on it. <b>At most</b> caps a station: with At most 4 on snare,
+      a fifth snare player goes to a practice pad, never on to some other
+      station. A percussion ensemble can list exactly the instruments it
+      warms up on (Marimba, Timpani, Congas…); pick from the list or type
+      your own.</li>
     <li><span class="btn-ref">🎚 Limit Rotation…</span> keeps a particular student
       off a particular station.</li>
     <li><span class="btn-ref">🎺 Alternate Days…</span> is for a student who
@@ -1295,13 +1316,21 @@
   moment you choose it. A player who covers several instruments is moved the
   same way — pick Trombone 2 for your trumpet player and that is where he
   sits. Picking a rhythm part (Piano, Drums…) moves that player over to the
-  rhythm side.</p>
+  rhythm side. Each band keeps its own parts: Robbie can be Trumpet 1 in
+  Jazz 1 and Trombone 2 in Jazz 2, and changing one never changes the
+  other. A player nobody has placed yet starts on their own concert
+  instrument (a horn player is listed as French Horn, not guessed onto a
+  trombone part). Rolling the mouse wheel over a dropdown scrolls the list
+  instead of changing the part.</p>
 
   <p>The Rhythm Section panel is the rotation: list the seats in play (drum
   set, piano, bass, guitar, vibraphone, or anything else you want), enter
-  each player and check which seats they can cover, and Roka cycles them
+  each player and check which seats they can cover (and, for a wind
+  player who drums some days, what they play the rest of the time: they show
+  as "on their own part" instead of waiting), and Roka cycles them
   through warm-ups day by day. Only rhythm players rotate — a horn part is a
-  chair, not a warm-up rotation.</p>
+  chair, not a warm-up rotation. On the projector, a seat nobody in the
+  band can play (no guitarist yet) is left off; it still shows here.</p>
 
   <p>Turns are counted, not guessed: each seat goes to whoever has had the
   fewest turns on it, so two drummers and three pianists come out even over
@@ -1488,6 +1517,15 @@
       into OneNote reads as one class's week.</li>
     <li><span class="btn-ref">⧉ Copy Previous Day</span> when today is yesterday
       again.</li>
+    <li><b>🎷 Wind doublers…</b> (under Reminders and Announcements) is for a
+      wind player who switches between two or three instruments. List their
+      instruments, how often they switch (every other class day, every other
+      week, or a whole concert cycle: until the winter concert, until the
+      March concert, until June), and which one they are on now. The agenda,
+      the projector and the export then say who is on what each day. Concert
+      cycles end at the concerts this class is listed in on the Performances
+      tab; uncheck one (an assembly) that shouldn't start a new instrument.
+      On the projector the doublers panel hides like the percussion one.</li>
     <li><span class="btn-ref">↺ Reset Day</span> throws away your edits and goes
       back to the suggestion.</li>
     <li><span class="btn-ref">📷 Paste Image</span> puts a picture on the board,

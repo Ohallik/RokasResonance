@@ -18,6 +18,7 @@ A page payload:
     {label, date (datetime.date), period ("Period 6" or ""),
      reminders: [str], announcements: [str],
      perc_head: str, perc_rows: [(name, station)],
+     doublers: [(name, instrument)]   (wind players who switch instruments)
      sections: [{title, items: [
          {text, runs, indent, static, color, done}   — a line
          {image: abspath, img_w: px, done}            — a picture
@@ -46,6 +47,17 @@ _BAN_FG = "#5C4A00"
 
 def _fmt_date(d):
     return d.strftime("%A, %B ") + f"{d.day}, {d.year}"
+
+
+def _rotation_tables(page):
+    """The two-column tables printed above the sections: the percussion or
+    rhythm rotation, then who is on which instrument among the doublers."""
+    out = []
+    if page.get("perc_rows"):
+        out.append((page.get("perc_head") or "Percussion", page["perc_rows"]))
+    if page.get("doublers"):
+        out.append(("Doublers today", page["doublers"]))
+    return out
 
 
 def _segment(text, runs):
@@ -198,11 +210,10 @@ def write_pdf(pages, path):
             story.append(t)
             story.append(Spacer(1, 8))
 
-        # ── percussion / rhythm rotation ──
-        if page.get("perc_rows"):
-            data = [[Paragraph(_esc(page.get("perc_head") or "Percussion"),
-                               banhead), ""]]
-            for name, station in page["perc_rows"]:
+        # ── percussion / rhythm rotation, then the wind doublers ──
+        for head, rows in _rotation_tables(page):
+            data = [[Paragraph(_esc(head), banhead), ""]]
+            for name, station in rows:
                 data.append([Paragraph(_esc(name), small),
                              Paragraph(_esc(station), small)])
             t = Table(data, colWidths=[2.0 * inch, avail - 2.0 * inch])
@@ -327,17 +338,16 @@ def write_docx(pages, path):
                 for ln in lines:
                     cell.add_paragraph("•  " + str(ln))
 
-        if page.get("perc_rows"):
+        for head, rows in _rotation_tables(page):
             doc.add_paragraph()
             t = doc.add_table(rows=1, cols=2)
             t.style = "Table Grid"
             hcell = t.rows[0].cells[0]
             hcell.merge(t.rows[0].cells[1])
             _shade(hcell, _BAN_BG.lstrip("#"))
-            hr = hcell.paragraphs[0].add_run(page.get("perc_head")
-                                             or "Percussion")
+            hr = hcell.paragraphs[0].add_run(head)
             hr.bold = True
-            for name, station in page["perc_rows"]:
+            for name, station in rows:
                 row = t.add_row()
                 row.cells[0].paragraphs[0].add_run(str(name)).bold = True
                 row.cells[1].paragraphs[0].add_run(str(station))

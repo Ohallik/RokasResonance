@@ -502,6 +502,11 @@ def jazz_auto_parts(players, taken=None):
                 out[p["id"]] = take(["B"], overflow="last")
             else:
                 out[p["id"]] = take(["A1", "A2"])
+        elif band == "low" and inst not in JAZZ_CORE:
+            # A horn, euphonium, tuba, bassoon or cello is listed as itself
+            # until the teacher puts it on a trombone part -- guessing
+            # "Trombone 4" for a horn player read as a random reassignment.
+            out[p["id"]] = inst
         elif band == "low":
             out[p["id"]] = take(jazz_low_parts())
         elif inst in JAZZ_HIGH and inst not in JAZZ_CORE:

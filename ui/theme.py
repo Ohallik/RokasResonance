@@ -703,3 +703,92 @@ def apply_global_font_scaling():
 
     except Exception:
         pass
+
+
+def _natural_key(text):
+    """Sort key that puts "Period 2" before "Period 10" and ignores case."""
+    import re
+    return [(0, int(t)) if t.isdigit() else (1, t.lower())
+            for t in re.split(r"(\d+)", str(text or "")) if t != ""]
+
+
+def make_sortable(tree, columns=None):
+    """Click a Treeview column heading to sort by it; click again to reverse.
+
+    Sorts the rows already in the tree, by what the column shows, so any
+    list can use it without knowing where its rows came from.  The sorted
+    column's heading gets a small arrow.  Call it again after a reload to
+    keep the chosen order (``tree._sort_state`` remembers it)."""
+    cols = list(columns or tree["columns"])
+    titles = {c: tree.heading(c, "text") for c in cols}
+    state = getattr(tree, "_sort_state", None) or {"col": None, "rev": False}
+    tree._sort_state = state
+
+    def apply():
+        col = state["col"]
+        if col is None:
+            return
+        rows = [(tree.set(iid, col), iid) for iid in tree.get_children("")]
+        # Blanks last whichever way round.
+        rows.sort(key=lambda r: (r[0] == "", _natural_key(r[0])),
+                  reverse=state["rev"])
+        if state["rev"]:
+            rows.sort(key=lambda r: r[0] == "")
+        for i, (_v, iid) in enumerate(rows):
+            tree.move(iid, "", i)
+        for c in cols:
+            arrow = ("  ▼" if state["rev"] else "  ▲") if c == col else ""
+            tree.heading(c, text=titles[c] + arrow)
+
+    def click(col):
+        if state["col"] == col:
+            state["rev"] = not state["rev"]
+        else:
+            state["col"], state["rev"] = col, False
+        apply()
+
+    for c in cols:
+        tree.heading(c, command=lambda c=c: click(c))
+    tree._resort = apply
+    return apply
+
+
+def smooth_wheel(canvas, px_per_notch=None):
+    """A <MouseWheel> handler that scrolls ``canvas`` by PIXELS, smoothly.
+
+    The stock handler moved one "unit" per notch -- a tenth of the window --
+    so the page lurched, and a touchpad's small deltas rounded to zero until
+    they piled up into a jump.  This scrolls in proportion to the actual
+    movement, keeps the fractions, and applies a burst of events as ONE move
+    per frame (each move redraws every widget on the page, which is where the
+    flicker came from)."""
+    step = px_per_notch or max(40, fs(10) * 5)
+    canvas.configure(yscrollincrement=1)
+    state = {"px": 0.0, "job": None}
+
+    def flush():
+        state["job"] = None
+        n = int(state["px"])
+        state["px"] -= n
+        if n:
+            try:
+                canvas.yview_scroll(n, "units")
+            except tk.TclError:
+                pass
+
+    def on_wheel(event):
+        state["px"] += -event.delta / 120.0 * step
+        if state["job"] is None:
+            try:
+                state["job"] = canvas.after(16, flush)
+            except tk.TclError:
+                pass
+        return "break"
+    return on_wheel
+
+
+def thick_scrollbar(parent, command):
+    """A vertical scrollbar wide enough to grab easily (the themed one is a
+    fixed 8-pixel sliver that the theme will not widen)."""
+    return tk.Scrollbar(parent, orient="vertical", command=command,
+                        width=max(18, fs(14)))

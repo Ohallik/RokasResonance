@@ -72,6 +72,8 @@ hiddenimports = [
     # from the Students window's Import menu and the 5th grade tabs).
     "roka_roster_xlsx",
     "ui.roster_form",
+    # Wind doublers' instrument rotation (lazy-imported by the agenda).
+    "wind_rotation",
 ]
 hiddenimports += collect_submodules("ttkbootstrap")
 hiddenimports += collect_submodules("openpyxl")

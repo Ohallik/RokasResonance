@@ -270,7 +270,7 @@ _TEMPLATE_PROGRAM = {
     "choir_mshs": "choir",
     "band_5": "band", "band_entry": "band", "band_intermediate": "band",
     "band_advanced": "band", "hs_band_winds": "band", "hs_band_perc": "band",
-    "jazz": "band",
+    "perc_ensemble": "band", "jazz": "band",
 }
 # Templates that only exist at 5th grade.
 _TEMPLATE_ELEMENTARY = {"band_5", "orch_5"}

@@ -1218,17 +1218,18 @@ class MainMenu(ttk.Frame):
         ttk.Label(win, text="Currently Checked Out Instruments",
                   font=("Segoe UI", 13, "bold"), bootstyle=PRIMARY).pack(pady=(14, 4))
 
-        cols = ("Student", "Instrument", "Category", "Barcode", "Date Checked Out")
+        cols = ("Student", "Instrument", "Category", "Class", "Period",
+                "Barcode", "Date Checked Out")
         tree_frame = ttk.Frame(win)
         tree_frame.pack(fill=BOTH, expand=True, padx=14, pady=8)
 
         scrollbar = ttk.Scrollbar(tree_frame, orient=VERTICAL)
         tree = ttk.Treeview(tree_frame, columns=cols, show="headings",
                             yscrollcommand=scrollbar.set, bootstyle=PRIMARY,
-                            selectmode="browse")
+                            selectmode="extended")
         scrollbar.config(command=tree.yview)
 
-        widths = [180, 200, 120, 100, 120]
+        widths = [170, 190, 110, 130, 60, 90, 110]
         _stretch = {"Student", "Instrument"}
         for col, w in zip(cols, widths):
             tree.heading(col, text=col, anchor=W)
@@ -1236,19 +1237,40 @@ class MainMenu(ttk.Frame):
 
         scrollbar.pack(side=RIGHT, fill=Y)
         tree.pack(fill=BOTH, expand=True)
+        # Click a heading to sort: by Instrument to check the lyres back in
+        # together after a gig, by Period to do one class at a time.
+        from ui.theme import make_sortable
+        make_sortable(tree)
 
         count_lbl = ttk.Label(win, text="", font=("Segoe UI", 9), foreground="#666")
+
+        def _student_classes():
+            """{student id: (class, periods)} for the Class / Period columns."""
+            out = {}
+            try:
+                import class_registry as cr
+                with self.db._connect() as conn:
+                    for r in conn.execute(
+                            "SELECT id, ensembles, class_periods FROM students"):
+                        out[r["id"]] = (cr.display_csv(r["ensembles"] or ""),
+                                        (r["class_periods"] or "").replace(",", ", "))
+            except Exception:
+                pass
+            return out
 
         def _reload():
             tree.delete(*tree.get_children())
             checkouts = self.db.get_all_active_checkouts()
+            classes = _student_classes()
             for c in checkouts:
                 is_item = not c["instrument_id"]
                 label = (c["description"] or "") + ("  (item)" if is_item else "")
+                klass, per = classes.get(c["student_id"], ("", ""))
                 tree.insert("", "end", iid=f"co:{c['id']}", values=(
                     display_person(c["student_name"] or ""),
                     label,
                     c["category"] or "",
+                    klass, per,
                     c["barcode"] or c["district_no"] or "",
                     c["date_assigned"] or "",
                 ))
@@ -1261,9 +1283,11 @@ class MainMenu(ttk.Frame):
                     who,
                     (l["description"] or "") + "  (on loan)",
                     l["category"] or "",
+                    "", "",
                     l["barcode"] or l["district_no"] or "",
                     l["date_out"] or "",
                 ))
+            tree._resort()
             count_lbl.config(
                 text=f"{len(checkouts) + len(loans)} item(s) out "
                      f"({len(loans)} on loan to other schools)")
@@ -1277,11 +1301,18 @@ class MainMenu(ttk.Frame):
                 return
             from datetime import datetime as _dt
             today = _dt.today().strftime("%Y-%m-%d")
-            iid = sel[0]
-            if iid.startswith("loan:"):
-                self.db.return_loan(int(iid.split(":", 1)[1]), today)
-            else:
-                self.db.checkin_instrument(int(iid.split(":", 1)[1]), today)
+            if len(sel) > 1:
+                # Several at once (all the lyres after a gig): say how many
+                # before they all come back in.
+                from ttkbootstrap.dialogs import Messagebox
+                if Messagebox.yesno(f"Return all {len(sel)} selected items?",
+                                    title="Return Selected", parent=win) != "Yes":
+                    return
+            for iid in sel:
+                if iid.startswith("loan:"):
+                    self.db.return_loan(int(iid.split(":", 1)[1]), today)
+                else:
+                    self.db.checkin_instrument(int(iid.split(":", 1)[1]), today)
             _reload()
             self._refresh_stats()
 
@@ -1292,11 +1323,16 @@ class MainMenu(ttk.Frame):
         ttk.Button(btn_row, text="🔄 Refresh", bootstyle=(SECONDARY, OUTLINE),
                    command=_reload).pack(side=LEFT, padx=4, pady=4)
 
+        ttk.Label(btn_row, text="Click a column heading to sort. Shift- or "
+                                "Ctrl-click to pick several, then Return "
+                                "Selected.",
+                  font=("Segoe UI", 8), foreground="#666").pack(side=LEFT, padx=8)
+
         count_lbl.pack(pady=6)
         _reload()
 
         from ui.theme import fit_window
-        fit_window(win, 900, 600)
+        fit_window(win, 1000, 600)
 
     def _open_import_wizard(self):
         from ui.import_wizard import ImportWizard

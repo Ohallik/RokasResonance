@@ -745,6 +745,15 @@ class Database:
                     conn.commit()
                 except Exception:
                     pass
+            # A student's jazz chair PER BAND: Robbie is Trumpet 1 in Jazz 1
+            # and Trombone 2 in Jazz 2.  students.jazz_part stays as the
+            # shared default a band falls back to until it sets its own.
+            conn.execute("""CREATE TABLE IF NOT EXISTS jazz_band_parts (
+                                student_id INTEGER NOT NULL,
+                                band TEXT NOT NULL,
+                                part TEXT,
+                                PRIMARY KEY (student_id, band))""")
+            conn.commit()
             # Migrate: shorter saxophone names (unambiguous 1:1 renames).
             # "Baritone/Euphonium" is left alone — it split into four clef-
             # specific options and we can't guess which one a student plays.
@@ -1483,7 +1492,48 @@ class Database:
             conn.execute("UPDATE students SET jazz_instrument=? WHERE id=?",
                          ((instrument or "").strip() or None, student_id))
 
-    def set_jazz_parts(self, parts: dict):
+    @staticmethod
+    def _band_key(band):
+        return " ".join((band or "").lower().split())
+
+    def get_jazz_band_parts(self, band):
+        """{student id: part} that ``band`` (a jazz class name, "Jazz 2") has
+        set for itself.  A student missing here uses their shared default
+        (students.jazz_part).  A blank part is a deliberate "none"."""
+        key = self._band_key(band)
+        if not key:
+            return {}
+        with self._connect() as conn:
+            return {r["student_id"]: (r["part"] or "")
+                    for r in conn.execute(
+                        "SELECT student_id, part FROM jazz_band_parts "
+                        "WHERE band=?", (key,))}
+
+    def set_jazz_parts(self, parts: dict, band=None):
+        """Record which chair each student covers.  With ``band`` (the jazz
+        class, "Jazz 2") it is that band's chair only -- changing Jazz 2 no
+        longer rewrites Jazz 1.  Without it, the shared default."""
+        key = self._band_key(band)
+        if key:
+            if not parts:
+                return 0
+            n = 0
+            with self._connect() as conn:
+                for sid, part in parts.items():
+                    try:
+                        conn.execute(
+                            "INSERT INTO jazz_band_parts (student_id, band, part) "
+                            "VALUES (?, ?, ?) ON CONFLICT(student_id, band) "
+                            "DO UPDATE SET part=excluded.part",
+                            (int(sid), key, (part or "").strip()))
+                        n += 1
+                    except (ValueError, TypeError):
+                        continue
+                conn.commit()
+            return n
+        return self._set_shared_jazz_parts(parts)
+
+    def _set_shared_jazz_parts(self, parts: dict):
         """Record which chair each student covers in the big band.
 
         Stored on the STUDENT rather than on a chart: a player's chair is the

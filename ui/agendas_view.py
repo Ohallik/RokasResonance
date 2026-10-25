@@ -408,8 +408,13 @@ class AgendasView(ttk.Frame):
             pools = []
         players = []
         for r in self.db.get_jazz_players(e["id"]):
+            try:
+                home = (r["home_part"] or "").strip()
+            except (KeyError, IndexError):
+                home = ""
             players.append({"name": r["name"],
-                            "parts": jr._clean_seats(_safe_json(r["parts"], []))})
+                            "parts": jr._clean_seats(_safe_json(r["parts"], [])),
+                            "home_part": home})
         return seats, players, pools
 
     def _jazz_cycle(self):
@@ -637,27 +642,21 @@ class AgendasView(ttk.Frame):
         self._meets_bar = ttk.Frame(wk_row)
         self._meets_bar.pack(side=RIGHT, padx=(0, 4))
 
+        from ui.theme import smooth_wheel, thick_scrollbar
         self._canvas = tk.Canvas(self, highlightthickness=0)
-        vsb = ttk.Scrollbar(self, orient=VERTICAL, command=self._canvas.yview)
+        vsb = thick_scrollbar(self, self._canvas.yview)
         self._canvas.configure(yscrollcommand=vsb.set)
         vsb.pack(side=RIGHT, fill=Y)
         self._canvas.pack(side=LEFT, fill=BOTH, expand=True, padx=(10, 0), pady=8)
         self._inner = ttk.Frame(self._canvas)
         self._win = self._canvas.create_window((0, 0), window=self._inner, anchor="nw")
-        def _plan_region(_e=None):
-            box = self._canvas.bbox("all")
-            if box:
-                self._canvas.configure(
-                    scrollregion=(box[0], box[1], box[2], box[3] + 250))
-        self._inner.bind("<Configure>", _plan_region)
-        self._canvas.bind("<Configure>",
-                          lambda e: self._canvas.itemconfig(self._win, width=e.width))
+        _set_region = _region_setter(self._canvas, lambda: 250)
+        self._inner.bind("<Configure>", _set_region)
+        self._canvas.bind("<Configure>", _width_follower(self._canvas, self._win))
+        self._on_wheel = smooth_wheel(self._canvas)
         self._canvas.bind("<Enter>", lambda e: self._canvas.bind_all(
             "<MouseWheel>", self._on_wheel))
         self._canvas.bind("<Leave>", lambda e: self._canvas.unbind_all("<MouseWheel>"))
-
-    def _on_wheel(self, event):
-        self._canvas.yview_scroll(int(-event.delta / 120), "units")
 
     # ─────────────────────────────────────────────────────────── data / ctx ───
 
@@ -1282,6 +1281,10 @@ class AgendasView(ttk.Frame):
                         perc_rows = [(n, s) for n, s in asg]
         except Exception:
             perc_head, perc_rows = "", []
+        try:
+            doublers = self._doublers_today()
+        except Exception:
+            doublers = []
         sections = []
         for s in day.get("sections", []):
             items = []
@@ -1314,6 +1317,7 @@ class AgendasView(ttk.Frame):
                 "announcements": [x for x in day.get("announcements", [])
                                   if str(x).strip()],
                 "perc_head": perc_head, "perc_rows": perc_rows,
+                "doublers": doublers,
                 "sections": sections}
 
     def _render(self):
@@ -1332,6 +1336,10 @@ class AgendasView(ttk.Frame):
         for w in self._inner.winfo_children():
             w.destroy()
         self._render_banner(self._inner)
+        try:
+            self._render_doublers(self._inner)
+        except Exception:
+            pass                    # never lose the day over this one line
         self._render_divider(self._inner)
         for si, section in enumerate(self._day.get("sections", [])):
             self._render_section(self._inner, si, section)
@@ -1638,7 +1646,8 @@ class AgendasView(ttk.Frame):
             ttk.Label(r, text=", ".join(names) if names else "—",
                       font=("Segoe UI", fs(9), "bold")).pack(side=LEFT, padx=(8, 0))
         if bench:
-            ttk.Label(body, text="Out: " + ", ".join(bench),
+            import jazz_rotation as jr
+            ttk.Label(body, text=jr.bench_text(bench, players),
                       font=("Segoe UI", fs(8)), foreground=muted_fg(),
                       wraplength=fs(24) * 11, justify=LEFT).pack(anchor=W, pady=(2, 0))
 
@@ -2720,22 +2729,8 @@ class AgendasView(ttk.Frame):
         self.db.set_program_setting(self._done_setting_key(), json.dumps(m))
 
     def _perc_payload(self, group):
-        out = []
-        is_entry = group["class_type"] == pr.ENTRY
-        for r in self.db.get_percussion_students(group["id"]):
-            allowed = None
-            try:
-                raw = r["allowed_stations"]
-                if raw:
-                    v = json.loads(raw)
-                    allowed = v if isinstance(v, list) and v else None
-            except Exception:
-                allowed = None
-            from ui.percussion_rotation_view import alt_fields
-            out.append({"name": r["name"],
-                        "mallets_only": is_entry and not r["full_rotation"],
-                        "allowed_stations": allowed, **alt_fields(r)})
-        return out
+        from ui.percussion_rotation_view import section_payload
+        return section_payload(self.db, group)
 
     def _perc_inventory(self):
         # Same lookup as the Percussion tab, including inheriting last
@@ -2962,6 +2957,97 @@ class AgendasView(ttk.Frame):
                                  week=self._school_week())
         return asg, day, cycle
 
+    # ── wind doublers (players who switch between 2-3 instruments) ───────────
+
+    def _doubler_key(self):
+        return f"agenda_doublers_{self._store_id}"
+
+    def _doubler_skip_key(self):
+        return f"agenda_doubler_skip_{self._store_id}"
+
+    def _doublers_all(self):
+        import wind_rotation as wr
+        raw = _safe_json(self.db.get_program_setting(self._doubler_key()), [])
+        return [e for e in (wr.clean(x) for x in raw or []) if e]
+
+    def _save_doublers(self, entries, skip_ids=None):
+        self.db.set_program_setting(self._doubler_key(), json.dumps(entries))
+        if skip_ids is not None:
+            self.db.set_program_setting(self._doubler_skip_key(),
+                                        json.dumps(sorted(skip_ids)))
+
+    def _doubler_skips(self):
+        return _safe_json(self.db.get_program_setting(self._doubler_skip_key()),
+                          []) or []
+
+    def _doubler_section(self):
+        """The period a doubler belongs to: the active section when the class
+        has more than one, else the whole class ("")."""
+        secs = self._class_sections()
+        if len(secs) > 1:
+            return self._section_id() or ""
+        return ""
+
+    def _class_concerts(self, skip=True):
+        import wind_rotation as wr
+        try:
+            concerts = self.db.get_concerts(self._year())
+        except Exception:
+            concerts = []
+        return wr.class_concerts(concerts, self._cfg["label"],
+                                 self._doubler_skips() if skip else ())
+
+    def _doubler_steps(self, d=None):
+        """How far along each kind of switch is on ``d``: class meetings,
+        school weeks, and concert cycles."""
+        import wind_rotation as wr
+        d = d or self._date
+        saved = self._date
+        try:
+            self._date = d
+            week = self._school_week()
+        finally:
+            self._date = saved
+        return {"day": self._meeting_index(d), "week": week,
+                "concert": wr.concert_step(
+                    [c[1] for c in self._class_concerts()], d.isoformat())}
+
+    def _doublers_today(self):
+        """``[(name, instrument)]`` for this section today."""
+        import wind_rotation as wr
+        sec = self._doubler_section()
+        entries = [e for e in self._doublers_all()
+                   if not e["section"] or e["section"] == sec]
+        if not entries:
+            return []
+        steps = self._doubler_steps()
+        return [(e["name"], wr.instrument_on(e, steps[e["every"]]))
+                for e in entries]
+
+    def _edit_doublers(self):
+        dlg = _DoublersDialog(self.winfo_toplevel(), self)
+        self.wait_window(dlg)
+        if dlg.saved:
+            self._render()
+
+    def _render_doublers(self, parent):
+        """Under the banner: who is on which instrument today, one line."""
+        today = self._doublers_today()
+        row = ttk.Frame(parent)
+        row.pack(fill=X, pady=(0, 6))
+        if not today:
+            ttk.Button(row, text="🎷 Wind doublers…", bootstyle=(SECONDARY, LINK),
+                       padding=0, command=self._edit_doublers).pack(side=LEFT)
+            return
+        self._hdr_label(row, "🎷 Doublers today", 10, bg=BAN_BG,
+                        fg=BAN_FG).pack(side=LEFT)
+        txt = "   ·   ".join(f"{n}: {i}" for n, i in today)
+        ttk.Label(row, text=txt, font=("Segoe UI", fs(9), "bold"),
+                  wraplength=fs(24) * 30, justify=LEFT).pack(side=LEFT,
+                                                             padx=(8, 0))
+        ttk.Button(row, text="✎", bootstyle=(INFO, LINK), padding=0,
+                   command=self._edit_doublers).pack(side=LEFT, padx=(6, 0))
+
     def _school_week(self):
         """Which school week this date is in (weeks this class meets), for
         players who alternate a whole week at a time."""
@@ -2983,6 +3069,197 @@ class AgendasView(ttk.Frame):
         self._present = None
         self._load_day()
         self._render()
+
+
+class _DoublersDialog(ttk.Toplevel):
+    """Set up this class's wind doublers: up to three instruments each, how
+    often they switch, and which one they are on now."""
+
+    def __init__(self, parent, view):
+        super().__init__(master=parent)
+        import wind_rotation as wr
+        self._wr = wr
+        self.view = view
+        self.saved = False
+        self.title(f"Wind Doublers — {view._cfg['label']}")
+        self.grab_set()
+        self.lift()
+        self._steps = view._doubler_steps()
+        self._section = view._doubler_section()
+
+        hdr = ttk.Frame(self, bootstyle=INFO)
+        hdr.pack(fill=X)
+        ttk.Label(hdr, text="🎷  Players who switch instruments",
+                  font=("Segoe UI", 12, "bold"),
+                  bootstyle=(INVERSE, INFO)).pack(pady=10, padx=16, anchor=W)
+
+        btn = ttk.Frame(self)
+        btn.pack(fill=X, side=BOTTOM, padx=16, pady=12)
+        ttk.Button(btn, text="Cancel", bootstyle=(SECONDARY, OUTLINE),
+                   command=self.destroy).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="Save", bootstyle=SUCCESS,
+                   command=self._save).pack(side=RIGHT, padx=4)
+        ttk.Button(btn, text="➕ Add Player", bootstyle=(SUCCESS, OUTLINE),
+                   command=lambda: self._add_row({})).pack(side=LEFT, padx=4)
+
+        body = ttk.Frame(self)
+        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
+        where = ""
+        if self._section:
+            sec = next((x for x in view._class_sections()
+                        if x["sid"] == self._section), None)
+            if sec:
+                where = (f" These are for {sec['label']}; switch periods "
+                         "with the toolbar to set up another.")
+        ttk.Label(body, text="Each player rotates through their instruments "
+                             "on the agenda and the projector. “Now on” is "
+                             "the instrument they play today; it carries on "
+                             "from there." + where,
+                  font=("Segoe UI", 9), wraplength=640,
+                  justify=LEFT).pack(anchor=W)
+
+        cols = ttk.Frame(body)
+        cols.pack(fill=X, pady=(10, 2))
+        for text, w in (("Player", 16), ("Instrument 1", 14),
+                        ("Instrument 2", 14), ("Instrument 3", 14),
+                        ("Switches", 20), ("Now on", 14)):
+            ttk.Label(cols, text=text, font=("Segoe UI", 9, "bold"),
+                      width=w).pack(side=LEFT, padx=(0, 4))
+        self._rows_frame = ttk.Frame(body)
+        self._rows_frame.pack(fill=X)
+        self._rows = []
+
+        from ui.ensembles import BAND_INSTRUMENTS, ORCHESTRA_INSTRUMENTS
+        self._insts = [""] + [i for i in BAND_INSTRUMENTS if i != "Percussion"] \
+            + [i for i in ORCHESTRA_INSTRUMENTS if i not in BAND_INSTRUMENTS]
+        self._names = self._roster_names()
+
+        mine = [e for e in view._doublers_all()
+                if (e["section"] or "") == self._section]
+        self._others = [e for e in view._doublers_all()
+                        if (e["section"] or "") != self._section]
+        for e in mine:
+            self._add_row(e)
+        if not mine:
+            self._add_row({})
+
+        # Concert cycles: which of this class's concerts end one.
+        allc = view._class_concerts(skip=False)
+        skips = {int(x) for x in view._doubler_skips()}
+        box = ttk.Labelframe(body, text=" Concert cycles end at ", padding=8)
+        box.pack(fill=X, pady=(12, 0))
+        self._concert_vars = []
+        if not allc:
+            ttk.Label(box, text=f"No concerts list {view._cfg['label']} yet. "
+                                "Add them on the Performances tab; until "
+                                "then “Each concert cycle” stays on the "
+                                "first instrument.",
+                      font=("Segoe UI", 8), foreground=muted_fg(),
+                      wraplength=620, justify=LEFT).pack(anchor=W)
+        for cid, iso, title in allc:
+            var = tk.BooleanVar(value=cid not in skips)
+            d = _parse_date(iso)
+            label = f"{d.strftime('%b %d') if d else iso}  {title}"
+            ttk.Checkbutton(box, text=label, variable=var,
+                            bootstyle=INFO).pack(anchor=W)
+            self._concert_vars.append((cid, var))
+        if allc:
+            ttk.Label(box, text="Uncheck one that shouldn't start a new "
+                                "instrument (an assembly, a festival).",
+                      font=("Segoe UI", 8), foreground=muted_fg()).pack(
+                          anchor=W, pady=(4, 0))
+
+        from ui.theme import fit_window
+        fit_window(self, 760, 560)
+
+    def _roster_names(self):
+        try:
+            from ui.names import display_first_of
+            rows = self.view.main_db.get_students_for_email(
+                school_year=self.view._year(), ensemble=self.view._cfg["label"],
+                period=self.view._active_period() or None)
+            names = []
+            for r in rows:
+                n = (display_first_of(r) or "").strip()
+                if n and n not in names:
+                    names.append(n)
+            return sorted(names, key=str.lower)
+        except Exception:
+            return []
+
+    def _add_row(self, e):
+        wr = self._wr
+        row = ttk.Frame(self._rows_frame)
+        row.pack(fill=X, pady=2)
+        nv = tk.StringVar(value=e.get("name", ""))
+        ttk.Combobox(row, textvariable=nv, values=self._names,
+                     width=15).pack(side=LEFT, padx=(0, 4))
+        insts = list(e.get("instruments") or [])
+        ivars = []
+        for k in range(wr.MAX_INSTRUMENTS):
+            v = tk.StringVar(value=insts[k] if k < len(insts) else "")
+            ttk.Combobox(row, textvariable=v, values=self._insts,
+                         width=13).pack(side=LEFT, padx=(0, 4))
+            ivars.append(v)
+        ev = tk.StringVar(value=wr.EVERY_LABELS[e.get("every") or "day"])
+        ttk.Combobox(row, textvariable=ev, state="readonly", width=19,
+                     values=[wr.EVERY_LABELS[k] for k in wr.EVERY]).pack(
+                         side=LEFT, padx=(0, 4))
+        now = ""
+        if e.get("instruments"):
+            now = wr.instrument_on(e, self._steps[e.get("every") or "day"])
+        cv = tk.StringVar(value=now)
+        now_box = ttk.Combobox(row, textvariable=cv, state="readonly", width=13)
+        now_box.pack(side=LEFT, padx=(0, 4))
+
+        def refresh_now(*_a):
+            opts = [v.get().strip() for v in ivars if v.get().strip()]
+            now_box.config(values=opts)
+            if cv.get() not in opts:
+                cv.set(opts[0] if opts else "")
+        for v in ivars:
+            v.trace_add("write", refresh_now)
+        refresh_now()
+        entry = (row, nv, ivars, ev, cv)
+
+        def remove():
+            row.destroy()
+            self._rows.remove(entry)
+        ttk.Button(row, text="✕", width=3, bootstyle=(DANGER, OUTLINE),
+                   command=remove).pack(side=LEFT)
+        self._rows.append(entry)
+
+    def _save(self):
+        wr = self._wr
+        by_label = {v: k for k, v in wr.EVERY_LABELS.items()}
+        out, short = [], []
+        for _row, nv, ivars, ev, cv in self._rows:
+            name = nv.get().strip()
+            insts = [v.get().strip() for v in ivars if v.get().strip()]
+            if not name and not insts:
+                continue
+            every = by_label.get(ev.get(), "day")
+            e = wr.clean({"name": name, "instruments": insts, "every": every,
+                          "section": self._section})
+            if e is None:
+                short.append(name or "(no name)")
+                continue
+            now = cv.get() if cv.get() in e["instruments"] else e["instruments"][0]
+            e["offset"] = wr.offset_for(len(e["instruments"]),
+                                        self._steps[every],
+                                        e["instruments"].index(now))
+            out.append(e)
+        if short:
+            Messagebox.show_warning(
+                "Each player needs a name and at least two instruments: "
+                + ", ".join(short) + ".", title="Not Finished", parent=self)
+            return
+        skips = {cid for cid, var in self._concert_vars if not var.get()}
+        keep = [cid for cid in (int(x) for x in self.view._doubler_skips())
+                if cid not in {c for c, _v in self._concert_vars}]
+        self.view._save_doublers(self._others + out, set(keep) | skips)
+        self.saved = True
+        self.destroy()
 
 
 class _SetDayDialog(ttk.Toplevel):
@@ -3183,6 +3460,8 @@ class _PresentWindow(ttk.Toplevel):
         self._perc_collapsed = False
         self._banner_collapsed = False
         self._perc_widget = None
+        self._dbl_collapsed = False
+        self._dbl_widget = None
         if getattr(view, "_fullscreen", True):
             try:
                 self.attributes("-fullscreen", True)
@@ -3200,8 +3479,9 @@ class _PresentWindow(ttk.Toplevel):
         self._banner_host.pack(fill=X)
         wrap = ttk.Frame(self._stage)
         wrap.pack(fill=BOTH, expand=True)
+        from ui.theme import smooth_wheel, thick_scrollbar
         self._canvas = tk.Canvas(wrap, highlightthickness=0)
-        vsb = ttk.Scrollbar(wrap, orient=VERTICAL, command=self._canvas.yview)
+        vsb = thick_scrollbar(wrap, self._canvas.yview)
         self._canvas.configure(yscrollcommand=vsb.set)
         vsb.pack(side=RIGHT, fill=Y)
         self._canvas.pack(side=LEFT, fill=BOTH, expand=True)
@@ -3209,17 +3489,11 @@ class _PresentWindow(ttk.Toplevel):
         self._bwin = self._canvas.create_window((0, 0), window=self._body, anchor="nw")
         # Blank space below the last line, so it can ride UP the board where
         # the whole room can read it instead of hugging the floor.
-        def _region(_e=None):
-            box = self._canvas.bbox("all")
-            if box:
-                pad = max(300, int(self._canvas.winfo_height() * 0.6))
-                self._canvas.configure(
-                    scrollregion=(box[0], box[1], box[2], box[3] + pad))
-        self._body.bind("<Configure>", _region)
-        self._canvas.bind("<Configure>",
-                          lambda e: self._canvas.itemconfig(self._bwin, width=e.width))
-        self._canvas.bind_all("<MouseWheel>",
-                              lambda e: self._canvas.yview_scroll(int(-e.delta / 120), "units"))
+        self._body.bind("<Configure>", _region_setter(
+            self._canvas,
+            lambda: max(300, int(self._canvas.winfo_height() * 0.6))))
+        self._canvas.bind("<Configure>", _width_follower(self._canvas, self._bwin))
+        self._canvas.bind_all("<MouseWheel>", smooth_wheel(self._canvas))
 
         self.rebuild()
         self._tick()
@@ -3364,6 +3638,12 @@ class _PresentWindow(ttk.Toplevel):
             except Exception:
                 pass
             self._perc_widget = None
+        if self._dbl_widget is not None:
+            try:
+                self._dbl_widget.destroy()
+            except Exception:
+                pass
+            self._dbl_widget = None
 
         self._build_banner(day, bg)
 
@@ -3371,6 +3651,10 @@ class _PresentWindow(ttk.Toplevel):
             self._present_section(section, bg)
 
         self._build_perc_panel(bg)
+        try:
+            self._build_doubler_panel(bg)
+        except Exception:
+            pass
         self.after_idle(lambda: AgendasView._restore_scroll(self._canvas, top))
 
     def _build_banner(self, day, bg):
@@ -3428,6 +3712,55 @@ class _PresentWindow(ttk.Toplevel):
         self._perc_collapsed = not self._perc_collapsed
         self.rebuild()
 
+    def _toggle_dbl(self):
+        self._dbl_collapsed = not self._dbl_collapsed
+        self.rebuild()
+
+    def _build_doubler_panel(self, bg):
+        """Wind doublers' instruments for today, floating top-right under the
+        percussion / rhythm panel, with the same hide button."""
+        today = self.view._doublers_today()
+        if not today:
+            return
+        y = 8
+        if self._perc_widget is not None:
+            self._stage.update_idletasks()
+            y += self._perc_widget.winfo_reqheight() + 8
+        if self._dbl_collapsed:
+            btn = _tk(tk.Button, self._stage, text="🎷 Doublers  ▾",
+                      bg=BAN_BG, fg=BAN_FG, activebackground=BAN_BG,
+                      activeforeground=BAN_FG, bd=0, cursor="hand2",
+                      relief="flat", padx=10, pady=4,
+                      font=("Segoe UI", fs(12), "bold"),
+                      command=self._toggle_dbl)
+            btn.place(relx=1.0, y=y, anchor="ne", x=-10)
+            self._dbl_widget = btn
+            return
+        panel = _tk(tk.Frame, self._stage, bg=bg,
+                    highlightbackground="#8aa0b8", highlightthickness=2)
+        head = _tk(tk.Frame, panel, bg=BAN_BG)
+        head.pack(fill=X)
+        _tk(tk.Label, head, text="🎷 Doublers today", bg=BAN_BG, fg=BAN_FG,
+            anchor="w", padx=8, pady=3,
+            font=("Segoe UI", fs(13), "bold")).pack(side=LEFT, fill=X,
+                                                     expand=True)
+        _tk(tk.Button, head, text="▸ hide", bg=BAN_BG, fg=BAN_FG,
+            activebackground=BAN_BG, activeforeground=BAN_FG, bd=0,
+            cursor="hand2", relief="flat", padx=6,
+            font=("Segoe UI", fs(10), "bold"),
+            command=self._toggle_dbl).pack(side=RIGHT, padx=2)
+        table = _tk(tk.Frame, panel, bg=bg)
+        table.pack(fill=BOTH, padx=8, pady=(4, 6))
+        for r, (name, inst) in enumerate(today):
+            _tk(tk.Label, table, text=name, bg=bg, fg=_auto_fg(bg), anchor="w",
+                font=("Segoe UI", fs(self.PANEL_PT), "bold")).grid(
+                    row=r, column=0, sticky="w")
+            _tk(tk.Label, table, text=inst, bg=bg, fg=_auto_fg(bg), anchor="w",
+                font=("Segoe UI", fs(self.PANEL_PT))).grid(
+                    row=r, column=1, sticky="w", padx=(12, 0))
+        panel.place(relx=1.0, y=y, anchor="ne", x=-10)
+        self._dbl_widget = panel
+
     def _build_perc_panel(self, bg):
         if self.view._is_jazz:
             self._build_rhythm_panel(bg)
@@ -3482,7 +3815,13 @@ class _PresentWindow(ttk.Toplevel):
     def _build_rhythm_panel(self, bg):
         """Present-mode floating panel for the jazz rhythm-section rotation."""
         import jazz_icons
+        import jazz_rotation as jr
         asg, bench = self.view._jazz_rotation()
+        # On the projector, a seat nobody in the band plays (no guitarist)
+        # is a wasted line every day of the year; the Jazz tab and the
+        # agenda still list it.
+        _s, _players, _p = self.view._jazz_seats_players()
+        asg = jr.drop_unplayable(asg, _players)
         paused = self.view._is_jazz_paused()
         if not asg and not paused:
             return
@@ -3521,6 +3860,13 @@ class _PresentWindow(ttk.Toplevel):
                     anchor="w", font=("Segoe UI", fs(self.PANEL_PT), "bold")).pack(side=LEFT)
             _tk(tk.Label, r, text=", ".join(names) if names else "—", bg=bg,
                 fg=_auto_fg(bg), font=("Segoe UI", fs(self.PANEL_PT))).pack(side=LEFT, padx=(8, 0))
+        if bench:
+            import jazz_rotation as jr
+            _s, players, _p = self.view._jazz_seats_players()
+            _tk(tk.Label, table, text=jr.bench_text(bench, players), bg=bg,
+                fg=_auto_fg(bg), justify=LEFT, wraplength=fs(24) * 16,
+                font=("Segoe UI", fs(self.PANEL_PT - 3))).pack(anchor="w",
+                                                              pady=(4, 0))
         panel.place(relx=1.0, y=8, anchor="ne", x=-10)
         self._perc_widget = panel
 
@@ -3658,6 +4004,34 @@ class _PresentWindow(ttk.Toplevel):
 
 
 # ─────────────────────────────────────────────────────────────── helpers ─────
+
+def _region_setter(canvas, pad):
+    """<Configure> handler that sets the scroll region only when the content
+    has actually changed size.  Re-setting it on every event (scrolling
+    fires them too) made the page judder as it moved."""
+    last = {"r": None}
+
+    def handler(_e=None):
+        box = canvas.bbox("all")
+        if not box:
+            return
+        r = (box[0], box[1], box[2], box[3] + pad())
+        if r != last["r"]:
+            last["r"] = r
+            canvas.configure(scrollregion=r)
+    return handler
+
+
+def _width_follower(canvas, item):
+    """Keep the page as wide as the canvas, touching it only on a real change."""
+    last = {"w": None}
+
+    def handler(e):
+        if e.width != last["w"]:
+            last["w"] = e.width
+            canvas.itemconfig(item, width=e.width)
+    return handler
+
 
 def _snap_weekday(d):
     while d.weekday() >= 5:

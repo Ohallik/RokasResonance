@@ -142,9 +142,25 @@ def norm_stations(stations):
             share = int(share)
         except (TypeError, ValueError):
             share = 1
+        cap = item.get("max") if isinstance(item, dict) else None
+        try:
+            cap = int(cap) if cap not in (None, "") else None
+        except (TypeError, ValueError):
+            cap = None
         if name and share > 0:
-            out.append({"name": name, "share": share})
+            st = {"name": name, "share": share}
+            if cap and cap > 0:
+                st["max"] = cap
+            out.append(st)
     return out or None
+
+
+def station_caps(stations):
+    """``{station: most players at once}`` for stations that set a limit
+    ("no more than 4 on snare").  A player who would go over it goes to a
+    practice pad -- never on to some other, fancier station."""
+    return {s["name"]: s["max"] for s in (norm_stations(stations) or [])
+            if s.get("max")}
 
 
 def station_names(class_type, stations=None):
@@ -217,7 +233,18 @@ def allocate_seats(n, class_type, stations=None):
 
     custom = norm_stations(stations)
     if custom:
-        return _custom_seats(n, custom)
+        seats = _custom_seats(n, custom)
+        caps = station_caps(custom)
+        if caps:
+            # A station with a limit holds no more than that many seats; the
+            # rest of its share is spent on a practice pad.
+            held, out = {}, []
+            for label in seats:
+                held[label] = held.get(label, 0) + 1
+                over = label in caps and held[label] > caps[label]
+                out.append(PAD if over else label)
+            seats = out
+        return seats
 
     # Timp/aux: ~20%, but don't pull a player from a tiny section.
     timp = 0 if n < 3 else max(1, round(0.20 * n))
@@ -510,7 +537,7 @@ def station_summary(n, class_type, stations=None):
     """
     seats = allocate_seats(n, class_type, stations)
     custom = norm_stations(stations)
-    order = ([s["name"] for s in custom] if custom
+    order = ([s["name"] for s in custom] + [PAD] if custom
              else [MALLETS, SD, BD_SD, DRUM_SET, TIMP_AUX])
     out = []
     for label in order:
@@ -571,7 +598,7 @@ def day_assignments(students, day, class_type,
     # Who played what on the earlier days of this cycle -- only the flexible
     # players need it, so a plain section skips the replay entirely.
     last = {}
-    if any(_flex_rank(s) >= 2 for s in students):
+    if any(_flex_rank(s) >= 2 for s in students) or station_caps(stations):
         for d in range(1, day):
             # Earlier days' weeks, near enough: five rotation days a week.
             wk = None if week is None else week - (day - d) // 5
@@ -647,12 +674,13 @@ def _assign_day(students, class_type, mallet_subrotation, inventory, stations,
             station_by_id[id(s)] = s["alt_instrument"].strip()
 
     _fit_capacity(students, station_by_id, away, inventory, ring,
-                  mode, mallet_subrotation, inv, len(mo), last)
+                  mode, mallet_subrotation, inv, len(mo), last,
+                  station_caps(stations))
     return [station_by_id[id(s)] for s in students]
 
 
 def _fit_capacity(students, station_by_id, away, inventory, ring, mode,
-                  mallet_subrotation, walk_inv, mo_count, last):
+                  mallet_subrotation, walk_inv, mo_count, last, limits=None):
     """Move players off anything over-full, in place.
 
     Two things are limited: each specific mallet instrument (the room's
@@ -663,6 +691,10 @@ def _fit_capacity(students, station_by_id, away, inventory, ring, mode,
     caps = {}
     for name, cap in _norm_inventory(inventory):
         caps[name] = caps.get(name, 0) + cap
+    # A section's own "at most N at a time" (Rotation Stations) counts every
+    # player on that station, limited students included.
+    for name, cap in (limits or {}).items():
+        caps[name] = min(caps.get(name, cap), cap)
     ring_caps = {}
     if mode == MODE_NORMAL:
         for label in ring:
@@ -704,20 +736,63 @@ def _fit_capacity(students, station_by_id, away, inventory, ring, mode,
             if mode == MODE_ALL_SNARE or not mallet_subrotation:
                 return [want], want
             return rotated(_mallet_slot_walk(mo_count, walk_inv), want), PAD
+        if want in (limits or {}):
+            # Over a station's limit means a practice pad, not the next
+            # station round the ring (that was how an extra snare player
+            # ended up on the drum set).
+            return [want], PAD
         if mode == MODE_NORMAL and ring:
             return rotated(list(ring), want), want
         return [want], want
 
     order = sorted((s for s in students if id(s) not in away), key=_flex_rank)
+
+    # A capped station ("at most 4 on snare") wanted by more players than it
+    # holds goes to whoever has gone LONGEST without it -- whatever kind of
+    # player they are.  Settling in the usual order instead handed it to the
+    # snare-only students and the full rotation first, every day, so a
+    # student allowed snare AND mallets never got an actual snare.
+    winners, bumped = {}, {}
+    for label, cap in (limits or {}).items():
+        want = [s for s in order if station_by_id[id(s)] == label]
+        if len(want) <= cap:
+            continue
+        rank = {id(s): k for k, s in enumerate(order)}
+        want.sort(key=lambda s: (last.get(id(s), {}).get(label, 0),
+                                 rank[id(s)]))
+        winners[label] = {id(s) for s in want[:cap]}
+        for s in want[cap:]:
+            bumped[id(s)] = label
+    waiting = {label: set(ids) for label, ids in winners.items()}
+    base_fits = fits
+
+    def fits(sid, label):
+        if not base_fits(sid, label):
+            return False
+        if sid in waiting.get(label, ()):
+            return True
+        if label in waiting:
+            # Keep a spot for each winner not seated yet.
+            held = used.get(label, 0) + len(waiting[label])
+            return held < caps.get(label, held + 1)
+        return True
+
     for s in order:
         sid = id(s)
         opts, fallback = choices(s)
+        if sid in bumped:
+            opts = [o for o in opts if o != bumped[sid]]
+            if fallback == bumped[sid]:
+                fallback = PAD
         open_ = [o for o in opts if fits(sid, o)]
         if open_ and _flex_rank(s) >= 2:
             # Longest since they last played it wins; never-played first.
             seen = last.get(sid, {})
             open_.sort(key=lambda o: seen.get(o, 0))
-        take(sid, open_[0] if open_ else fallback)
+        pick = open_[0] if open_ else fallback
+        take(sid, pick)
+        for ids in waiting.values():
+            ids.discard(sid)
 
 
 def full_grid(students, class_type, days=None,

@@ -26,12 +26,52 @@ def open_instrumentation(parent, main_db, base_dir, school_year=None, site_id=No
 
 
 def count_parts(students, ensembles=None, count_secondary=False):
-    """``([(instrument, count), ...], total_students)`` in score order.
+    """``([(instrument, count), ...], total_students)`` in score order, with
+    secondary instruments folded into the count when ``count_secondary``."""
+    rows, total = count_parts_split(students, ensembles)
+    if count_secondary:
+        return [(i, n + x) for i, n, x in rows], total
+    return [(i, n) for i, n, _x in rows if n], total
+
+
+def count_parts_split(students, ensembles=None):
+    """``([(instrument, full_time, extras), ...], total_students)`` in score
+    order.  ``full_time`` counts students whose PRIMARY instrument it is;
+    ``extras`` counts those who list it as their SECONDARY one -- the part-
+    time players a copy might be wanted for, kept separate so "6 flutes" is
+    never quietly 9.
 
     ``students`` are student dicts/rows; ``ensembles`` limits them to those
     classes (None = every student given).  A student in two selected classes
     is counted ONCE — you don't print them two folders.
     """
+    wanted = list(ensembles) if ensembles else None
+    counts, extras = {}, {}
+    seen = set()
+    from class_registry import csv_has_class
+    for s in students:
+        sid = s["id"] if "id" in _keys(s) else id(s)
+        if sid in seen:
+            continue
+        if wanted is not None:
+            csv = str(_get(s, "ensembles") or "")
+            if not any(csv_has_class(csv, w) for w in wanted):
+                continue
+        seen.add(sid)
+        prim = str(_get(s, "primary_instrument") or "").strip()
+        key = prim or "(no instrument listed)"
+        counts[key] = counts.get(key, 0) + 1
+        sec = str(_get(s, "secondary_instrument") or "").strip()
+        if sec and sec.lower() != prim.lower():
+            extras[sec] = extras.get(sec, 0) + 1
+    names = set(counts) | set(extras)
+    ordered = sorted(((n, counts.get(n, 0), extras.get(n, 0)) for n in names),
+                     key=lambda t: instrument_sort_key(t[0]))
+    return ordered, len(seen)
+
+
+def _unused_count_parts(students, ensembles=None, count_secondary=False):
+    """Former single-number count, kept only as a reference."""
     wanted = list(ensembles) if ensembles else None
     counts = {}
     seen = set()
@@ -133,15 +173,16 @@ class InstrumentationDialog(ttk.Toplevel):
         self._vars, self._checks = {}, []
         self._build_class_checks()
 
-        self._secondary = tk.BooleanVar(value=False)
-        ttk.Checkbutton(body, text="Also count secondary instruments "
-                                   "(a student who doubles gets both parts)",
-                        variable=self._secondary, bootstyle=SECONDARY,
-                        command=self._recount).pack(anchor=W)
+        ttk.Label(body, text="“Copies” counts students whose main instrument "
+                             "it is. “+ Extras” are students who list it as "
+                             "their secondary instrument in Manage Students: "
+                             "part-time players you may want copies for too.",
+                  font=("Segoe UI", fs(8)), foreground=muted_fg(),
+                  wraplength=460, justify=LEFT).pack(anchor=W)
 
         table = ttk.Labelframe(body, text=" Instrumentation ", padding=4)
         table.pack(fill=BOTH, expand=True, pady=(8, 0))
-        cols = ("Part", "Copies")
+        cols = ("Part", "Copies", "Extras")
         sb = ttk.Scrollbar(table, orient=VERTICAL)
         self._tree = ttk.Treeview(table, columns=cols, show="headings",
                                   yscrollcommand=sb.set, selectmode="none",
@@ -149,8 +190,10 @@ class InstrumentationDialog(ttk.Toplevel):
         sb.config(command=self._tree.yview)
         self._tree.heading("Part", text="Part", anchor=W)
         self._tree.heading("Copies", text="Copies", anchor=W)
-        self._tree.column("Part", width=210, anchor=W, stretch=True)
-        self._tree.column("Copies", width=80, anchor=CENTER, stretch=False)
+        self._tree.heading("Extras", text="+ Extras", anchor=W)
+        self._tree.column("Part", width=200, anchor=W, stretch=True)
+        self._tree.column("Copies", width=70, anchor=CENTER, stretch=False)
+        self._tree.column("Extras", width=110, anchor=W, stretch=False)
         sb.pack(side=RIGHT, fill=Y)
         self._tree.pack(fill=BOTH, expand=True)
 
@@ -248,14 +291,17 @@ class InstrumentationDialog(ttk.Toplevel):
             self._total_lbl.config(text="Check at least one class.")
             self._rows = []
             return
-        rows, total = count_parts(students, chosen, self._secondary.get())
+        rows, total = count_parts_split(students, chosen)
         self._rows = rows
         self._tree.delete(*self._tree.get_children())
-        for name, n in rows:
-            self._tree.insert("", "end", values=(name, n))
+        for name, n, x in rows:
+            self._tree.insert("", "end", values=(
+                name, n or "", f"(+ {x} extra{'s' if x != 1 else ''})" if x else ""))
         who = "all classes" if chosen is None else ", ".join(chosen)
+        n_extra = sum(x for _n, _c, x in rows)
+        more = f" · + {n_extra} extras" if n_extra else ""
         self._total_lbl.config(
-            text=f"{total} students · {len(rows)} parts  ({who})")
+            text=f"{total} students · {len(rows)} parts{more}  ({who})")
 
     def _copy(self):
         if not getattr(self, "_rows", None):
@@ -265,9 +311,12 @@ class InstrumentationDialog(ttk.Toplevel):
         chosen = self._selected()
         who = "All classes" if chosen is None else ", ".join(chosen)
         lines = [f"Numbers per part — {who} ({self._year_var.get()})", ""]
-        lines += [f"{name}\t{n}" for name, n in self._rows]
+        lines += [f"{name}\t{n}" + (f"\t(+ {x} extras)" if x else "")
+                  for name, n, x in self._rows]
+        extra = sum(x for _n, _c, x in self._rows)
         lines.append("")
-        lines.append(f"Total\t{sum(n for _, n in self._rows)}")
+        lines.append(f"Total\t{sum(n for _, n, _x in self._rows)}"
+                     + (f"\t(+ {extra} extras)" if extra else ""))
         self.clipboard_clear()
         self.clipboard_append("\n".join(lines))
         Messagebox.show_info("Copied (tab-separated — paste into Word or Excel).",

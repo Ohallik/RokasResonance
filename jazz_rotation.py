@@ -389,17 +389,27 @@ def cycle_length(seats, players, locked=None, pools=None):
         return 1
 
     def compute():
-        best_day, best_spread = 1, None
+        # The drum set is the turn everyone is waiting for, so it is evened
+        # out FIRST: a cycle that wraps with two drummers on two turns and
+        # two on one is unfair every time round, however tidy the piano
+        # count looks.  Among the days where the kit is even, the one with
+        # the other seats closest to even wins (earliest on a tie).
+        best_day, best_key = 1, None
         for d, _asg, _bench, hist in _simulate(seats, players, _MAX_CYCLE,
                                                locked, pools):
-            spread = 0
+            drum = other = 0
             for seat, elig in rotating.items():
                 counts = [hist.turns.get(seat, {}).get(nm, 0) for nm in elig]
-                spread += max(counts) - min(counts)
-            if spread == 0:
+                gap = max(counts) - min(counts)
+                if seat.strip().lower() in DRUM_SEATS:
+                    drum += gap
+                else:
+                    other += gap
+            if drum == 0 and other == 0:
                 return d
-            if best_spread is None or spread < best_spread:
-                best_day, best_spread = d, spread
+            key = (drum, other)
+            if best_key is None or key < best_key:
+                best_day, best_key = d, key
         return best_day
 
     return _memoized(_memo_key("cycle", seats, players, locked, pools), compute)
@@ -431,3 +441,37 @@ def pair_classes_to_bands(class_labels, bands):
         if lbl not in out and free:
             out[lbl] = free.pop(0)[0]
     return out
+
+
+def drop_unplayable(assignments, players):
+    """The board without seats nobody in the band can play -- a guitar seat
+    with no guitarist is not worth a line on the projector every day of the
+    year.  A seat somebody covers stays, even on a day it sits empty."""
+    covered = {s for p in unique_players(players) for s in (p.get("parts") or [])}
+    return [(seat, names) for seat, names in assignments
+            if names or seat in covered]
+
+
+def split_bench(bench, players):
+    """Who is off the rhythm section today, split in two: players with an
+    instrument of their own to go back to (``[(name, instrument)]`` -- a
+    trombonist who also drums is on trombone, not waiting) and the rest,
+    who really are waiting their turn."""
+    home = {p.get("name"): (p.get("home_part") or "").strip()
+            for p in players or []}
+    own = [(n, home[n]) for n in bench or [] if home.get(n)]
+    waiting = [n for n in bench or [] if not home.get(n)]
+    return own, waiting
+
+
+def bench_text(bench, players):
+    """One line for under a board: "On their own part: Hannah (Trombone).
+    Waiting: Maya."  Empty when nobody is off."""
+    own, waiting = split_bench(bench, players)
+    bits = []
+    if own:
+        bits.append("On their own part: "
+                    + ", ".join(f"{n} ({i})" for n, i in own))
+    if waiting:
+        bits.append("Waiting: " + ", ".join(waiting))
+    return ".   ".join(bits)

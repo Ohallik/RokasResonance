@@ -450,6 +450,17 @@ class SeatingChartView(ttk.Frame):
     def _jazz_parts_map(self, roster):
         """{student id: part}, from the student records, guessed where blank."""
         parts = {s["id"]: (s.get("jazz_part") or "") for s in roster}
+        # A chart of one jazz band uses that band's own parts (set in the
+        # Jazz tab's Winds list); the shared part covers anyone it hasn't set.
+        bands = {(g.get("ensemble") or "").strip() for g in self._groups()}
+        if len(bands) == 1:
+            try:
+                own = self.main_db.get_jazz_band_parts(next(iter(bands)))
+            except Exception:
+                own = {}
+            for sid, part in own.items():
+                if sid in parts and part:
+                    parts[sid] = part
         missing = [s for s in roster if not parts.get(s["id"])]
         if missing:
             # The guess must not hand out a chair somebody already has.

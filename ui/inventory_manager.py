@@ -177,6 +177,11 @@ class InventoryManager(ttk.Frame):
                    command=self._edit_instrument).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="📤 Check Out", bootstyle=WARNING,
                    command=self._open_checkout_chooser).pack(side=LEFT, padx=2, pady=6)
+        # A lyre or a mute is not in the list, and with an instrument
+        # highlighted Check Out goes straight to THAT instrument -- so an
+        # item could only be checked out from a freshly opened window.
+        ttk.Button(toolbar, text="🎒 Check Out Item", bootstyle=(WARNING, OUTLINE),
+                   command=self._checkout_item).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="📥 Check In", bootstyle=INFO,
                    command=self._open_checkin_chooser).pack(side=LEFT, padx=2, pady=6)
         ttk.Button(toolbar, text="📄 Generate Form", bootstyle=PRIMARY,
@@ -309,6 +314,10 @@ class InventoryManager(ttk.Frame):
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.tree.bind("<Double-1>", lambda e: self._edit_instrument())
         self.tree.bind("<Button-3>", self._on_right_click)
+        # Esc, or a click below the last row, lets go of the highlighted
+        # instrument (there was no way to "unclick" one).
+        self.tree.bind("<Escape>", lambda e: self._clear_selection())
+        self.tree.bind("<Button-1>", self._click_blank, add="+")
 
         # Right: Detail Panel
         detail_frame = ttk.Frame(paned, width=320)
@@ -674,6 +683,15 @@ class InventoryManager(ttk.Frame):
             self.tree.see(iid)
 
     # ─────────────────────────────────────────────────────── Detail Panel ──────
+
+    def _clear_selection(self):
+        self.tree.selection_remove(self.tree.selection())
+        self.tree.focus("")
+        self._selected_id = None
+
+    def _click_blank(self, event):
+        if not self.tree.identify_row(event.y) and                 self.tree.identify_region(event.x, event.y) != "heading":
+            self._clear_selection()
 
     def _on_select(self, event=None):
         sel = self.tree.selection()
