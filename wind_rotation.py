@@ -79,16 +79,45 @@ def concert_step(concert_dates, iso_today):
     return 1 + sum(1 for d in concert_dates if d and str(d)[:10] < iso_today)
 
 
-def class_concerts(concerts, class_label, skip_ids=()):
-    """The concerts this class performs in (its name is in the concert's
-    ensembles list), less any the teacher said don't end a cycle (an
-    assembly, a festival), as ``[(id, iso date, title)]`` by date."""
-    want = " ".join((class_label or "").lower().split())
-    skip = {int(x) for x in skip_ids or []}
+def _skip_key(x):
+    """A stored skip: "c:3" / "t:1", or a bare number from before field trips
+    counted (always a concert)."""
+    x = str(x)
+    return x if ":" in x else f"c:{x}"
+
+
+def class_performances(concerts, trips, class_label, skip_ids=()):
+    """Every performance this class is in -- concerts on the Performances
+    tab AND field-trip performances -- less any the teacher said don't end a
+    cycle, as ``[(key, iso date, title, kind)]`` by date.  ``key`` is
+    "c:<id>" or "t:<id>"; ``kind`` is "concert" or "field trip".
+
+    Classes are matched by identity, not spelling: a trip listing
+    "MS Band (Intermediate)" is Intermediate Band's (it was missed when the
+    names had to match exactly)."""
+    try:
+        from class_registry import csv_has_class
+    except Exception:                                   # pragma: no cover
+        def csv_has_class(csv, t):
+            return t.lower() in [p.strip().lower() for p in (csv or "").split(",")]
+    skip = {_skip_key(x) for x in skip_ids or []}
     out = []
     for c in concerts or []:
-        ens = [" ".join(e.lower().split())
-               for e in (c["ensembles"] or "").split(",")]
-        if want and want in ens and c["id"] not in skip and c["concert_date"]:
-            out.append((c["id"], str(c["concert_date"])[:10], c["title"] or ""))
-    return sorted(out, key=lambda t: t[1])
+        key = f"c:{c['id']}"
+        if (c["concert_date"] and key not in skip
+                and csv_has_class(c["ensembles"] or "", class_label)):
+            out.append((key, str(c["concert_date"])[:10], c["title"] or "",
+                        "concert"))
+    for t in trips or []:
+        key = f"t:{t['id']}"
+        if (t["depart_date"] and key not in skip
+                and csv_has_class(t["groups_list"] or "", class_label)):
+            out.append((key, str(t["depart_date"])[:10], t["name"] or "",
+                        "field trip"))
+    return sorted(out, key=lambda e: e[1])
+
+
+def class_concerts(concerts, class_label, skip_ids=()):
+    """Concerts only, as ``[(key, iso date, title, kind)]`` (see
+    class_performances)."""
+    return class_performances(concerts, (), class_label, skip_ids)

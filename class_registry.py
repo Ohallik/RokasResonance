@@ -47,19 +47,19 @@ TEMPLATES = {
         "desc": "Blank agendas, no percussion rotation.",
     },
     "band_entry": {
-        "label": "MS Band (Entry)", "book": 1, "class_type": "entry",
+        "label": "Entry Band", "book": 1, "class_type": "entry",
         "percussion": True,
         "desc": "Rhythms + Standard of Excellence Bk 1 with a customizable "
                 "percussion rotation (beginning band).",
     },
     "band_intermediate": {
-        "label": "MS Band (Intermediate)", "book": 2, "class_type": "int_adv",
+        "label": "Intermediate Band", "book": 2, "class_type": "int_adv",
         "percussion": True,
         "desc": "Standard of Excellence Bk 2 with a percussion rotation "
                 "(2nd-year band).",
     },
     "band_advanced": {
-        "label": "MS Band (Advanced)", "book": None, "class_type": "int_adv",
+        "label": "Advanced Band", "book": None, "class_type": "int_adv",
         "percussion": True,
         "desc": "Blank warm-up + sheet music with a percussion rotation "
                 "(top band).",
@@ -155,12 +155,12 @@ def template_desc(template):
 
 def _band_default():
     return [
-        {"id": "entry", "label": "MS Band (Entry)", "template": "band_entry",
+        {"id": "entry", "label": "Entry Band", "template": "band_entry",
          "ensemble": "entry", "book": 1, "percussion": True},
-        {"id": "intermediate", "label": "MS Band (Intermediate)",
+        {"id": "intermediate", "label": "Intermediate Band",
          "template": "band_intermediate", "ensemble": "interm", "book": 2,
          "percussion": True},
-        {"id": "advanced", "label": "MS Band (Advanced)", "template": "band_advanced",
+        {"id": "advanced", "label": "Advanced Band", "template": "band_advanced",
          "ensemble": "adv", "book": None, "percussion": True},
         {"id": "jazz", "label": "Jazz", "template": "jazz", "ensemble": "jazz",
          "book": None, "percussion": False},

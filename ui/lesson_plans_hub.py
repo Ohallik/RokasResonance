@@ -284,6 +284,13 @@ class LessonPlansHub(ttk.Frame):
             return
         import class_registry
         class_registry.save_classes(self._base_dir, dlg.result)
+        # A renamed class takes its old records with it (students, concerts,
+        # field trips, percussion sections), so no list shows both names.
+        try:
+            import class_names_sync
+            class_names_sync.sync_class_names(self._base_dir, self.main_db)
+        except Exception:
+            pass
         self._populate_notebook()
 
     def _placeholder(self, icon, title, body):
@@ -488,9 +495,9 @@ _TMPL_DISPLAY = {
     "generic": "General",
     "band_5": "5th Grade Band",
     "orch_5": "5th Grade Orchestra",
-    "band_entry": "MS Band (Entry)",
-    "band_intermediate": "MS Band (Intermediate)",
-    "band_advanced": "MS Band (Advanced)",
+    "band_entry": "Entry Band",
+    "band_intermediate": "Intermediate Band",
+    "band_advanced": "Advanced Band",
     "orch_mshs": "MS/HS Orchestra",
     "choir_mshs": "MS/HS Choir",
     "jazz_choir": "Jazz Choir",

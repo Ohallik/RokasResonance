@@ -608,6 +608,18 @@ def _load_profile(app, profile_name: str):
             import traceback
             traceback.print_exc()
 
+    # One spelling per class everywhere it is stored: a field trip saved
+    # while the class was still "MS Band (Intermediate)" now reads
+    # "Intermediate Band" like the rest (see class_names_sync).  Shared
+    # performances are a co-director's records too, so those are left be.
+    try:
+        import class_names_sync
+        class_names_sync.sync_class_names(
+            data_dir, db, include_performances=not sharing_active)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+
     # Stash current profile state on the app so the close handler can back it up
     app._current_db = db
     app._current_data_dir = data_dir

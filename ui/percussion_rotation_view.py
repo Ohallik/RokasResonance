@@ -1769,7 +1769,10 @@ class _GroupDialog(ttk.Toplevel):
         # The name is DERIVED, never typed — "Period 1 — MS Band (Entry)".  It's
         # only a display label now; everything that used to be parsed out of it
         # (which class, which rotation type) is stored explicitly.
-        label = self._class_var.get()
+        # The class's full name ("Intermediate Band"), not the short picker
+        # label ("Intermediate"): the same name everywhere else shows.
+        label = next((l for k, l, _t in self._class_rows if k == key),
+                     self._class_var.get())
         data = {
             "school_year": self.school_year,
             "name": (f"Period {period} — {label}" if period

@@ -2994,8 +2994,12 @@ class AgendasView(ttk.Frame):
             concerts = self.db.get_concerts(self._year())
         except Exception:
             concerts = []
-        return wr.class_concerts(concerts, self._cfg["label"],
-                                 self._doubler_skips() if skip else ())
+        try:
+            trips = self.db.get_field_trips(self._year())
+        except Exception:
+            trips = []
+        return wr.class_performances(concerts, trips, self._cfg["label"],
+                                     self._doubler_skips() if skip else ())
 
     def _doubler_steps(self, d=None):
         """How far along each kind of switch is on ``d``: class meetings,
@@ -3118,16 +3122,18 @@ class _DoublersDialog(ttk.Toplevel):
                   font=("Segoe UI", 9), wraplength=640,
                   justify=LEFT).pack(anchor=W)
 
-        cols = ttk.Frame(body)
-        cols.pack(fill=X, pady=(10, 2))
-        for text, w in (("Player", 16), ("Instrument 1", 14),
-                        ("Instrument 2", 14), ("Instrument 3", 14),
-                        ("Switches", 20), ("Now on", 14)):
-            ttk.Label(cols, text=text, font=("Segoe UI", 9, "bold"),
-                      width=w).pack(side=LEFT, padx=(0, 4))
+        # Headings and rows share ONE grid, so each heading sits over its
+        # own column (separate frames drifted apart).
         self._rows_frame = ttk.Frame(body)
-        self._rows_frame.pack(fill=X)
+        self._rows_frame.pack(fill=X, pady=(10, 0))
+        for col, text in enumerate(("Player", "Instrument 1", "Instrument 2",
+                                    "Instrument 3", "Switches",
+                                    "Now on (today)")):
+            ttk.Label(self._rows_frame, text=text,
+                      font=("Segoe UI", 9, "bold")).grid(
+                          row=0, column=col, sticky=W, padx=(0, 4), pady=(0, 2))
         self._rows = []
+        self._next_row = 1
 
         from ui.ensembles import BAND_INSTRUMENTS, ORCHESTRA_INSTRUMENTS
         self._insts = [""] + [i for i in BAND_INSTRUMENTS if i != "Percussion"] \
@@ -3145,24 +3151,45 @@ class _DoublersDialog(ttk.Toplevel):
 
         # Concert cycles: which of this class's concerts end one.
         allc = view._class_concerts(skip=False)
-        skips = {int(x) for x in view._doubler_skips()}
-        box = ttk.Labelframe(body, text=" Concert cycles end at ", padding=8)
+        skips = {wr._skip_key(x) for x in view._doubler_skips()}
+        box = ttk.Labelframe(body, text=" Concert cycles (for players set to "
+                                        "“Each concert cycle”) ",
+                             padding=8)
         box.pack(fill=X, pady=(12, 0))
         self._concert_vars = []
+        self._concert_dates = {}
         if not allc:
-            ttk.Label(box, text=f"No concerts list {view._cfg['label']} yet. "
-                                "Add them on the Performances tab; until "
-                                "then “Each concert cycle” stays on the "
-                                "first instrument.",
+            ttk.Label(box, text=f"No concerts or field-trip performances "
+                                f"list {view._cfg['label']} yet. Add them on "
+                                "the Performances tab; until then “Each "
+                                "concert cycle” stays on the first "
+                                "instrument.",
                       font=("Segoe UI", 8), foreground=muted_fg(),
                       wraplength=620, justify=LEFT).pack(anchor=W)
-        for cid, iso, title in allc:
+        else:
+            ttk.Label(box, text="Each checked performance ends a cycle; the "
+                                "day after it, players move to their next "
+                                "instrument. “Now on” above is the instrument "
+                                "for the cycle you are in today.",
+                      font=("Segoe UI", 8), foreground=muted_fg(),
+                      wraplength=620, justify=LEFT).pack(anchor=W, pady=(0, 4))
+        today = view._date.isoformat()
+        current = next((k for k, iso, _t, _k in allc
+                        if iso >= today and k not in skips), None)
+        for cid, iso, title, kind in allc:
             var = tk.BooleanVar(value=cid not in skips)
             d = _parse_date(iso)
-            label = f"{d.strftime('%b %d') if d else iso}  {title}"
-            ttk.Checkbutton(box, text=label, variable=var,
-                            bootstyle=INFO).pack(anchor=W)
+            label = f"{d.strftime('%b %d') if d else iso}   {title}"
+            if kind == "field trip":
+                label += "  (field trip)"
+            if iso < today:
+                label += "   · done"
+            elif cid == current:
+                label += "   ◀ today's cycle ends here"
+            ttk.Checkbutton(box, text=label, variable=var, bootstyle=INFO,
+                            command=self._refresh_now_on).pack(anchor=W)
             self._concert_vars.append((cid, var))
+            self._concert_dates[cid] = iso
         if allc:
             ttk.Label(box, text="Uncheck one that shouldn't start a new "
                                 "instrument (an assembly, a festival).",
@@ -3172,15 +3199,25 @@ class _DoublersDialog(ttk.Toplevel):
         from ui.theme import fit_window
         fit_window(self, 760, 560)
 
+    def _refresh_now_on(self):
+        """A performance checked or unchecked moves which cycle today is in,
+        so the "Now on" instrument is measured against the new count."""
+        import wind_rotation as wr
+        today = self.view._date.isoformat()
+        self._steps["concert"] = wr.concert_step(
+            [self._concert_dates[c] for c, v in self._concert_vars if v.get()],
+            today)
+
     def _roster_names(self):
         try:
-            from ui.names import display_first_of
-            rows = self.view.main_db.get_students_for_email(
+            from ui.names import unique_first_names
+            rows = list(self.view.main_db.get_students_for_email(
                 school_year=self.view._year(), ensemble=self.view._cfg["label"],
-                period=self.view._active_period() or None)
+                period=self.view._active_period() or None))
+            # Two Lucases in one period are "Lucas M." and "Lucas T." --
+            # collapsing them to one "Lucas" hid the second student.
             names = []
-            for r in rows:
-                n = (display_first_of(r) or "").strip()
+            for n in unique_first_names(rows):
                 if n and n not in names:
                     names.append(n)
             return sorted(names, key=str.lower)
@@ -3189,28 +3226,32 @@ class _DoublersDialog(ttk.Toplevel):
 
     def _add_row(self, e):
         wr = self._wr
-        row = ttk.Frame(self._rows_frame)
-        row.pack(fill=X, pady=2)
+        grid = self._rows_frame
+        r = self._next_row
+        self._next_row += 1
+        cells = []
+
+        def put(w, col):
+            w.grid(row=r, column=col, sticky=W, padx=(0, 4), pady=2)
+            cells.append(w)
         nv = tk.StringVar(value=e.get("name", ""))
-        ttk.Combobox(row, textvariable=nv, values=self._names,
-                     width=15).pack(side=LEFT, padx=(0, 4))
+        put(ttk.Combobox(grid, textvariable=nv, values=self._names, width=15), 0)
         insts = list(e.get("instruments") or [])
         ivars = []
         for k in range(wr.MAX_INSTRUMENTS):
             v = tk.StringVar(value=insts[k] if k < len(insts) else "")
-            ttk.Combobox(row, textvariable=v, values=self._insts,
-                         width=13).pack(side=LEFT, padx=(0, 4))
+            put(ttk.Combobox(grid, textvariable=v, values=self._insts,
+                             width=13), 1 + k)
             ivars.append(v)
         ev = tk.StringVar(value=wr.EVERY_LABELS[e.get("every") or "day"])
-        ttk.Combobox(row, textvariable=ev, state="readonly", width=19,
-                     values=[wr.EVERY_LABELS[k] for k in wr.EVERY]).pack(
-                         side=LEFT, padx=(0, 4))
+        put(ttk.Combobox(grid, textvariable=ev, state="readonly", width=19,
+                         values=[wr.EVERY_LABELS[k] for k in wr.EVERY]), 4)
         now = ""
         if e.get("instruments"):
             now = wr.instrument_on(e, self._steps[e.get("every") or "day"])
         cv = tk.StringVar(value=now)
-        now_box = ttk.Combobox(row, textvariable=cv, state="readonly", width=13)
-        now_box.pack(side=LEFT, padx=(0, 4))
+        now_box = ttk.Combobox(grid, textvariable=cv, state="readonly", width=13)
+        put(now_box, 5)
 
         def refresh_now(*_a):
             opts = [v.get().strip() for v in ivars if v.get().strip()]
@@ -3220,13 +3261,14 @@ class _DoublersDialog(ttk.Toplevel):
         for v in ivars:
             v.trace_add("write", refresh_now)
         refresh_now()
-        entry = (row, nv, ivars, ev, cv)
+        entry = (cells, nv, ivars, ev, cv)
 
         def remove():
-            row.destroy()
+            for w in cells:
+                w.destroy()
             self._rows.remove(entry)
-        ttk.Button(row, text="✕", width=3, bootstyle=(DANGER, OUTLINE),
-                   command=remove).pack(side=LEFT)
+        put(ttk.Button(grid, text="✕", width=3, bootstyle=(DANGER, OUTLINE),
+                       command=remove), 6)
         self._rows.append(entry)
 
     def _save(self):
@@ -3255,7 +3297,8 @@ class _DoublersDialog(ttk.Toplevel):
                 + ", ".join(short) + ".", title="Not Finished", parent=self)
             return
         skips = {cid for cid, var in self._concert_vars if not var.get()}
-        keep = [cid for cid in (int(x) for x in self.view._doubler_skips())
+        keep = [cid for cid in (wr._skip_key(x)
+                                for x in self.view._doubler_skips())
                 if cid not in {c for c, _v in self._concert_vars}]
         self.view._save_doublers(self._others + out, set(keep) | skips)
         self.saved = True

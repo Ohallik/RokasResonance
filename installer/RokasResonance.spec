@@ -74,6 +74,8 @@ hiddenimports = [
     "ui.roster_form",
     # Wind doublers' instrument rotation (lazy-imported by the agenda).
     "wind_rotation",
+    # One spelling per class across stored records (lazy-imported at launch).
+    "class_names_sync",
 ]
 hiddenimports += collect_submodules("ttkbootstrap")
 hiddenimports += collect_submodules("openpyxl")

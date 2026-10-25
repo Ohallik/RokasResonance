@@ -76,3 +76,28 @@ def director_name(base_dir: str) -> str:
     except Exception:
         pass
     return display_person(os.path.basename((base_dir or "").rstrip("\\/")))
+
+
+def unique_first_names(rows):
+    """Display names for a list of students: first (or preferred) name,
+    plus a last initial ONLY where two share a first name ("Lucas M.",
+    "Lucas T."), and the full last name only where the initials collide
+    too -- the same rule the seating chart uses.  Returns names in the
+    order of ``rows``."""
+    from collections import defaultdict
+    bases = [(display_first_of(r) or "").strip() for r in rows]
+    lasts = [(_sget(r, "last_name") or "").strip() for r in rows]
+    groups = defaultdict(list)
+    for i, b in enumerate(bases):
+        groups[b.lower()].append(i)
+    out = list(bases)
+    for idx in groups.values():
+        if len(idx) < 2:
+            continue
+        inits = [lasts[i][:1].upper() for i in idx]
+        for i, ini in zip(idx, inits):
+            if ini and inits.count(ini) == 1:
+                out[i] = f"{bases[i]} {ini}."
+            else:
+                out[i] = f"{bases[i]} {lasts[i]}".strip()
+    return out
