@@ -122,6 +122,9 @@ def import_students(db, csv_source, ensemble_label, period, school_year,
                     merged["ensembles"] = _drop_site_classes(
                         merged["ensembles"], dict(old_site)["name"])
             db.update_student(prior["id"], merged)
+            # Anything the roster knows that this record is missing (a birth
+            # date, a parent email), without overwriting what she typed.
+            db.fill_student_blanks(prior["id"], rec)
             updated += 1
             # site_id is not in update_student's column list on purpose -- an
             # edit that forgot it would blank the school -- so set it here.
@@ -199,6 +202,7 @@ def import_students_sectioned(db, csv_source, section_to_class, period,
                     merged["ensembles"] = _drop_site_classes(
                         merged["ensembles"], dict(old_site)["name"])
             db.update_student(prior["id"], merged)
+            db.fill_student_blanks(prior["id"], s)
             # site_id is deliberately absent from update_student's column list,
             # so the school is set separately -- same as import_students.
             if site_id and prior_site != site_id:

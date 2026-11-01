@@ -228,6 +228,8 @@ def _sanitize(classes):
             "book": k.get("book") if k.get("book") in (1, 2) else None,
             "percussion": bool(k.get("percussion", TEMPLATES[tmpl]["percussion"])),
             "periods": _clean_periods(k.get("periods")),
+            # Put "Happy Birthday - Name" on the agenda automatically.
+            "birthdays": bool(k.get("birthdays", False)),
             "site_id": (int(k["site_id"])
                         if str(k.get("site_id") or "").strip().isdigit()
                         else None),
@@ -461,5 +463,6 @@ def class_config(klass):
         "percussion": bool(klass.get("percussion", ti.get("percussion", False))),
         "is_jazz": t == "jazz",
         "periods": _clean_periods(klass.get("periods")),
+        "birthdays": bool(klass.get("birthdays", False)),
         "site_id": klass.get("site_id"),
     }

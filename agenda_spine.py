@@ -592,3 +592,144 @@ def build_default_day(d, ctx):
         "sections": sections,
         "practice_journal": pj,
     }
+
+
+# ── Birthdays ─────────────────────────────────────────────────────────────────
+# "Happy Birthday - Name" goes last in the Warm Up on the student's birthday.
+# A birthday on a day the class doesn't meet (a weekend, a holiday, winter
+# break) is listed ahead of time on the last class day before it, with when:
+# "(Sunday)" across a weekend or a short break, "(Dec. 23)" across a long one.
+
+_MONTH_ABBR = ["Jan.", "Feb.", "Mar.", "Apr.", "May", "June", "July", "Aug.",
+               "Sept.", "Oct.", "Nov.", "Dec."]
+
+
+def birthday_month_day(raw):
+    """(month, day) from a stored birth date -- "2013-06-11" or "6/11/2013"
+    (both are in rosters) -- or None when it can't be read."""
+    s = str(raw or "").strip()
+    try:
+        if "-" in s:
+            _y, m, dd = (int(x) for x in s.split("T")[0].split("-")[:3])
+        elif "/" in s:
+            m, dd = (int(x) for x in s.split("/")[:2])
+        else:
+            return None
+        date(2000, m, dd)          # a leap year, so Feb 29 is a real date
+    except (ValueError, TypeError):
+        return None
+    return m, dd
+
+
+def _birthday_in(year, md):
+    """This year's birthday; Feb 29 falls on Feb 28 in other years."""
+    m, dd = md
+    try:
+        return date(year, m, dd)
+    except ValueError:
+        return date(year, 2, 28)
+
+
+def birthday_lines(d, people, is_class_day, last_day=None, max_ahead=21):
+    """The birthday lines for class day ``d``: [(key, text)], oldest date
+    first.
+
+    ``people`` is [(key, name, (month, day))].  ``is_class_day(date)`` says
+    whether the class meets; every day after ``d`` up to the next meeting is a
+    day off, and birthdays on those days are listed today.  ``last_day`` (the
+    end of the school year) stops the look-ahead from running into summer.
+    """
+    window = [d]
+    cur = d
+    for _ in range(max_ahead):
+        cur += timedelta(days=1)
+        if (last_day and cur > last_day) or is_class_day(cur):
+            break
+        window.append(cur)
+    # A weekend or Thanksgiving reads best by weekday; across winter break
+    # "(Wednesday)" could be either week, so the date is clearer.
+    by_weekday = len(window) - 1 <= 4
+    out = []
+    for day in window:
+        for key, name, md in sorted(people, key=lambda p: p[1].lower()):
+            if not name or _birthday_in(day.year, md) != day:
+                continue
+            if day == d:
+                when = ""
+            elif by_weekday:
+                when = f" ({day.strftime('%A')})"
+            else:
+                when = f" ({_MONTH_ABBR[day.month - 1]} {day.day})"
+            out.append((key, f"Happy Birthday - {name}{when}"))
+    return out
+
+
+# ── Copy Previous Day: add, never replace ─────────────────────────────────────
+
+def _blank_line(it):
+    return not (it.get("text") or "").strip() and not it.get("image")
+
+
+def _line_key(it):
+    return ((it.get("text") or "").strip(), it.get("image") or "")
+
+
+def merge_previous_day(today, src):
+    """Add ``src``'s lines (an earlier day) to ``today``, in place.
+
+    Copying used to REPLACE the day, so anything typed before copying, and
+    the day's birthday lines, were thrown away.  Now every section gets the
+    lines it doesn't already have, after its own and ahead of any "Happy
+    Birthday" lines (which stay last).  A section today doesn't have is
+    added whole.  Copied lines start unchecked, and the earlier day's own
+    birthday lines are left behind.  Starter blank lines give way to copied
+    ones.  Returns how many lines were added; copying twice adds nothing."""
+    import copy as _copy
+    src = _copy.deepcopy(src or {})
+    src_bdays = set((src.get("birthdays") or {}).values())
+    my_bdays = set((today.get("birthdays") or {}).values())
+
+    def is_bday(it, ids):
+        return it.get("kind") == "birthday" or (it.get("id") and it.get("id") in ids)
+
+    def same_section(a, b):
+        ka, kb = a.get("kind") or "", b.get("kind") or ""
+        if ka and ka == kb:
+            return True
+        return ((a.get("title") or "").strip().lower()
+                == (b.get("title") or "").strip().lower())
+
+    secs = today.setdefault("sections", [])
+    added = 0
+    for ssec in src.get("sections", []):
+        incoming = [it for it in ssec.get("items", [])
+                    if not is_bday(it, src_bdays) and not _blank_line(it)]
+        for it in incoming:
+            it["done"] = False
+            it.pop("id", None)
+        tsec = next((x for x in secs if same_section(x, ssec)), None)
+        if tsec is None:
+            if incoming:
+                new = dict(ssec, items=incoming)
+                secs.append(new)
+                added += len(incoming)
+            continue
+        items = tsec.get("items", [])
+        have = {_line_key(it) for it in items if not _blank_line(it)}
+        fresh = [it for it in incoming if _line_key(it) not in have]
+        if not fresh:
+            continue
+        bdays = [it for it in items if is_bday(it, my_bdays)]
+        rest = [it for it in items
+                if not is_bday(it, my_bdays) and not _blank_line(it)]
+        tsec["items"] = rest + fresh + bdays
+        added += len(fresh)
+    # Standing reminders carry over; announcements are today's own.
+    rem = today.setdefault("reminders", [])
+    for r in src.get("reminders") or []:
+        if r not in rem:
+            rem.append(r)
+            added += 1
+    if not today.get("practice_journal") and src.get("practice_journal"):
+        today["practice_journal"] = src["practice_journal"]
+    return added

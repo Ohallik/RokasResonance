@@ -748,6 +748,11 @@ def main():
     }
     set_font_scale(_scale_map.get(startup_font_size, NORMAL_FONT_SCALE))
 
+    # Every scrollbar as wide as the agenda's (the theme's are 8-pixel
+    # slivers).  Sized from the font scale, so it follows set_font_scale.
+    from ui.theme import widen_scrollbars
+    widen_scrollbars()
+
     win_w = {"normal": 620, "large": 700, "extra_large": 780}.get(startup_font_size, 620)
     win_h = {"normal": 580, "large": 640, "extra_large": 720}.get(startup_font_size, 580)
 

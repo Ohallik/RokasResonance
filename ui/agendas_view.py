@@ -81,6 +81,42 @@ DIVIDER = "#E0C048"
 # Countdown-timer presets she uses (label, seconds).
 TIMER_PRESETS = [("30 sec", 30), ("1 min", 60), ("2 min", 120),
                  ("3 min", 180), ("5 min", 300), ("10 min", 600)]
+# Sounds for the timer reaching zero: the alarm sounds Windows ships with
+# (the ones its Clock app offers), played once.  "No sound" turns it off.
+TIMER_SOUND_NONE = "No sound"
+TIMER_SOUNDS = [f"Alarm {n}" for n in range(1, 11)]
+TIMER_SOUND_DEFAULT = "Alarm 1"
+
+
+def _timer_sound_path(name):
+    """The .wav file for a TIMER_SOUNDS name, or None if it isn't there."""
+    if name not in TIMER_SOUNDS:
+        return None
+    num = int(name.split()[-1])
+    path = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Media",
+                        f"Alarm{num:02d}.wav")
+    return path if os.path.isfile(path) else None
+
+
+def play_timer_sound(name):
+    """Play a timer sound once, without waiting for it to finish."""
+    path = _timer_sound_path(name)
+    if not path:
+        return
+    try:
+        import winsound
+        winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC
+                           | winsound.SND_NODEFAULT)
+    except Exception:
+        pass
+
+
+def stop_timer_sound():
+    try:
+        import winsound
+        winsound.PlaySound(None, 0)
+    except Exception:
+        pass
 
 # Present-mode background choices (name -> hex).  Soft pastels like OneNote's
 # page colors, so projected text stays readable (dark on light).
@@ -244,7 +280,8 @@ class AgendasView(ttk.Frame):
                                                      else None)
         self._cfg = {"label": cfg["label"], "ensemble": cfg["ensemble"],
                      "book": cfg["book"], "class_type": class_type,
-                     "periods": cfg.get("periods") or []}
+                     "periods": cfg.get("periods") or [],
+                     "birthdays": cfg.get("birthdays", False)}
         self._store_id = cfg["id"]
         self._jazz_eid = self._class_jazz_eid() if self._is_jazz else None
         self._group = self._jazz_store_key() if self._is_jazz else self._store_id
@@ -834,12 +871,75 @@ class AgendasView(ttk.Frame):
                 self._saved = True
                 self._heal_kinds(self._day)
                 self._ensure_ids(self._day)
+                if self._add_birthdays(self._day):
+                    self._save_day(rebuild_present=False)
                 return
             except Exception:
                 pass
         self._day = spine.build_default_day(self._date, self._context())
         self._saved = False
         self._ensure_ids(self._day)
+        self._add_birthdays(self._day)
+
+    # ── birthdays (Manage Classes → 🎂 Birthdays) ──
+
+    def _add_birthdays(self, day):
+        """Put "Happy Birthday - Name" last in the Warm Up for today's
+        birthdays and those on the days off before the next class.
+
+        Each student is added to a day ONCE (``day["birthdays"]`` remembers
+        who, by student id), so a line she edits or deletes stays the way she
+        left it.  Only today and later: a past agenda is the record of what
+        happened.  Returns True when a line was added."""
+        if not self._cfg.get("birthdays") or self.main_db is None:
+            return False
+        if self._date < date.today() or not self._is_class_day(self._date):
+            return False
+        try:
+            from ui.names import unique_first_names
+            rows = list(self.main_db.get_students_for_email(
+                school_year=self._year(), ensemble=self._cfg["label"]))
+            names = unique_first_names(rows)
+        except Exception:
+            return False
+        periods = self._taggable_periods()
+        people, period_of = [], {}
+        for r, name in zip(rows, names):
+            md = spine.birthday_month_day(r["birth_date"])
+            if not md:
+                continue
+            key = str(r["id"])
+            people.append((key, name, md))
+            mine = [p.strip() for p in (r["class_periods"] or "").split(",")]
+            period_of[key] = next((p for p in periods if p in mine), "")
+        _start, last_day = self._year_bounds()
+        lines = spine.birthday_lines(self._date, people, self._is_class_day,
+                                     last_day=last_day)
+        done = day.setdefault("birthdays", {})
+        lines = [(k, t) for k, t in lines if k not in done]
+        if not lines:
+            return False
+        secs = day.setdefault("sections", [])
+        target = (next((x for x in secs if x.get("kind") == "warmup"), None)
+                  or next((x for x in secs if x.get("kind") != "rhythms"),
+                          None))
+        if target is None:
+            target = {"title": "Warm Up", "kind": "warmup", "items": []}
+            secs.insert(0, target)
+        items = target.setdefault("items", [])
+        # A blank starter line would sit above the birthday as an empty to-do.
+        if (len(items) == 1 and not (items[0].get("text") or "").strip()
+                and not items[0].get("image")):
+            items.clear()
+        for key, text in lines:
+            item = {"text": text, "done": False, "note": "",
+                    "kind": "birthday", "runs": []}
+            if period_of.get(key):
+                item["section"] = period_of[key]   # only on that period's screen
+            items.append(item)
+            self._ensure_ids(day)
+            done[key] = item["id"]
+        return True
 
     def _heal_kinds(self, day):
         """Older saved days stored every section with a null ``kind``, which hid
@@ -998,7 +1098,13 @@ class AgendasView(ttk.Frame):
         return None, None
 
     def _copy_previous_day(self):
-        import copy as _copy
+        """Add the last saved day's lines to this day.  Adds only: what is
+        already here (typed lines, birthdays) stays put, and copying twice
+        adds nothing new, so there is nothing to confirm or undo."""
+        # Commit a line still being typed, so it counts as already here.
+        w = self.focus_get()
+        if isinstance(w, tk.Text) and hasattr(w, "_section"):
+            self._commit_text_block(w, w._section)
         src_date, src = self._previous_saved_day()
         if src is None:
             Messagebox.show_warning(
@@ -1006,30 +1112,14 @@ class AgendasView(ttk.Frame):
                 title="Nothing to Copy", parent=self)
             return
         when = f"{src_date.strftime('%a %b')} {src_date.day}"
-        if self._saved and Messagebox.yesno(
-                f"Replace this day's agenda with the one from {when}?"
-                "\n\nWhat you have entered for today will be discarded.",
-                title="Copy Previous Day", parent=self) != "Yes":
-            return
-
-        day = _copy.deepcopy(src)
-        day["date"] = self._date.isoformat()
-        # Announcements are generated from the concert calendar, so today's are
-        # right and yesterday's ("concert in 5 days") are not.
-        fresh = spine.build_default_day(self._date, self._context())
-        day["announcements"] = list(fresh.get("announcements") or [])
-        # Fresh item ids, and nothing pre-checked: the per-section check-off
-        # state is keyed by item id, so reusing them would carry yesterday's
-        # checkmarks into today.
-        for sec in day.get("sections", []):
-            for it in sec.get("items", []):
-                it["done"] = False
-                it.pop("id", None)
-        self._ensure_ids(day)
-
-        self._day = day
-        self._save_day()
-        self.refresh()
+        added = spine.merge_previous_day(self._day, src)
+        if added:
+            self._ensure_ids(self._day)
+            self._save_day()
+            self.refresh()
+        self._saved_lbl.config(
+            text=(f"Added {added} line{'s' if added != 1 else ''} from {when}"
+                  if added else f"Nothing new on {when}"))
 
     # ─────────────────────────────────────────────────────────────── render ───
 
@@ -3557,18 +3647,22 @@ class _PresentWindow(ttk.Toplevel):
         # Countdown sits right next to the clock/date, not off in the corner.
         self._timer_lbl = ttk.Label(hdr, text="", font=("Segoe UI", fs(26), "bold"),
                                      bootstyle=(INVERSE, DARK))
-        self._timer_lbl.pack(side=LEFT, padx=(40, 10), pady=6)
+        self._timer_lbl.pack(side=LEFT, padx=(24, 6), pady=6)
 
         _tk(tk.Button, hdr, text="✕", bg="#c0392b", fg="#ffffff", bd=0,
             activebackground="#e74c3c", activeforeground="#ffffff",
             cursor="hand2", font=("Segoe UI", fs(14), "bold"),
             command=self.view._close_present).pack(side=RIGHT, padx=(6, 14),
                                                    pady=6, ipadx=6)
-        self._pause_btn = ttk.Button(hdr, text="⏸ Pause", bootstyle=WARNING,
-                                     command=self._toggle_pause, width=9)
-        self._pause_btn.pack(side=RIGHT, padx=2, pady=6)
-        ttk.Button(hdr, text="▶ Start", bootstyle=WARNING, width=7,
-                   command=self._start_selected).pack(side=RIGHT, padx=2, pady=6)
+        # One Start / Pause / Resume button plus a small Reset: the bar was
+        # already full on a SmartBoard, and Reset + the sound picker had to
+        # fit without pushing the timer length off the edge.
+        self._sound_menu(hdr)
+        ttk.Button(hdr, text="⟲", bootstyle=SECONDARY, width=2,
+                   command=self._reset_timer).pack(side=RIGHT, padx=2, pady=6)
+        self._go_btn = ttk.Button(hdr, text="▶ Start", bootstyle=WARNING,
+                                  command=self._go, width=9)
+        self._go_btn.pack(side=RIGHT, padx=2, pady=6)
         self._preset_var = tk.StringVar(value="5 min")
         ttk.Combobox(hdr, textvariable=self._preset_var, state="readonly",
                      width=7, values=[l for l, _ in TIMER_PRESETS]).pack(
@@ -3608,7 +3702,11 @@ class _PresentWindow(ttk.Toplevel):
             if self._timer_running:
                 remaining = max(0, int(round(self._timer_end - time.time())))
                 if remaining <= 0:
+                    # Time's up: stays at 0:00 (red) until Reset or Start.
                     self._timer_running = False
+                    self._timer_remaining = 0
+                    self._go_btn.config(text="▶ Start")
+                    play_timer_sound(self._sound_var.get())
             else:
                 remaining = self._timer_remaining
             m, s = divmod(remaining, 60)
@@ -3620,22 +3718,60 @@ class _PresentWindow(ttk.Toplevel):
 
     def _start_selected(self):
         secs = dict(TIMER_PRESETS).get(self._preset_var.get(), 300)
+        stop_timer_sound()
         self._timer_started = True
         self._timer_running = True
         self._timer_end = time.time() + secs
-        self._pause_btn.config(text="⏸ Pause")
+        self._go_btn.config(text="⏸ Pause")
 
-    def _toggle_pause(self):
-        if not self._timer_started:
-            return
+    def _go(self):
+        """The one timer button: Start, then Pause / Resume while it runs."""
         if self._timer_running:
             self._timer_remaining = max(0, int(round(self._timer_end - time.time())))
             self._timer_running = False
-            self._pause_btn.config(text="▶ Resume")
-        else:
+            self._go_btn.config(text="▶ Resume")
+        elif self._timer_started and self._timer_remaining > 0:
             self._timer_end = time.time() + self._timer_remaining
             self._timer_running = True
-            self._pause_btn.config(text="⏸ Pause")
+            self._go_btn.config(text="⏸ Pause")
+        else:
+            self._start_selected()
+
+    def _reset_timer(self):
+        """Stop the timer, clear it off the screen, and hush the alarm."""
+        stop_timer_sound()
+        self._timer_started = False
+        self._timer_running = False
+        self._timer_remaining = 0
+        self._timer_lbl.config(text="", bootstyle=(INVERSE, DARK))
+        self._go_btn.config(text="▶ Start")
+
+    def _sound_menu(self, hdr):
+        """🔔 button: pick the sound for time's up.  Picking one plays it, so
+        she can hear the choices; the choice is remembered."""
+        db = self.view.db
+        saved = db.get_program_setting("agenda_timer_sound") or TIMER_SOUND_DEFAULT
+        if saved != TIMER_SOUND_NONE and saved not in TIMER_SOUNDS:
+            saved = TIMER_SOUND_DEFAULT
+        self._sound_var = tk.StringVar(value=saved)
+        btn = ttk.Menubutton(hdr, text="🔔", bootstyle=SECONDARY)
+        menu = tk.Menu(btn, tearoff=0, font=("Segoe UI", fs(11)))
+
+        def chose():
+            name = self._sound_var.get()
+            db.set_program_setting("agenda_timer_sound", name)
+            stop_timer_sound()
+            play_timer_sound(name)
+
+        menu.add_radiobutton(label=TIMER_SOUND_NONE, value=TIMER_SOUND_NONE,
+                             variable=self._sound_var, command=chose)
+        menu.add_separator()
+        for name in TIMER_SOUNDS:
+            if _timer_sound_path(name):
+                menu.add_radiobutton(label=name, value=name,
+                                     variable=self._sound_var, command=chose)
+        btn["menu"] = menu
+        btn.pack(side=RIGHT, padx=2, pady=6)
 
     # ── content ──
 

@@ -2129,9 +2129,16 @@ class _FullGridDialog(ttk.Toplevel):
         tree = ttk.Treeview(wrap, columns=cols, show="headings", bootstyle=INFO,
                             xscrollcommand=xsb.set, selectmode="none")
         xsb.config(command=tree.xview)
+        import tkinter.font as tkfont
+        try:
+            name_w = max(tkfont.nametofont("TkDefaultFont").measure(n)
+                         for n, _ in rows) + 16
+        except Exception:
+            name_w = 120
         for c in cols:
             tree.heading(c, text=c, anchor=W)
-            tree.column(c, width=(120 if c == "Player" else 84), anchor=W, stretch=False)
+            tree.column(c, width=(max(120, name_w) if c == "Player" else 84),
+                        anchor=W, stretch=False)
         _configure_station_tags(tree)
         for name, seq in rows:
             tree.insert("", "end", values=[name] + seq)

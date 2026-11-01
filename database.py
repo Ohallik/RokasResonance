@@ -982,6 +982,35 @@ class Database:
 
         # Data healing that runs on every profile, not just new ones.
         self._repair_carried_start_dates()
+        self._restore_lost_birth_dates()
+
+    def _restore_lost_birth_dates(self):
+        """Put back birth dates the student form erased.
+
+        Saving a student from the form used to blank their birth date (the
+        form had no box for it).  The same child's record from another
+        school year, matched by district ID, usually still has it.  Fills
+        blanks only, so it is safe to run every time and finds nothing once
+        healed."""
+        try:
+            with self._connect() as conn:
+                conn.execute("""
+                    UPDATE students SET birth_date = (
+                        SELECT o.birth_date FROM students o
+                        WHERE o.student_id = students.student_id
+                          AND o.id != students.id
+                          AND TRIM(COALESCE(o.birth_date, '')) != ''
+                        ORDER BY o.school_year DESC LIMIT 1)
+                    WHERE TRIM(COALESCE(birth_date, '')) = ''
+                      AND TRIM(COALESCE(student_id, '')) != ''
+                      AND EXISTS (
+                        SELECT 1 FROM students o
+                        WHERE o.student_id = students.student_id
+                          AND o.id != students.id
+                          AND TRIM(COALESCE(o.birth_date, '')) != '')""")
+                conn.commit()
+        except Exception:
+            pass
 
     def _repair_carried_start_dates(self):
         """One-time healing for loans carried into a year before v0.26.
@@ -2923,6 +2952,13 @@ KEEPING IT
             "preferred_name", "jazz_instrument", "jazz_part",
             "is_active", "provisional"
         ]
+        # Only the columns the caller actually has.  Writing every column
+        # blanked whatever the caller didn't know about: the student form has
+        # no jazz part, and had no birth date, so saving a student from it
+        # quietly erased both.  To clear a field, pass it as "".
+        cols = [c for c in cols if c in data]
+        if not cols:
+            return
         set_clause = ", ".join([f"{c}=?" for c in cols])
         values = [data.get(c) for c in cols] + [student_id]
         with self._connect() as conn:

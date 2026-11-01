@@ -417,6 +417,8 @@ def _alt_weekly(student):
 def _on_concert_day(student, day, week=None):
     odd = bool(student.get("alt_odd", True))
     if _alt_weekly(student):
+        if student.get("_grid_percussion_week"):
+            return False
         if week is None:
             week = (day - 1) // 5 + 1
         return (week % 2 == 1) == odd
@@ -752,16 +754,28 @@ def _fit_capacity(students, station_by_id, away, inventory, ring, mode,
     # player they are.  Settling in the usual order instead handed it to the
     # snare-only students and the full rotation first, every day, so a
     # student allowed snare AND mallets never got an actual snare.
+    # The same goes for an instrument the room has too few of (one set of
+    # Bells) among the students allowed several stations: settling them in
+    # list order meant the first four always had the Bells between them and
+    # the fifth and sixth never once got a turn.  Full-time and locked
+    # players still keep their spot; the flexible ones share what's left.
     winners, bumped = {}, {}
-    for label, cap in (limits or {}).items():
+    rank = {id(s): k for k, s in enumerate(order)}
+    for label, cap in caps.items():
         want = [s for s in order if station_by_id[id(s)] == label]
         if len(want) <= cap:
             continue
-        rank = {id(s): k for k, s in enumerate(order)}
+        if label in (limits or {}):
+            room = cap
+        else:
+            room = cap - sum(1 for s in want if _flex_rank(s) < 2)
+            want = [s for s in want if _flex_rank(s) >= 2]
+            if room <= 0 or len(want) <= room:
+                continue
         want.sort(key=lambda s: (last.get(id(s), {}).get(label, 0),
                                  rank[id(s)]))
-        winners[label] = {id(s) for s in want[:cap]}
-        for s in want[cap:]:
+        winners[label] = {id(s) for s in want[:room]}
+        for s in want[room:]:
             bumped[id(s)] = label
     waiting = {label: set(ids) for label, ids in winners.items()}
     base_fits = fits
@@ -802,16 +816,29 @@ def full_grid(students, class_type, days=None,
 
     ``rows`` is a list of ``(name, [station_day1, station_day2, ...])`` for one
     full cycle (or ``days`` columns if given), starting at ``start_day``.
+
+    The grid's days are rotation days, not dates, so it can't know which
+    school week each falls in.  Guessing five days to a week showed an
+    every-other-week player as a lopsided 5-and-3 split that never happens
+    on the agenda (which uses the real school weeks).  Those players are
+    shown on their percussion-week stations instead, named with their other
+    instrument.
     """
     if days is None:
         days = cycle_length(students, mallet_subrotation, inventory, stations,
                             class_type)
     day_numbers = [start_day + k for k in range(days)]
+    students = [dict(s, _grid_percussion_week=True)
+                if _is_alternating(s) and _alt_weekly(s) else s
+                for s in students]
 
     per_day = [day_assignments(students, d, class_type, mallet_subrotation,
                                inventory=inventory, stations=stations)
                for d in day_numbers]
     rows = []
     for idx, s in enumerate(students):
-        rows.append((s["name"], [per_day[k][idx][1] for k in range(days)]))
+        name = s["name"]
+        if s.get("_grid_percussion_week"):
+            name += f" ({s['alt_instrument'].strip()} every other week)"
+        rows.append((name, [per_day[k][idx][1] for k in range(days)]))
     return day_numbers, rows

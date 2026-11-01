@@ -963,6 +963,13 @@ class _ManageClassesDialog(ttk.Toplevel):
                              "P1 / P2 toggle. Blank means one section.",
                   font=("Segoe UI", 9), foreground=muted_fg(),
                   wraplength=560, justify=LEFT).pack(anchor=W, pady=(4, 0))
+        ttk.Label(body, text="🎂 Birthdays: checked puts “Happy "
+                             "Birthday - Name” last in the Warm Up on each "
+                             "student's birthday (weekend and holiday birthdays "
+                             "the class day before). Edit or delete it on the "
+                             "agenda like any other line.",
+                  font=("Segoe UI", 9), foreground=muted_fg(),
+                  wraplength=560, justify=LEFT).pack(anchor=W, pady=(4, 0))
 
         self._rows_frame = ttk.Frame(body)
         self._rows_frame.pack(fill=BOTH, expand=True, pady=(8, 0))
@@ -988,6 +995,8 @@ class _ManageClassesDialog(ttk.Toplevel):
                 value=", ".join((klass or {}).get("periods") or [])),
             "school": tk.StringVar(value=self._school_by_id.get(
                 (klass or {}).get("site_id"), "")),
+            "birthdays": tk.BooleanVar(
+                value=bool((klass or {}).get("birthdays", False))),
         }
         self._rows.append(rec)
         self._render_rows()
@@ -1001,6 +1010,7 @@ class _ManageClassesDialog(ttk.Toplevel):
         heads = ["Class name", "Kind of class", "Periods (e.g. 1, 2)"]
         if self._multi_school:
             heads.append("School")
+        heads.append("🎂 Birthdays")
         for c, text in enumerate(heads):
             ttk.Label(f, text=text, font=("Segoe UI", 9, "bold")).grid(
                 row=0, column=c, sticky=W, padx=(0 if c == 0 else 6, 0),
@@ -1021,6 +1031,10 @@ class _ManageClassesDialog(ttk.Toplevel):
                                                       self._schools]).grid(
                     row=r, column=3, sticky="ew", padx=(6, 0), pady=2)
                 col = 4
+            ttk.Checkbutton(f, variable=rec["birthdays"],
+                            bootstyle="round-toggle").grid(
+                row=r, column=col, padx=(6, 0), pady=2)
+            col += 1
             ttk.Button(f, text="▲", width=2, bootstyle=(SECONDARY, OUTLINE, LINK),
                        command=lambda ix=i: self._move(ix, -1)).grid(
                 row=r, column=col, padx=(8, 0))
@@ -1060,6 +1074,7 @@ class _ManageClassesDialog(ttk.Toplevel):
                 k["label"] = label
                 k["periods"] = cr._clean_periods(rec["periods"].get())
                 k["site_id"] = site
+                k["birthdays"] = bool(rec["birthdays"].get())
                 if k.get("template") != tmpl:      # kind changed → reset derived
                     k["template"] = tmpl
                     k["book"] = ti["book"]
@@ -1073,6 +1088,7 @@ class _ManageClassesDialog(ttk.Toplevel):
                                "percussion": ti["percussion"],
                                "periods": cr._clean_periods(
                                    rec["periods"].get()),
+                               "birthdays": bool(rec["birthdays"].get()),
                                "site_id": site})
         if not result:
             Messagebox.show_warning("Keep at least one class.",

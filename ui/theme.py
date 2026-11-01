@@ -787,8 +787,38 @@ def smooth_wheel(canvas, px_per_notch=None):
     return on_wheel
 
 
+def scrollbar_width() -> int:
+    """How thick every scrollbar is: wide enough to grab easily."""
+    return max(18, fs(14))
+
+
+def widen_scrollbars():
+    """Make every themed scrollbar as wide as the agenda's.
+
+    ttkbootstrap draws the scrollbar thumb as an image whose thickness is a
+    module constant (an 8-pixel sliver; the "thin" variant used in dropdown
+    lists is 4), and the style ignores any width option.  Setting the
+    constants before the window is created widens every scrollbar in the
+    app, including the ones inside ScrolledText and other ready-made widgets.
+    Must run after the font scale is set and BEFORE the main window exists.
+    """
+    try:
+        from ttkbootstrap.style.builders import scrollbar as _sb
+    except Exception:
+        return
+    _sb._SCROLLBAR_THICKNESS = scrollbar_width()
+    _sb._THIN_SCROLLBAR_THICKNESS = scrollbar_width()
+
+
 def thick_scrollbar(parent, command):
     """A vertical scrollbar wide enough to grab easily (the themed one is a
-    fixed 8-pixel sliver that the theme will not widen)."""
+    fixed 8-pixel sliver that the theme will not widen).  Scaled for the
+    display the same way the themed bars are, so every bar is one width."""
+    width = scrollbar_width()
+    try:
+        from ttkbootstrap.style.scaling import Scaling
+        width = Scaling.for_widget(parent).logical(width, minimum=width)
+    except Exception:
+        pass
     return tk.Scrollbar(parent, orient="vertical", command=command,
-                        width=max(18, fs(14)))
+                        width=width)

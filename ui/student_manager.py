@@ -2065,6 +2065,8 @@ class StudentDialog(_ClassOptionsMixin, ttk.Toplevel):
         self._field(row1, "Gender", "gender", widget="combobox",
                     options=GENDER_OPTIONS, side=LEFT, width=16)
         self._field(row1, "Student ID", "student_id", side=LEFT, width=16)
+        self._field(row1, "Birth Date (e.g. 6/11/2013)", "birth_date",
+                    side=LEFT, width=12)
 
         if self._elementary:
             # No class periods in an elementary school -- the group is a pullout
