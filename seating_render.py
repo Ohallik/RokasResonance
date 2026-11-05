@@ -15,6 +15,14 @@ import seating_chart as sc
 
 _SS = 3  # supersample for crisp text
 
+# How far the chart can be scaled.  The picture is drawn at _SS times its normal
+# size and then resized, so zooming in as far as _SS stays sharp.
+MIN_ZOOM = 0.3
+MAX_ZOOM = float(_SS)
+# Fit to window grows a small chart only this far; a dozen seats the size of
+# dinner plates help nobody.
+MAX_FIT_ZOOM = 1.5
+
 # Row colors aligned to typical velcro carpet markers (front -> back).
 DEFAULT_PALETTE = ["#ff3b30", "#8db4e2", "#ffd966", "#a9d08e",
                    "#b3a2c7", "#f4b183", "#76d7c4", "#f7a5c4"]
@@ -46,6 +54,9 @@ INSTRUMENT_ABBREV = {
 def _inst_label(seat):
     inst = (seat.get("instrument") or "") if seat else ""
     return INSTRUMENT_ABBREV.get(inst, inst)
+
+
+_SIDEBAR_GAP = 14
 
 
 def _rhythm_sidebar(players, font_pt=14):
@@ -114,7 +125,7 @@ def _attach_sidebar(img, seat_boxes, players, side, font_pt):
     if not players:
         return img, seat_boxes
     bar, bar_boxes = _rhythm_sidebar(players, font_pt)
-    gap = 14
+    gap = _SIDEBAR_GAP
     W = img.width + bar.width + gap
     H = max(img.height, bar.height)
     out = Image.new("RGB", (W, H), "white")
@@ -133,10 +144,39 @@ def _attach_sidebar(img, seat_boxes, players, side, font_pt):
     return out, merged
 
 
+def _finish(img, seat_boxes, zoom, fit, players, side, font_pt):
+    """Resize a finished supersampled chart to its final scale.
+
+    ``fit`` is a (width, height) to fill instead of a fixed ``zoom``.  The scale
+    actually used comes back in ``img.info["zoom"]``, since a fit is not known
+    until the chart has been laid out.
+    """
+    from PIL import Image
+    w, h = img.width / _SS, img.height / _SS
+    if fit:
+        zoom = max(MIN_ZOOM, min(fit[0] / w, fit[1] / h, MAX_FIT_ZOOM))
+        # The rhythm column does not shrink quite in proportion, so it is
+        # measured at the size it is about to be drawn, twice to settle.
+        for _ in range(2 if players else 0):
+            bar = _rhythm_sidebar(players, font_pt * zoom)[0]
+            zoom = max(MIN_ZOOM, min(zoom, (fit[0] - bar.width - _SIDEBAR_GAP) / w,
+                                     zoom * fit[1] / bar.height))
+    zoom = max(MIN_ZOOM, min(MAX_ZOOM, zoom))
+    img = img.resize((max(1, round(w * zoom)), max(1, round(h * zoom))),
+                     Image.LANCZOS)
+    seat_boxes = {k: tuple(int(v * zoom) for v in box)
+                  for k, box in seat_boxes.items()}
+    if players:
+        img, seat_boxes = _attach_sidebar(img, seat_boxes, players, side,
+                                          font_pt * zoom)
+    img.info["zoom"] = zoom
+    return img, seat_boxes
+
+
 def render_rows(rows, row_caps, palette_on=True, palette=None,
                 front_label="FRONT OF THE ROOM", flip=False, font_pt=14,
                 percussion=None, show_instrument=True, color_mode="row",
-                jazz_rhythm=None, rhythm_side="left"):
+                jazz_rhythm=None, rhythm_side="left", zoom=1.0, fit=None):
     from PIL import Image, ImageDraw
 
     palette = palette or DEFAULT_PALETTE
@@ -285,18 +325,43 @@ def render_rows(rows, row_caps, palette_on=True, palette=None,
     if front_label and flip:
         draw.text((pad, y), front_label, font=font_lbl, fill="#000000")
 
-    if s != 1:
-        img = img.resize((width // s, height // s), Image.LANCZOS)
-    if jazz_rhythm:
-        img, seat_boxes = _attach_sidebar(img, seat_boxes, jazz_rhythm,
-                                          rhythm_side, font_pt)
-    return img, seat_boxes
+    return _finish(img, seat_boxes, zoom, fit, jazz_rhythm, rhythm_side, font_pt)
+
+
+def _arc_radii(caps, seat_w, seat_h, span_deg):
+    """The radius of each arc, front to back: evenly spaced, and no seat touching
+    another.
+
+    Every arc shares one gap, wide enough for a seat's full diagonal, because
+    two boxes on neighboring arcs can only touch if their centers are closer
+    than that.  A long row used to push out only its own arc, which left a hole
+    in front of it and crowded everything behind it; here it moves the whole
+    set outward together.
+    """
+    gap = math.hypot(seat_w, seat_h) * 1.05
+    # Seats in one arc clear each other by being far enough apart either across
+    # OR down the page.  Where the arc runs diagonally each direction only gets
+    # part of the distance, so "one seat width along the curve" is not enough.
+    w, h = seat_w * 1.06, seat_h * 1.12
+    need = [seat_h * 2.0]
+    for r, cap in enumerate(caps):
+        fit = 0
+        for c in range(cap - 1):
+            a0 = math.radians(90 + span_deg / 2 - span_deg * c / (cap - 1))
+            a1 = math.radians(90 + span_deg / 2 - span_deg * (c + 1) / (cap - 1))
+            across = abs(math.cos(a0) - math.cos(a1))
+            down = abs(math.sin(a0) - math.sin(a1))
+            fit = max(fit, min(w / across if across else math.inf,
+                               h / down if down else math.inf))
+        need.append(fit - r * gap)
+    first = max(need)
+    return [first + r * gap for r in range(len(caps))]
 
 
 def render_arcs(rows, row_caps, palette_on=True, palette=None,
                 front_label="CONDUCTOR", flip=False, font_pt=14, percussion=None,
                 show_instrument=True, color_mode="row",
-                jazz_rhythm=None, rhythm_side="left"):
+                jazz_rhythm=None, rhythm_side="left", zoom=1.0, fit=None):
     """Concentric arcs.  By default the front row is innermost (nearest the
     conductor at the bottom-center) and rows arc upward toward the back; ``flip``
     puts the conductor at the top with rows arcing downward.  Percussion, when
@@ -327,18 +392,10 @@ def render_arcs(rows, row_caps, palette_on=True, palette=None,
     n_rows = len(rows)
     caps = [sc.row_capacity(row_caps, r) for r in range(n_rows)]
 
-    ring_gap = int(seat_h * 2.0)
     span_deg = 140
-    span_rad = math.radians(span_deg)
     start_deg = 90 + span_deg / 2
 
-    radii = []
-    prev = int(seat_h * 2.0)
-    for r in range(n_rows):
-        needed = (caps[r] * seat_w * 1.02) / span_rad
-        R = max(prev + ring_gap, needed) if r else max(int(seat_h * 2.0), needed)
-        radii.append(R)
-        prev = R
+    radii = _arc_radii(caps, seat_w, seat_h, span_deg)
     r_max = radii[-1] if radii else int(seat_h * 2.0)
 
     perc = percussion or []
@@ -350,8 +407,16 @@ def render_arcs(rows, row_caps, palette_on=True, palette=None,
     lbl_h = int(fs * 1.7) if front_label else 0
 
     widest_perc = max((len(x) for x in perc_lines), default=0)
-    width = int(max(2 * (r_max + seat_w), widest_perc * seat_w + pad * 2))
-    height = int(r_max + seat_h * 2 + pad * 2 + perc_band + lbl_h)
+    # The ends of the arcs stop short of straight out from the conductor.
+    half = r_max * math.cos(math.radians(90 - span_deg / 2)) + seat_w / 2
+    width = int(max(2 * half, widest_perc * seat_w) + pad * 2)
+    # A big group's arcs are centered far behind the front row.  The conductor
+    # stands just in front of that row instead, and the empty space up to the
+    # tips of the arcs is left out of the picture.
+    r_front = radii[0] if radii else 0
+    r_cond = max(0, r_front - seat_h * 2.2)
+    trim = int(min(r_cond, r_front * math.sin(math.radians(90 - span_deg / 2))))
+    height = int(r_max + seat_h * 2 + pad * 2 + perc_band + lbl_h) - trim
     cx = width / 2
 
     # ``flip`` True == front of the room at the BOTTOM (conductor bottom, arcs
@@ -362,11 +427,11 @@ def render_arcs(rows, row_caps, palette_on=True, palette=None,
     # left in one view was on their right in the other.
     dx = -1 if flip else 1
     if flip:
-        cy = height - pad - lbl_h - seat_h / 2     # conductor near bottom
+        cy = height - pad - lbl_h - seat_h / 2 + trim   # arcs' center, bottom
         perc_py = pad + seat_h * 1.5               # percussion across the top
         front_y = height - pad - lbl_h             # front label at very bottom
     else:
-        cy = pad + lbl_h + seat_h / 2              # conductor near top
+        cy = pad + lbl_h + seat_h / 2 - trim       # arcs' center, top
         perc_py = height - pad - seat_h / 2        # percussion across the bottom
         front_y = pad                              # front label at very top
 
@@ -459,19 +524,15 @@ def render_arcs(rows, row_caps, palette_on=True, palette=None,
 
     # Conductor marker.
     cw = int(seat_w * 0.9)
-    draw.rounded_rectangle([cx - cw / 2, cy - seat_h / 2, cx + cw / 2, cy + seat_h / 2],
+    my = cy + d * r_cond
+    draw.rounded_rectangle([cx - cw / 2, my - seat_h / 2, cx + cw / 2, my + seat_h / 2],
                            radius=int(8 * s), outline="#333333", width=max(1, s))
     cw2, ch2 = _text_size(draw, "Conductor", font_i)
-    draw.text((cx - cw2 / 2, cy - ch2 / 2), "Conductor", font=font_i, fill="#333333")
+    draw.text((cx - cw2 / 2, my - ch2 / 2), "Conductor", font=font_i, fill="#333333")
 
     # Persistent "FRONT OF THE ROOM" label on the front side.
     if front_label:
         tw, th = _text_size(draw, front_label, font_lbl)
         draw.text((cx - tw / 2, front_y), front_label, font=font_lbl, fill="#000000")
 
-    if s != 1:
-        img = img.resize((width // s, height // s), Image.LANCZOS)
-    if jazz_rhythm:
-        img, seat_boxes = _attach_sidebar(img, seat_boxes, jazz_rhythm,
-                                          rhythm_side, font_pt)
-    return img, seat_boxes
+    return _finish(img, seat_boxes, zoom, fit, jazz_rhythm, rhythm_side, font_pt)

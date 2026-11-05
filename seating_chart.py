@@ -1090,10 +1090,11 @@ def _flatten(rows):
     return [s for row in rows for s in row if s]
 
 
-def apply_row_pins(rows, row_caps):
+def apply_row_pins(rows, row_caps, only=None):
     """Move students with pref 'front' into the first row and 'back' into the
     last row, swapping with an unpinned occupant.  Mutates and returns rows.
-    Handles both ragged rows and grid rows that contain empty (None) seats."""
+    Handles both ragged rows and grid rows that contain empty (None) seats.
+    ``only`` limits it to those student ids, leaving everyone else's seat alone."""
     if not rows:
         return rows
 
@@ -1120,26 +1121,34 @@ def apply_row_pins(rows, row_caps):
             target.append(student)
             del rows[cur_r][cur_c]
             return
-        # Otherwise swap with an unpinned occupant of the target row.
-        for c, occ in enumerate(target):
+        # Otherwise swap with an unpinned occupant of the target row, a
+        # section-mate if there is one so nobody lands in another section.
+        inst = student.get("instrument")
+        for c in sorted(range(len(target)),
+                        key=lambda c: (target[c] or {}).get("instrument") != inst):
+            occ = target[c]
             if occ and not occ.get("pref") and not occ.get("reserved"):
                 target[c], rows[cur_r][cur_c] = student, occ
                 return
 
+    def wanted(s, pref):
+        return s.get("pref") == pref and (only is None or s.get("id") in only)
+
     last = len(rows) - 1
     for s in _flatten(rows):
-        if s.get("pref") == "front":
+        if wanted(s, "front"):
             move_to_row(s, 0)
     for s in _flatten(rows):
-        if s.get("pref") == "back":
+        if wanted(s, "back"):
             move_to_row(s, last)
     return rows
 
 
-def apply_edge_pins(rows):
+def apply_edge_pins(rows, only=None):
     """Move students with pref 'edge' to an outside end of a row (useful for a
     student with difficult social skills, so fewer neighbours are next to them).
-    Prefers left/right ends that aren't already held by another pinned student."""
+    Prefers left/right ends that aren't already held by another pinned student.
+    ``only`` limits it to those student ids and picks the nearest row's end."""
     edge_students = [s for row in rows for s in row
                      if s and not s.get("reserved") and s.get("pref") == "edge"]
     if not edge_students:
@@ -1167,7 +1176,10 @@ def apply_edge_pins(rows):
         if pc == 0 or pc == len(rows[pr]) - 1:
             used.add((pr, pc))
             continue
-        for e in edges:
+        if only is not None and s.get("id") not in only:
+            continue
+        near = sorted(edges, key=lambda e: abs(e[0] - pr)) if only is not None else edges
+        for e in near:
             if e in used:
                 continue
             er, ec = e
@@ -1180,6 +1192,23 @@ def apply_edge_pins(rows):
             used.add(e)
             break
     return rows
+
+
+def conflicts_too_close(rows, conflicts, min_gap=3):
+    """The keep-apart pairs that currently break the rule separate_conflicts
+    enforces: same row, fewer than ``min_gap`` columns apart."""
+    pos = {}
+    for r, row in enumerate(rows):
+        for c, x in enumerate(row):
+            if x and not x.get("reserved"):
+                pos[(x.get("name") or "").lower()] = (r, c)
+    close = set()
+    for pair in conflicts:
+        ns = sorted(pair)
+        a, b = (pos.get(ns[0]), pos.get(ns[1])) if len(ns) == 2 else (None, None)
+        if a and b and a[0] == b[0] and abs(a[1] - b[1]) < min_gap:
+            close.add(pair)
+    return close
 
 
 def separate_conflicts(rows, conflicts, max_passes=8, min_gap=3):
@@ -1919,6 +1948,34 @@ def _open_left(row, tc):
             row[tc] = _reserved()
             return True
     return False
+
+
+def reserved_beside(row, c):
+    """Which of the seats either side of column ``c`` are reserved."""
+    return [i for i in (c + 1, c - 1)
+            if 0 <= i < len(row) and row[i] and row[i].get("reserved")]
+
+
+def open_seats_beside(row, c, want):
+    """Bring a seated chart up to ``want`` reserved seats beside column ``c``.
+
+    Students keep their order: whoever is in the way slides over one seat, into
+    the nearest empty chair, and a row with none gains a chair on the end.  A
+    student beside a second reserved seat slides over too, so both stay touching.
+    """
+    for _ in range(want - len(reserved_beside(row, c))):
+        right_open = c + 1 not in reserved_beside(row, c)
+        left_open = c - 1 not in reserved_beside(row, c)
+        if right_open and _open_right(row, c + 1):
+            continue
+        if left_open and _open_left(row, c - 1):
+            continue
+        row.append(None)
+        if right_open:
+            _open_right(row, c + 1)
+        else:
+            _open_right(row, c)
+            c += 1
 
 
 def apply_buffers(rows):

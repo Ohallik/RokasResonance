@@ -8,6 +8,7 @@ conflicts, IEP/504 row placement, manual click-to-swap, and copy-to-clipboard
 as an image.
 """
 
+import functools
 import json
 import os
 import random
@@ -80,6 +81,20 @@ def _program_type(base_dir):
         return "band"
 
 
+def _undoable(method):
+    """Mark a chart action as one step the Undo button can take back.  Takes the
+    picture before it runs; a dialog cancelled along the way changes nothing, and
+    a step that changed nothing is dropped rather than wasting a click."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        self._checkpoint()
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._sync_undo()
+    return wrapper
+
+
 class SeatingChartView(ttk.Frame):
     def __init__(self, parent, db, main_db, base_dir):
         super().__init__(parent)
@@ -101,6 +116,11 @@ class SeatingChartView(ttk.Frame):
         self._seat_boxes = {}
         self._swap_first = None
         self._dirty = False
+        self._zoom = 1.0
+        self._fit = True          # keep the whole chart in view until they zoom
+        self._redraw_after = None
+        self._undo_stack = []
+        self._notes = []
         self._build()
         self._sync_program_ui()
         self._refresh_chart_list()
@@ -262,8 +282,10 @@ class SeatingChartView(ttk.Frame):
         self._status = ttk.Label(parent, text="", font=("Segoe UI", fs(9)),
                                  wraplength=270, justify=LEFT)
         self._status.pack(anchor=W, **bpad, pady=(12, 0))
-        ttk.Label(parent, text="Tip: click one seat then another to swap them.",
-                  font=("Segoe UI", fs(8)), foreground=muted_fg()).pack(anchor=W, **bpad, pady=(6, 8))
+        ttk.Label(parent, text="Tip: click one seat then another to swap them. "
+                               "Ctrl + mouse wheel zooms.",
+                  font=("Segoe UI", fs(8)), foreground=muted_fg(),
+                  wraplength=270, justify=LEFT).pack(anchor=W, **bpad, pady=(6, 8))
 
     def _build_canvas(self, parent):
         # Red warning banner directly under the chart image.
@@ -271,6 +293,23 @@ class SeatingChartView(ttk.Frame):
                                    font=("Segoe UI", fs(10), "bold"),
                                    wraplength=1000, justify=LEFT)
         self._warn_lbl.pack(side=BOTTOM, fill=X, padx=12, pady=(2, 8))
+
+        zbar = WrapBar(parent)
+        zbar.pack(fill=X)
+        ttk.Button(zbar, text="−", width=3, bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: self._zoom_by(1 / self._ZOOM_STEP)).pack(
+            side=LEFT, padx=(10, 2), pady=4)
+        self._zoom_lbl = ttk.Label(zbar, text="100%", width=5, anchor="center",
+                                   font=("Segoe UI", fs(10)))
+        self._zoom_lbl.pack(side=LEFT, pady=4)
+        ttk.Button(zbar, text="+", width=3, bootstyle=(SECONDARY, OUTLINE),
+                   command=lambda: self._zoom_by(self._ZOOM_STEP)).pack(
+            side=LEFT, padx=2, pady=4)
+        ttk.Button(zbar, text="Fit to Screen", bootstyle=(SECONDARY, OUTLINE),
+                   command=self._zoom_fit).pack(side=LEFT, padx=(6, 2), pady=4)
+        self._undo_btn = ttk.Button(zbar, text="↩ Undo", state=DISABLED,
+                                    bootstyle=(WARNING, OUTLINE), command=self._undo)
+        self._undo_btn.pack(side=RIGHT, padx=10, pady=4)
 
         wrap = ttk.Frame(parent)
         wrap.pack(fill=BOTH, expand=True)
@@ -282,6 +321,13 @@ class SeatingChartView(ttk.Frame):
         hsb.pack(side=BOTTOM, fill=X)
         self._canvas.pack(fill=BOTH, expand=True)
         self._canvas.bind("<Button-1>", self._on_canvas_click)
+        self._canvas.bind("<Configure>", self._on_canvas_resize)
+        self._canvas.bind("<MouseWheel>", lambda e: self._canvas.yview_scroll(
+            int(-e.delta / 120), "units"))
+        self._canvas.bind("<Shift-MouseWheel>", lambda e: self._canvas.xview_scroll(
+            int(-e.delta / 120), "units"))
+        self._canvas.bind("<Control-MouseWheel>", lambda e: self._zoom_by(
+            self._ZOOM_STEP if e.delta > 0 else 1 / self._ZOOM_STEP))
 
     # ─────────────────────────────────────────────────── config plumbing ────
 
@@ -292,6 +338,7 @@ class SeatingChartView(ttk.Frame):
         # Everything else (row_caps, view, flip, colors, display, section
         # placement) is edited in the Set Up dialog and lives in self._cfg.
 
+    @_undoable
     def _apply_and_regen(self):
         self._collect_cfg()
         self._regenerate()
@@ -303,6 +350,7 @@ class SeatingChartView(ttk.Frame):
             self._cfg["sort_mode"] = "sections"
             self._sort_var.set("sections")
 
+    @_undoable
     def _shuffle_members(self):
         """Shuffle who sits where WITHIN each section — in place.  Sections
         (and every empty/reserved seat) stay exactly where they are; only the
@@ -354,6 +402,7 @@ class SeatingChartView(ttk.Frame):
                         return True
         return False
 
+    @_undoable
     def _shuffle_sections(self):
         """Move whole sections to different parts of the room, at random.
 
@@ -387,6 +436,7 @@ class SeatingChartView(ttk.Frame):
         self._cfg["seed"] = random.randint(1, 10_000_000)
         self._apply_and_regen()
 
+    @_undoable
     def _optimize(self):
         """Fit the room to the ensemble, in one click.
 
@@ -491,6 +541,7 @@ class SeatingChartView(ttk.Frame):
         self._unresolved = []
         self._render()
 
+    @_undoable
     def _shuffle_small_groups(self):
         """Break the room into 2s (and a 3 where a section is odd), mixed up.
 
@@ -504,6 +555,7 @@ class SeatingChartView(ttk.Frame):
         self._cfg["shuffle_sections"] = False
         self._regenerate()
 
+    @_undoable
     def _shuffle_all(self):
         """True scramble: everyone gets a new seat and new neighbors, every
         click (fresh random seed each time; ignores section grouping)."""
@@ -524,6 +576,7 @@ class SeatingChartView(ttk.Frame):
                                       or self._cfg.get("zones")
                                       or self._cfg.get("side_zones")))
 
+    @_undoable
     def _clear_concert_setup(self):
         self._cfg["section_order"] = []
         self._cfg["section_zones"] = {}
@@ -958,6 +1011,7 @@ class SeatingChartView(ttk.Frame):
         zones, side_zones, zone_cols, anchors = self._effective_placement(caps)
         self._unseated = []
         self._auto_added = []
+        self._notes = []
 
         self._jazz_rhythm = []
         if self._cfg.get("jazz_mode") and from_layout is None:
@@ -972,11 +1026,19 @@ class SeatingChartView(ttk.Frame):
             rows_data = from_layout.get("rows", []) if isinstance(from_layout, dict) else from_layout
             perc_data = from_layout.get("perc", []) if isinstance(from_layout, dict) else []
 
+            # A student holds one seat.  A chart saved while a shrunk room was
+            # seating people twice still has both copies stored, so the second
+            # one becomes an empty chair when it is opened.
+            seen = set()
+
             def seat(sid):
                 if sid is None:
                     return None
                 if sid == "R":     # reserved (empty-beside) seat
                     return {"reserved": True, "name": "", "instrument": "", "pref": None}
+                if sid in seen:
+                    return None
+                seen.add(sid)
                 return self._roster.get(sid)
 
             rows = [[seat(sid) for sid in row] for row in rows_data]
@@ -986,27 +1048,21 @@ class SeatingChartView(ttk.Frame):
             # appear empty, and nobody is silently dropped.
             while len(rows) < len(caps):
                 rows.append([])
-            bumped = []
-            if len(rows) > len(caps):
-                for row in rows[len(caps):]:
-                    bumped.extend(x for x in row if x and not x.get("reserved"))
-                rows = rows[:len(caps)]
+            rows = rows[:len(caps)]
             fitted = []
             for r, row in enumerate(rows):
                 cap = sc.row_capacity(caps, r)
-                bumped.extend(x for x in row[cap:] if x and not x.get("reserved"))
                 fitted.append(list(row[:cap]) + [None] * max(0, cap - len(row)))
             self._rows = fitted
-            self._perc = [self._roster.get(sid) for sid in perc_data if self._roster.get(sid)]
+            self._perc = [q for q in (seat(sid) for sid in perc_data) if q]
             self._unresolved = []
-            # Anyone this arrangement doesn't know — a student who joined the
-            # class after the chart was made, or someone bumped by a smaller
-            # room — goes into an empty seat for the teacher to swap into
-            # place.  Everyone already placed stays exactly where they are.
+            # Anyone without a seat now — a student who joined the class after
+            # the chart was made, or someone bumped by a smaller room — goes
+            # into an empty seat for the teacher to swap into place.  Everyone
+            # already placed stays exactly where they are.
             placed = ({x.get("id") for row in self._rows for x in row if x}
                       | {q.get("id") for q in self._perc if q})
-            newcomers = ([s for s in roster if s.get("id") not in placed]
-                         + bumped)
+            newcomers = [s for s in roster if s.get("id") not in placed]
             self._extended_rows = []
             if self._cfg.get("jazz_mode"):
                 # The rhythm section is never in the rows, so a saved jazz
@@ -1098,7 +1154,9 @@ class SeatingChartView(ttk.Frame):
             self._extended_rows.append(r + 1)
         return r, len(rows[r]) - 1
 
-    def _render(self):
+    def _draw_chart(self, zoom=1.0, fit=None):
+        """The chart as a picture, at any scale.  Copy and Save always take it
+        at normal size, whatever the screen happens to be zoomed to."""
         perc = [p for p in (self._perc or []) if p] or None
         color_mode = self._cfg.get("color_mode", "row")
         show_inst = self._cfg.get("show_instrument", True)
@@ -1106,29 +1164,167 @@ class SeatingChartView(ttk.Frame):
         front = "FRONT OF THE ROOM"
         rhythm = list(getattr(self, "_jazz_rhythm", None) or [])
         side = self._cfg.get("jazz_side", "left")
+        if self._cfg.get("view") == "arcs":
+            return sr.render_arcs(
+                self._rows, self._caps, flip=flip, percussion=perc,
+                show_instrument=show_inst, color_mode=color_mode,
+                front_label=front, jazz_rhythm=rhythm, rhythm_side=side,
+                zoom=zoom, fit=fit)
+        return sr.render_rows(
+            self._rows, self._caps, flip=flip, percussion=perc,
+            front_label=front, show_instrument=show_inst,
+            color_mode=color_mode, jazz_rhythm=rhythm,
+            rhythm_side=side, zoom=zoom, fit=fit)
+
+    def _render(self):
+        cw, ch = self._canvas.winfo_width(), self._canvas.winfo_height()
+        # Not on screen yet (a tab not opened): the resize when it appears
+        # draws the real fit.
+        fit = (cw - 8, ch - 8) if self._fit and cw > 1 else None
+        # What the middle of the window is looking at, as a share of the chart,
+        # so zooming stays on the seats they were working on.
+        old = self._image
+        mid = None
+        if old is not None and cw > 1:
+            mid = (self._canvas.canvasx(cw / 2) / old.width,
+                   self._canvas.canvasy(ch / 2) / old.height)
         try:
-            if self._cfg.get("view") == "arcs":
-                img, boxes = sr.render_arcs(
-                    self._rows, self._caps, flip=flip, percussion=perc,
-                    show_instrument=show_inst, color_mode=color_mode,
-                    front_label=front, jazz_rhythm=rhythm, rhythm_side=side)
-            else:
-                img, boxes = sr.render_rows(
-                    self._rows, self._caps, flip=flip, percussion=perc,
-                    front_label=front, show_instrument=show_inst,
-                    color_mode=color_mode, jazz_rhythm=rhythm,
-                    rhythm_side=side)
+            img, boxes = self._draw_chart(self._zoom, fit)
         except Exception as e:
             self._status.config(text=f"Render error: {e}")
             return
         self._image = img
         self._seat_boxes = boxes
+        self._zoom = img.info["zoom"]
+        self._zoom_lbl.config(text=f"{round(self._zoom * 100)}%")
         from PIL import ImageTk
         self._photo = ImageTk.PhotoImage(img)
         self._canvas.delete("all")
         self._canvas.create_image(0, 0, anchor="nw", image=self._photo)
-        self._canvas.config(scrollregion=(0, 0, img.width, img.height))
+        # A chart narrower than the window sits in the middle of it.  Canvas
+        # coordinates still start at the picture's corner, so clicks are
+        # unaffected.
+        ox = max(0, (cw - img.width) // 2)
+        region_w, region_h = img.width + 2 * ox, img.height
+        self._canvas.config(scrollregion=(-ox, 0, img.width + ox, img.height))
+        if mid is not None:
+            self._canvas.xview_moveto(
+                (mid[0] * img.width - cw / 2 + ox) / region_w)
+            self._canvas.yview_moveto((mid[1] * img.height - ch / 2) / region_h)
+        if self._swap_first is not None:
+            self._highlight(self._swap_first)
         self._update_status()
+        self._sync_undo()
+
+    # ──────────────────────────────────────────────────────────────── undo ───
+    # Each step is the whole chart as it stood before an action, kept as text:
+    # the settings, who sits where, and the keep-apart pairs and accommodations,
+    # which live in the database rather than on the chart.  Which chart is open
+    # is held apart from that, because only New and Load change it -- undoing a
+    # swap must not also undo having saved the chart since.
+
+    _UNDO_LIMIT = 50
+
+    def _rule_state(self):
+        year = self._year()
+        return {
+            "conflicts": sorted([c["name_a"], c["name_b"]]
+                                for c in self.db.get_seating_conflicts(year)),
+            "pins": [[p["student_name"], p["pref"], p["note"], self._pin_buffer(p)]
+                     for p in self.db.get_seating_pins(year)],
+        }
+
+    def _undo_state(self):
+        return json.dumps({"cfg": self._cfg, "layout": self._layout_ids(),
+                           "rules": self._rule_state()},
+                          sort_keys=True, default=str)
+
+    def _checkpoint(self, switching=False):
+        state = self._undo_state()
+        chart = None
+        if switching:
+            chart = (self._chart_id, self._name_var.get(), self._chart_var.get(),
+                     getattr(self, "_clean_sig", None))
+        if self._undo_stack and self._undo_stack[-1][0] == state:
+            if chart:
+                self._undo_stack[-1] = (state, chart)
+            return
+        self._undo_stack.append((state, chart))
+        del self._undo_stack[:-self._UNDO_LIMIT]
+
+    def _sync_undo(self):
+        """Forget steps that turned out to change nothing, and light the button
+        only when there is something to take back."""
+        if self._undo_stack:
+            state = self._undo_state()
+            while self._undo_stack and self._undo_stack[-1][0] == state:
+                self._undo_stack.pop()
+        self._undo_btn.config(state=NORMAL if self._undo_stack else DISABLED)
+
+    def _undo(self):
+        self._sync_undo()
+        if not self._undo_stack:
+            return
+        state, chart = self._undo_stack.pop()
+        saved = json.loads(state)
+        self._restore_rules(saved["rules"])
+        self._cfg = saved["cfg"]
+        self._sort_var.set(self._cfg.get("sort_mode", ""))
+        if chart:
+            self._chart_id = chart[0]
+            self._name_var.set(chart[1])
+            self._chart_var.set(chart[2])
+        self._sync_program_ui()
+        self._update_roster_label()
+        self._regenerate(from_layout=saved["layout"])
+        if chart:
+            self._clean_sig = chart[3]
+        self._dirty = True
+        self._status.config(text="Undid the last change.  "
+                                 + self._status.cget("text"))
+
+    def _restore_rules(self, rules):
+        now = self._rule_state()
+        year = self._year()
+        if rules["conflicts"] != now["conflicts"]:
+            for c in self.db.get_seating_conflicts(year):
+                self.db.delete_seating_conflict(c["id"])
+            for a, b in rules["conflicts"]:
+                self.db.add_seating_conflict(year, a, b)
+        if rules["pins"] != now["pins"]:
+            for name, *_ in now["pins"]:
+                self.db.clear_seating_pin(year, name)
+            for name, pref, note, buffer in rules["pins"]:
+                self.db.set_seating_pin(year, name, pref, note, buffer=buffer)
+
+    # ──────────────────────────────────────────────────────────────── zoom ───
+
+    _ZOOM_STEP = 1.25
+
+    def _zoom_by(self, factor):
+        self._fit = False
+        self._zoom = max(sr.MIN_ZOOM, min(sr.MAX_ZOOM, self._zoom * factor))
+        self._zoom_lbl.config(text=f"{round(self._zoom * 100)}%")
+        self._redraw_soon(80)
+
+    def _zoom_fit(self):
+        self._fit = True
+        self._render()
+
+    def _on_canvas_resize(self, _event):
+        self._redraw_soon(150)
+
+    def _redraw_soon(self, ms):
+        # A wheel spin or a dragged window edge fires many events in a row, and
+        # a big chart takes a moment to draw; draw once it settles.
+        if self._redraw_after is not None:
+            self.after_cancel(self._redraw_after)
+        self._redraw_after = self.after(ms, self._redraw_now)
+
+    def _redraw_now(self):
+        self._redraw_after = None
+        if self._image is not None:
+            self._render()
 
     def _update_status(self):
         n = (sum(1 for row in self._rows for x in row if x and not x.get("reserved"))
@@ -1158,6 +1354,7 @@ class SeatingChartView(ttk.Frame):
                      + ", ".join(str(r) for r in grew))
             warns.append(f"➕ New to this chart: {who}{more} — {where}; "
                          "click two seats to swap them into place.")
+        warns.extend(self._notes)
         self._warn_lbl.config(text="   ".join(warns))
 
     # ─────────────────────────────────────────────────────── canvas clicks ────
@@ -1203,6 +1400,7 @@ class SeatingChartView(ttk.Frame):
             self._swap_first = seat
             self._highlight(seat)
         else:
+            self._checkpoint()
             a = self._swap_first
             va, vb = self._seat_get(a), self._seat_get(seat)
             self._seat_set(a, vb)
@@ -1296,6 +1494,7 @@ class SeatingChartView(ttk.Frame):
                         "“🏷️ Assign” to put them in a class.")
         return "  ".join(bits)
 
+    @_undoable
     def _edit_group(self):
         dlg = _GroupDialog(self.winfo_toplevel(), self._ensemble_periods(),
                            self._groups(), self._cfg.get("extra_students") or [],
@@ -1366,6 +1565,7 @@ class SeatingChartView(ttk.Frame):
                        "bass_corner_side", "close_gaps", "piano",
                        "section_order", "section_zones")
 
+    @_undoable
     def _open_configuration(self):
         program, level = self._chart_program()
         dlg = _ConfigurationDialog(
@@ -1375,24 +1575,24 @@ class SeatingChartView(ttk.Frame):
         self.wait_window(dlg)
         if dlg.result is None:
             return
-        had_order = bool(self._cfg.get("section_order"))
         before = {k: self._cfg.get(k) for k in self._PLACEMENT_KEYS}
         keep = self._layout_ids() if self._has_arrangement() else None
         self._cfg.update(dlg.result)
         self._remember_layout()
-        # Zones and section order only mean anything grouped by section.
-        # Switch the sort only when they actually placed something, so
-        # opening Configuration to change a color does not silently
-        # re-sort the chart.
-        if (self._cfg.get("section_order")
-                or self._cfg.get("section_zones") or had_order):
-            self._ensure_sections_mode()
         # Flipping the room, recoloring, or resizing rows keeps every student
         # exactly where the teacher put them; only a placement change asks
         # for seats to be rebuilt.
         placement_changed = any(self._cfg.get(k) != before[k]
                                 for k in self._PLACEMENT_KEYS)
-        if placement_changed or keep is None or self._cfg.get("jazz_mode"):
+        # Zones and section order only mean anything grouped by section.
+        # Switch the sort only when they actually placed something, so
+        # opening Configuration to change a color does not silently
+        # re-sort the chart.
+        if placement_changed and (self._cfg.get("section_order")
+                                  or self._cfg.get("section_zones")
+                                  or before["section_order"]):
+            self._ensure_sections_mode()
+        if placement_changed or keep is None:
             self._regenerate()
         else:
             self._regenerate(from_layout=keep)
@@ -1400,7 +1600,6 @@ class SeatingChartView(ttk.Frame):
     def _open_student_setup(self):
         roster = self._resolve_roster()
         _StudentSetupDialog(self.winfo_toplevel(), self, roster)
-        self._regenerate()
 
     # ─────────────────────────────────────────────────────── chart CRUD ───────
 
@@ -1429,6 +1628,7 @@ class SeatingChartView(ttk.Frame):
         chart = self.db.get_seating_chart(chart_id)
         if not chart:
             return
+        self._checkpoint(switching=True)
         self._chart_id = chart["id"]
         try:
             self._cfg = json.loads(chart["config_json"]) if chart["config_json"] else _default_config()
@@ -1483,6 +1683,7 @@ class SeatingChartView(ttk.Frame):
             self._cfg["center_tuba"] = False
 
     def _new_chart(self):
+        self._checkpoint(switching=True)
         self._chart_id = None
         self._cfg = _default_config()
         self._apply_remembered_layout()
@@ -1563,7 +1764,7 @@ class SeatingChartView(ttk.Frame):
                 "There's no chart to copy yet — generate a seating chart first.",
                 title="Nothing to Copy", parent=self)
             return
-        ok = sr.copy_image_to_clipboard(self._image)
+        ok = sr.copy_image_to_clipboard(self._draw_chart()[0])
         if ok:
             Messagebox.show_info("Seating chart copied — paste into PowerPoint, Word, or OneNote.",
                                  title="Copied", parent=self)
@@ -1591,7 +1792,7 @@ class SeatingChartView(ttk.Frame):
         if not path:
             return
         try:
-            self._image.save(path)
+            self._draw_chart()[0].save(path)
         except Exception as e:
             Messagebox.show_error(f"Could not save the image:\n{e}",
                                   title="Save Failed", parent=self)
@@ -1603,14 +1804,120 @@ class SeatingChartView(ttk.Frame):
     def _roster_names(self):
         return sorted({s["name"] for s in self._resolve_roster()})
 
+    # Set Up changes one thing about one student, so these keep the arrangement
+    # and make only that change.  They used to rebuild the whole chart, which
+    # threw away every hand placement for the sake of one keep-apart pair.
+
+    def _student_rules(self):
+        """What Set Up can change: {id: (instrument, pref, buffer)} plus the
+        keep-apart pairs, to compare against afterward."""
+        return ({s["id"]: (s.get("instrument"), s.get("pref"), s.get("buffer"))
+                 for s in self._resolve_roster()}, self._conflict_set())
+
+    def _apply_student_changes(self, before):
+        """Carry a Set Up change onto the chart, moving as few people as it can."""
+        if not self._has_arrangement():
+            self._regenerate()
+            return
+        old_students, old_conflicts = before
+        self._regenerate(from_layout=self._layout_ids())
+        changed = [s for sid, s in self._roster.items()
+                   if (s.get("instrument"), s.get("pref"), s.get("buffer"))
+                   != old_students.get(sid, (s.get("instrument"), s.get("pref"),
+                                             s.get("buffer")))]
+        if not changed and self._conflict_set() == old_conflicts:
+            return
+        notes = []
+        for s in changed:
+            was = old_students[s["id"]]
+            if s.get("instrument") != was[0]:
+                self._apply_instrument_change(s, notes)
+        rows = self._rows
+        pinned = {s["id"] for s in changed
+                  if s.get("pref") != old_students[s["id"]][1]}
+        if pinned:
+            sc.apply_row_pins(rows, self._caps, only=pinned)
+            sc.apply_edge_pins(rows, only=pinned)
+        for s in changed:
+            self._apply_buffer_change(s, old_students[s["id"]][2], notes)
+        conflicts = self._conflict_set()
+        new_pairs = conflicts - old_conflicts
+        if new_pairs:
+            # A pair already sitting close was placed there by hand, so it is
+            # left alone; the rest are included so that no repair swap breaks
+            # them.
+            guard = new_pairs | (old_conflicts & conflicts
+                                 - sc.conflicts_too_close(rows, old_conflicts))
+            _rows, self._unresolved = sc.separate_conflicts(rows, guard)
+        self._notes = notes
+        self._dirty = True
+        self._render()
+
+    def _apply_instrument_change(self, s, notes):
+        """A new instrument keeps the student's seat, for the teacher to swap if
+        they want, unless it takes them into or out of the percussion row: that
+        row is drawn apart from the band, without instrument labels."""
+        drums = (self._cfg.get("separate_percussion")
+                 and not self._cfg.get("jazz_mode")
+                 and sc.family(s.get("instrument")) == "Percussion")
+        in_back_row = any(p and p.get("id") == s["id"] for p in self._perc)
+        if drums and not in_back_row:
+            for row in self._rows:
+                for c, x in enumerate(row):
+                    if x and x.get("id") == s["id"]:
+                        row[c] = None
+            self._perc.append(s)
+            notes.append(f"{s['name']} moved to the percussion row.")
+        elif in_back_row and not drums:
+            self._perc = [p for p in self._perc if p.get("id") != s["id"]]
+            r, c = self._seat_for_newcomer(
+                s, lambda st: (st.get("instrument") or "").strip())
+            self._rows[r][c] = s
+            notes.append(f"{s['name']} moved out of the percussion row, "
+                         f"to row {r + 1}.")
+        else:
+            notes.append(f"{s['name']} now plays {s.get('instrument')} and kept "
+                         "the same seat; click two seats to move them.")
+
+    def _apply_buffer_change(self, s, was, notes):
+        """Add or take away the reserved seats beside one student.  The rest of
+        the row slides over rather than being rearranged, gaining a chair if it
+        has no empty one to slide into."""
+        want = int(s.get("buffer") or 0)
+        if want == int(was or 0):
+            return
+        for r, row in enumerate(self._rows):
+            c = next((i for i, x in enumerate(row)
+                      if x and x.get("id") == s["id"]), None)
+            if c is None:
+                continue
+            for i in sc.reserved_beside(row, c)[want:]:
+                row[i] = None
+            chairs = len(row)
+            sc.open_seats_beside(row, c, want)
+            if len(row) > chairs:
+                self._caps[r] = len(row)
+                self._cfg["row_caps"] = ",".join(str(n) for n in self._caps)
+                notes.append(f"Added a chair to row {r + 1} to make room beside "
+                             f"{s['name']}.")
+
+    @_undoable
     def _edit_conflicts(self):
-        _ConflictsDialog(self.winfo_toplevel(), self.db, self._year(), self._roster_names())
-        self._regenerate()
+        before = self._student_rules()
+        dlg = _ConflictsDialog(self.winfo_toplevel(), self.db, self._year(),
+                               self._roster_names())
+        self.wait_window(dlg)
+        self._apply_student_changes(before)
 
+    @_undoable
     def _edit_pins(self):
-        _PinsDialog(self.winfo_toplevel(), self.db, self._year(), self._roster_names())
-        self._regenerate()
+        before = self._student_rules()
+        dlg = _PinsDialog(self.winfo_toplevel(), self.db, self._year(),
+                          self._roster_names())
+        self.wait_window(dlg)
+        self._apply_student_changes(before)
 
+    @_undoable
     def _edit_instruments(self):
         roster = self._resolve_roster()
         if not roster:
@@ -1632,9 +1939,11 @@ class SeatingChartView(ttk.Frame):
                                 self._cfg.get("instrument_overrides") or {}, options)
         self.wait_window(dlg)
         if dlg.result is not None:
+            before = self._student_rules()
             self._cfg["instrument_overrides"] = dlg.result
-            self._regenerate()
+            self._apply_student_changes(before)
 
+    @_undoable
     def _jazz_setup(self):
         """Seat a jazz band by PART, as close to the standard chart as the
         players allow.
@@ -1692,10 +2001,13 @@ class SeatingChartView(ttk.Frame):
         sections = sorted({(s.get("instrument") or "") for s in roster if s.get("instrument")})
         _AIDialog(self.winfo_toplevel(), self.base_dir, roster_lines, sections, self._apply_ai)
 
+    @_undoable
     def _apply_ai(self, data):
         """Apply LLM-parsed constraints/swaps to the chart.  Returns a summary."""
         if not isinstance(data, dict):
             return "The assistant didn't return anything usable."
+        before = self._student_rules()
+        rebuild = False
         names = {n.lower(): n for n in self._roster_names()}
         applied = []
         year = self._year()
@@ -1746,6 +2058,7 @@ class SeatingChartView(ttk.Frame):
             if so:
                 self._cfg["section_order"] = so
                 self._ensure_sections_mode()   # section order only applies when grouped
+                rebuild = True
                 applied.append("section order updated")
 
         zdata = data.get("zones") or {}
@@ -1770,6 +2083,7 @@ class SeatingChartView(ttk.Frame):
             if zones:
                 self._cfg["zones"] = {**(self._cfg.get("zones") or {}), **zones}
                 self._ensure_sections_mode()
+                rebuild = True
                 applied.append("row zones updated")
 
         # "shuffle the winds" etc.
@@ -1777,9 +2091,19 @@ class SeatingChartView(ttk.Frame):
             self._ensure_sections_mode()
             self._cfg["seed"] = random.randint(1, 10_000_000)
             self._cfg["shuffle_members"] = True
+            rebuild = True
             applied.append("shuffled neighbors")
 
-        self._regenerate()
+        # Moving sections or shuffling means a new arrangement.  Anything about
+        # particular students changes only those students.
+        if rebuild:
+            self._regenerate()
+        else:
+            self._apply_student_changes(before)
+            if together:
+                sc.apply_together(self._rows, together)
+                self._dirty = True
+                self._render()
 
         swaps = data.get("swaps") or []
         did_swap = False
@@ -2703,8 +3027,6 @@ class _ConfigurationDialog(ttk.Toplevel):
         self._zones = {i: sc.zone_list((cfg.get("section_zones") or {}).get(i))
                        for i in self._sections}
         self._last_sel = None
-        self._had_placement = bool(cfg.get("section_order")
-                                   or cfg.get("section_zones"))
         self._touched = False
         self._cleared = False
 
@@ -2904,20 +3226,23 @@ class _ConfigurationDialog(ttk.Toplevel):
             "color_mode": self._color.get(),
             "show_instrument": self._showinst.get(),
             "name_display": self._name_display.get(),
-            "separate_percussion": self._perc.get() if self._program == "band" else False,
-            "center_tuba": self._tuba.get() if self._program == "band" else False,
+            # Not offered off a band chart, so these hold what the chart already
+            # had: a symphony keeps the percussion row it was given.
+            "separate_percussion": self._perc.get(),
+            "center_tuba": self._tuba.get(),
             "bass_corner": self._bass.get(),
             "bass_corner_side": self._bass_side.get(),
             "numbered_parts": self._parts.get(),
             "piano": self._piano.get(),
             "close_gaps": self._close.get(),
         }
-        # Only write a placement if they made one.  Opening Configuration to
+        # Only write a placement if they changed one.  Opening Configuration to
         # change a color must not stamp an order on the chart: "the teacher has
         # placed sections themselves" is what switches off a program's default
         # layout, so an order nobody asked for would quietly take an orchestra's
-        # violins off stage right.
-        if self._list is not None and (self._touched or self._had_placement):
+        # violins off stage right.  Writing back one they already had is no
+        # better: it reads as a placement change, and that rebuilds the seating.
+        if self._list is not None and self._touched:
             if self._cleared:
                 out["section_order"] = []
                 out["section_zones"] = {}
