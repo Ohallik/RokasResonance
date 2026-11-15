@@ -775,8 +775,8 @@ class _FieldTripDialog(ttk.Toplevel):
         _win = canvas.create_window((0, 0), window=m, anchor=NW)
         m.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(_win, width=e.width))
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
-        self.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>") if e.widget is self else None)
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
         m = ttk.Frame(m)   # inner padding frame
         m.pack(fill=BOTH, expand=True, padx=20, pady=12)
 
@@ -1485,10 +1485,8 @@ class _FeesDialog(ttk.Toplevel):
         lst.bind("<Configure>",
                  lambda e: cv.configure(scrollregion=cv.bbox("all")))
         cv.bind("<Configure>", lambda e: cv.itemconfig(w, width=e.width))
-        cv.bind("<Enter>", lambda e: cv.bind_all(
-            "<MouseWheel>", lambda ev: cv.yview_scroll(
-                int(-ev.delta / 120), "units")))
-        cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(cv)
         return box, lst
 
     def _fix_duplicates(self, dupes):

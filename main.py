@@ -794,6 +794,11 @@ def main():
     # Apply font scaling after Tk root exists
     apply_global_font_scaling()
 
+    # One mouse wheel for every scrolling pane in the app: it scrolls the
+    # pane under the pointer (see ui.theme.wheel_scrolls).
+    from ui.theme import install_wheel
+    install_wheel(app)
+
     # The mouse wheel over a dropdown changed its value, and many of Roka's
     # dropdowns save the moment they change -- scrolling a list of students
     # quietly moved them to other jazz parts.  The wheel now leaves a

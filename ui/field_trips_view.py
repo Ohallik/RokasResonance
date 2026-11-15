@@ -99,10 +99,8 @@ class FieldTripsView(ttk.Frame):
         canvas.pack(side=LEFT, fill=BOTH, expand=True)
         sb.pack(side=RIGHT, fill=Y)
 
-        def _wheel(e):
-            canvas.yview_scroll(-1 * (e.delta // 120), "units")
-        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
         inner._canvas = canvas          # so refresh can put the view back
         return inner
 

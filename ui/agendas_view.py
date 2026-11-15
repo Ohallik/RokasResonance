@@ -7,11 +7,13 @@ per-group ``GROUP_CONFIG`` (label, percussion class type, concert-ensemble, and
 which Standard of Excellence book the band-book picker uses) plus the group-aware
 curriculum spine.
 
-Two views of one day:
+Two views of one day (and a week view of five):
   * PLAN  - edit a day as named, colored checklists (reminders, announcements,
             warm-up, band book, sheet music, Practice Journal), the day's
             percussion rotation, and pasted rhythm images.  Jump by day / week
             / month; a context line shows the concert cycle / warm-up level.
+            The Week toggle lays the school week out side by side, every day
+            editable, with lines copied or moved between days.
   * PRESENT - a full-screen classroom projection: a live clock AND a countdown
             timer (both visible), a chosen pastel background, per-line text
             colors / highlights, a Reminders + Announcements banner, and the
@@ -37,6 +39,7 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import date, timedelta
+from contextlib import contextmanager
 
 import agenda_spine as spine
 import percussion_rotation as pr
@@ -98,15 +101,19 @@ def _timer_sound_path(name):
     return path if os.path.isfile(path) else None
 
 
-def play_timer_sound(name):
-    """Play a timer sound once, without waiting for it to finish."""
+def play_timer_sound(name, loop=False):
+    """Play a timer sound without waiting for it to finish: once (hearing a
+    choice in the 🔔 menu), or over and over until stop_timer_sound() (the
+    alarm, which keeps going until the timer is reset or restarted)."""
     path = _timer_sound_path(name)
     if not path:
         return
     try:
         import winsound
-        winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC
-                           | winsound.SND_NODEFAULT)
+        flags = winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT
+        if loop:
+            flags |= winsound.SND_LOOP
+        winsound.PlaySound(path, flags)
     except Exception:
         pass
 
@@ -617,6 +624,15 @@ class AgendasView(ttk.Frame):
         bar.pack(fill=X)
         ttk.Label(bar, text=f"📋  {self._cfg['label']} — Daily Agenda",
                   font=("Segoe UI", fs(12), "bold")).pack(side=LEFT, padx=10, pady=8)
+        # One day in full, or the five days of the week side by side.
+        self._mode_var = tk.StringVar(value=self._view_mode())
+        mode_box = ttk.Frame(bar)
+        mode_box.pack(side=LEFT, padx=(4, 0))
+        for val, label in (("day", "Day"), ("week", "Week")):
+            ttk.Radiobutton(mode_box, text=label, value=val,
+                            variable=self._mode_var,
+                            bootstyle=(PRIMARY, "toolbutton"),
+                            command=self._mode_changed).pack(side=LEFT, padx=1)
         # Jazz bands switch with side-by-side toggle buttons, exactly like the
         # P1/P2 percussion Section toggle (populated in _render_jazz_selector).
         self._jazz_bar = ttk.Frame(bar)
@@ -679,21 +695,27 @@ class AgendasView(ttk.Frame):
         self._meets_bar = ttk.Frame(wk_row)
         self._meets_bar.pack(side=RIGHT, padx=(0, 4))
 
-        from ui.theme import smooth_wheel, thick_scrollbar
-        self._canvas = tk.Canvas(self, highlightthickness=0)
-        vsb = thick_scrollbar(self, self._canvas.yview)
-        self._canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side=RIGHT, fill=Y)
-        self._canvas.pack(side=LEFT, fill=BOTH, expand=True, padx=(10, 0), pady=8)
+        from ui.theme import thick_scrollbar, wheel_scrolls
+        host = ttk.Frame(self)
+        host.pack(fill=BOTH, expand=True, padx=(10, 0), pady=8)
+        host.rowconfigure(0, weight=1)
+        host.columnconfigure(0, weight=1)
+        self._canvas = tk.Canvas(host, highlightthickness=0)
+        vsb = thick_scrollbar(host, self._canvas.yview)
+        # Sideways only for the week view, which can be wider than the window.
+        self._hsb = thick_scrollbar(host, self._canvas.xview, orient="horizontal")
+        self._canvas.configure(yscrollcommand=vsb.set, xscrollcommand=self._hsb.set)
+        self._canvas.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        self._hsb.grid(row=1, column=0, sticky="ew")
+        self._hsb.grid_remove()
         self._inner = ttk.Frame(self._canvas)
         self._win = self._canvas.create_window((0, 0), window=self._inner, anchor="nw")
         _set_region = _region_setter(self._canvas, lambda: 250)
         self._inner.bind("<Configure>", _set_region)
-        self._canvas.bind("<Configure>", _width_follower(self._canvas, self._win))
-        self._on_wheel = smooth_wheel(self._canvas)
-        self._canvas.bind("<Enter>", lambda e: self._canvas.bind_all(
-            "<MouseWheel>", self._on_wheel))
-        self._canvas.bind("<Leave>", lambda e: self._canvas.unbind_all("<MouseWheel>"))
+        self._canvas.bind("<Configure>", _width_follower(self._canvas, self._win,
+                                                         self._min_inner_width))
+        wheel_scrolls(self._canvas, sideways=True)
 
     # ─────────────────────────────────────────────────────────── data / ctx ───
 
@@ -734,14 +756,14 @@ class AgendasView(ttk.Frame):
             e = s + 1
         return date(s, 9, 1), date(e, 6, 30)
 
-    def _context(self):
+    def _context(self, d=None):
         start, end = self._year_bounds()
         return {"template": self._template,
                 "reminders": self._last_reminders(),
                 "year_start": start, "year_end": end,
                 "calendar": self._calendar(),
                 "intro_days": self._intro_days(),
-                "band_page": self._page_label_for(self._date),
+                "band_page": self._page_label_for(d or self._date),
                 "concerts": self._concerts()}
 
     def _intro_days(self):
@@ -864,36 +886,41 @@ class AgendasView(ttk.Frame):
         return [r["title"] for r in use if r["title"]]
 
     def _load_day(self):
-        row = self.db.get_agenda_day(self._group, self._date.isoformat())
+        self._day, self._saved = self._load_day_for(self._date)
+
+    def _load_day_for(self, d):
+        """A day's agenda and whether it is saved: the saved one if there is
+        one, otherwise the spine's suggestion for that date."""
+        row = self.db.get_agenda_day(self._group, d.isoformat())
         if row and row["data"]:
             try:
-                self._day = json.loads(row["data"])
-                self._saved = True
-                self._heal_kinds(self._day)
-                self._ensure_ids(self._day)
-                if self._add_birthdays(self._day):
-                    self._save_day(rebuild_present=False)
-                return
+                day = json.loads(row["data"])
+                self._heal_kinds(day)
+                self._ensure_ids(day)
+                if self._add_birthdays(day, d):
+                    self._save_day_for(d, day, rebuild_present=False)
+                return day, True
             except Exception:
                 pass
-        self._day = spine.build_default_day(self._date, self._context())
-        self._saved = False
-        self._ensure_ids(self._day)
-        self._add_birthdays(self._day)
+        day = spine.build_default_day(d, self._context(d))
+        self._ensure_ids(day)
+        self._add_birthdays(day, d)
+        return day, False
 
     # ── birthdays (Manage Classes → 🎂 Birthdays) ──
 
-    def _add_birthdays(self, day):
-        """Put "Happy Birthday - Name" last in the Warm Up for today's
+    def _add_birthdays(self, day, d=None):
+        """Put "Happy Birthday - Name" last in the Warm Up for the day's
         birthdays and those on the days off before the next class.
 
         Each student is added to a day ONCE (``day["birthdays"]`` remembers
         who, by student id), so a line she edits or deletes stays the way she
         left it.  Only today and later: a past agenda is the record of what
         happened.  Returns True when a line was added."""
+        d = d or self._date
         if not self._cfg.get("birthdays") or self.main_db is None:
             return False
-        if self._date < date.today() or not self._is_class_day(self._date):
+        if d < date.today() or not self._is_class_day(d):
             return False
         try:
             from ui.names import unique_first_names
@@ -913,7 +940,7 @@ class AgendasView(ttk.Frame):
             mine = [p.strip() for p in (r["class_periods"] or "").split(",")]
             period_of[key] = next((p for p in periods if p in mine), "")
         _start, last_day = self._year_bounds()
-        lines = spine.birthday_lines(self._date, people, self._is_class_day,
+        lines = spine.birthday_lines(d, people, self._is_class_day,
                                      last_day=last_day)
         done = day.setdefault("birthdays", {})
         lines = [(k, t) for k, t in lines if k not in done]
@@ -963,13 +990,26 @@ class AgendasView(ttk.Frame):
                     it["id"] = uuid.uuid4().hex[:12]
 
     def _save_day(self, rebuild_present=True):
-        self.db.save_agenda_day(self._group, self._date.isoformat(),
-                                json.dumps(self._day))
-        self._saved = True
-        self._saved_lbl.config(text="Saved ✓")
-        if (rebuild_present and self._present is not None
-                and self._present.winfo_exists()):
-            self._present.rebuild()
+        self._save_day_for(self._date, self._day, rebuild_present)
+
+    def _save_day_for(self, d, day, rebuild_present=True):
+        """Save ``day`` as the agenda for ``d``: the selected day, or in the
+        week view whichever column was edited.  The projector shows the
+        selected day only, so only that day redraws it."""
+        self.db.save_agenda_day(self._group, d.isoformat(), json.dumps(day))
+        if d == self._date:
+            self._saved = True
+            self._saved_lbl.config(text="Saved ✓")
+            if (rebuild_present and self._present is not None
+                    and self._present.winfo_exists()):
+                self._present.rebuild()
+        else:
+            self._saved_lbl.config(text=f"Saved {d:%a} {d.day} ✓")
+
+    def _save_text_day(self, txt):
+        """Save the day a text box belongs to."""
+        self._save_day_for(getattr(txt, "_date", None) or self._date,
+                           getattr(txt, "_day", None) or self._day)
 
     def _present_bg_name(self):
         return self.db.get_program_setting("agenda_present_bg") or "White"
@@ -1102,9 +1142,7 @@ class AgendasView(ttk.Frame):
         already here (typed lines, birthdays) stays put, and copying twice
         adds nothing new, so there is nothing to confirm or undo."""
         # Commit a line still being typed, so it counts as already here.
-        w = self.focus_get()
-        if isinstance(w, tk.Text) and hasattr(w, "_section"):
-            self._commit_text_block(w, w._section)
+        self._commit_focused_text()
         src_date, src = self._previous_saved_day()
         if src is None:
             Messagebox.show_warning(
@@ -1415,6 +1453,8 @@ class AgendasView(ttk.Frame):
             top = self._canvas.yview()[0]
         except Exception:
             top = 0.0
+        week = self._view_mode() == "week"
+        self._mode_var.set("week" if week else "day")
         self._date_lbl.config(text=self._date.strftime("%A, %b %d, %Y"))
         self._saved_lbl.config(
             text="Saved ✓" if self._saved else "Auto-generated (unsaved)")
@@ -1425,19 +1465,28 @@ class AgendasView(ttk.Frame):
         self._img_refs = []
         for w in self._inner.winfo_children():
             w.destroy()
-        self._render_banner(self._inner)
+        if week:
+            self._render_week(self._inner)
+            self._hsb.grid()
+        else:
+            self._render_day(self._inner)
+            self._hsb.grid_remove()
+        self.after_idle(self._fit_inner)
+        self.after_idle(lambda: self._restore_scroll(self._canvas, top))
+
+    def _render_day(self, parent):
+        self._render_banner(parent)
         try:
-            self._render_doublers(self._inner)
+            self._render_doublers(parent)
         except Exception:
             pass                    # never lose the day over this one line
-        self._render_divider(self._inner)
+        self._render_divider(parent)
         for si, section in enumerate(self._day.get("sections", [])):
-            self._render_section(self._inner, si, section)
-        addbar = ttk.Frame(self._inner)
+            self._render_section(parent, si, section)
+        addbar = ttk.Frame(parent)
         addbar.pack(fill=X, pady=(2, 12))
         ttk.Button(addbar, text="➕ Add Section", bootstyle=(PRIMARY, OUTLINE),
                    command=self._add_section).pack(side=LEFT)
-        self.after_idle(lambda: self._restore_scroll(self._canvas, top))
 
     @staticmethod
     def _restore_scroll(canvas, frac):
@@ -1502,6 +1551,322 @@ class AgendasView(ttk.Frame):
             ttk.Button(self._week_bar, text=f"{lbl} {d.day}", bootstyle=style,
                        width=8, command=lambda dd=d: self._jump_to(dd)
                        ).pack(side=LEFT, padx=2)
+
+    # ── the week view: five days side by side ───────────────────────────────
+    # For fitting a week's plan to the time there is.  Every day's reminders,
+    # announcements and sections edit in place; a line copies or moves to
+    # another day from its right-click menu, and a whole day's lines go to
+    # another day from the ⧉ menu by its date.  The rotation and doublers
+    # stay out of the way unless asked for; pictures and the section tools
+    # live in the day view.
+
+    WEEK_COL_EM = 22        # a column, in fs(9) ems: five fit a laptop screen
+    WEEK_GAP_EM = 7         # a day with no class
+
+    def _view_mode(self):
+        return ("week" if self.db.get_program_setting("agenda_view_mode") == "week"
+                else "day")
+
+    def _mode_changed(self):
+        self._commit_focused_text()
+        self.db.set_program_setting("agenda_view_mode", self._mode_var.get())
+        self._render()
+
+    def _open_day(self, d):
+        """From the week, open one day in the full editor."""
+        self._commit_focused_text()
+        self.db.set_program_setting("agenda_view_mode", "day")
+        self._jump_to(d)
+
+    def _commit_focused_text(self):
+        """Commit the line being typed, so what you see is what gets saved
+        or copied."""
+        try:
+            w = self.focus_get()
+        except (KeyError, tk.TclError):
+            return              # focus is in a dropdown's list, which tkinter can't name
+        if isinstance(w, tk.Text) and hasattr(w, "_section"):
+            self._commit_text_block(w, w._section)
+
+    def _week_days(self, d=None):
+        d = d or self._date
+        monday = d - timedelta(days=d.weekday())
+        return [monday + timedelta(days=i) for i in range(5)]
+
+    def _week_class_days(self, d=None):
+        return [x for x in self._week_days(d) if self._is_class_day(x)]
+
+    def _week_shows_rotation(self):
+        return self.db.get_program_setting("agenda_week_rotation") == "1"
+
+    def _toggle_week_rotation(self):
+        self._commit_focused_text()
+        self.db.set_program_setting("agenda_week_rotation",
+                                    "1" if self._rot_var.get() else "")
+        self._render()
+
+    def _min_inner_width(self):
+        """How wide the page must be: in the week view, room for every
+        column, so a narrow screen scrolls sideways instead of squeezing."""
+        if self._view_mode() != "week":
+            return 0
+        em = fs(9)
+        return sum((self.WEEK_COL_EM if self._is_class_day(d) else self.WEEK_GAP_EM)
+                   * em + 8 for d in self._week_days())
+
+    def _fit_inner(self):
+        try:
+            w = max(self._canvas.winfo_width(), self._min_inner_width())
+            if w > 1:
+                self._canvas.itemconfig(self._win, width=w)
+        except tk.TclError:
+            pass
+
+    @contextmanager
+    def _as_date(self, d):
+        """Run the date-based helpers (rotation day, doublers) for ``d``."""
+        saved = self._date
+        self._date = d
+        try:
+            yield
+        finally:
+            self._date = saved
+
+    def _render_week(self, parent):
+        tools = WrapBar(parent)
+        tools.pack(fill=X, pady=(0, 4))
+        self._format_buttons(tools)
+        ttk.Label(tools, text="select text, then a button · Enter = new line · "
+                              "Tab = detail line · right-click a line to copy or "
+                              "move it to another day · click a date to open "
+                              "that day",
+                  font=("Segoe UI", fs(8)), foreground=muted_fg()
+                  ).pack(side=LEFT, padx=8)
+        if self._percussion or self._is_jazz or self._doublers_all():
+            self._rot_var = tk.BooleanVar(value=self._week_shows_rotation())
+            ttk.Checkbutton(tools, text="🥁 Rotation & doublers",
+                            variable=self._rot_var,
+                            bootstyle=(SECONDARY, "toolbutton"),
+                            command=self._toggle_week_rotation
+                            ).pack(side=RIGHT, padx=4)
+        grid = ttk.Frame(parent)
+        grid.pack(fill=BOTH, expand=True)
+        em = fs(9)
+        for i, d in enumerate(self._week_days()):
+            is_class = self._is_class_day(d)
+            if is_class:
+                grid.columnconfigure(i, weight=1, uniform="wk",
+                                     minsize=self.WEEK_COL_EM * em)
+            else:
+                grid.columnconfigure(i, weight=0, minsize=self.WEEK_GAP_EM * em)
+            col = ttk.Frame(grid)
+            col.grid(row=0, column=i, sticky="nsew", padx=4)
+            self._render_week_column(col, d, is_class)
+
+    def _render_week_column(self, parent, d, is_class):
+        head = ttk.Frame(parent)
+        head.pack(fill=X)
+        selected = d == self._date
+        ttk.Button(head, text=f"{d:%a %b} {d.day}",
+                   bootstyle=(SUCCESS if selected else (INFO, OUTLINE)),
+                   command=lambda: self._open_day(d)
+                   ).pack(side=LEFT, fill=X, expand=True)
+        if not is_class:
+            cal = self._calendar()
+            why = ("no school" if cal and not scal.is_school_day(cal, d)
+                   else "doesn't meet")
+            ttk.Label(parent, text=why, font=("Segoe UI", fs(8)),
+                      foreground=muted_fg()).pack(anchor=W, pady=4)
+            return
+        if selected:
+            day, saved = self._day, self._saved
+        else:
+            day, saved = self._load_day_for(d)
+        others = [t for t in self._week_class_days(d) if t != d]
+        if others:
+            mb = ttk.Menubutton(head, text="⧉", bootstyle=(SECONDARY, OUTLINE))
+            menu = tk.Menu(mb, tearoff=0)
+            for t in others:
+                menu.add_command(
+                    label=f"Copy this day's lines to {t:%a} {t.day}",
+                    command=lambda t=t: self._copy_day_to(d, day, [t]))
+            if len(others) > 1:
+                menu.add_separator()
+                menu.add_command(
+                    label="Copy this day's lines to the rest of the week",
+                    command=lambda: self._copy_day_to(d, day, others))
+            mb["menu"] = menu
+            mb.pack(side=LEFT, padx=(2, 0))
+        if not saved:
+            ttk.Label(parent, text="suggested · not saved yet",
+                      font=("Segoe UI", fs(7)), foreground=muted_fg()
+                      ).pack(anchor=W)
+        self._week_banner_text(parent, "Reminders", "reminders", day, d)
+        self._week_banner_text(parent, "Announcements", "announcements", day, d)
+        if self._week_shows_rotation():
+            self._render_week_rotation(parent, d)
+        rule = _tk(tk.Frame, parent, bg=DIVIDER, height=2)
+        rule.pack(fill=X, pady=(6, 2))
+        rule.pack_propagate(False)
+        for section in day.get("sections", []):
+            self._render_week_section(parent, section, day, d)
+
+    def _week_banner_text(self, parent, title, key, day, d):
+        self._hdr_label(parent, title, 9, bg=BAN_BG, fg=BAN_FG).pack(
+            fill=X, pady=(4, 0))
+        txt = _tk(tk.Text, parent, height=2, wrap="word", relief="solid", bd=1,
+                  font=("Segoe UI", fs(9)), bg="#ffffff", fg="#1a1a1a",
+                  insertbackground="#1a1a1a", padx=4, pady=2)
+        txt.pack(fill=X)
+        txt.insert("1.0", "\n".join(day.get(key, [])))
+
+        def commit(_e=None):
+            lines = [ln.strip() for ln in txt.get("1.0", "end").splitlines()
+                     if ln.strip()]
+            if lines != day.get(key, []):
+                day[key] = lines
+                self._save_day_for(d, day)
+        txt.bind("<FocusOut>", commit)
+        txt.bind("<KeyRelease>", lambda e: self._autosize(txt, 2))
+        txt.bind("<Configure>", lambda e: self._autosize(txt, 2))
+        self.after_idle(lambda: self._autosize(txt, 2))
+
+    def _render_week_section(self, parent, section, day, d):
+        kind = section.get("kind", "")
+        head = _tk(tk.Frame, parent, bg=HDR_BG)
+        head.pack(fill=X, pady=(6, 0))
+        _tk(tk.Label, head, text=section.get("title", ""), bg=HDR_BG, fg=HDR_FG,
+            anchor="w", font=("Segoe UI", fs(9), "bold"), padx=6, pady=1
+            ).pack(side=LEFT, fill=X, expand=True)
+        if kind == "bandbook" and self._book:
+            _tk(tk.Button, head, text="📖 add lines", bg=HDR_BG, fg=HDR_FG,
+                relief="flat", bd=0, cursor="hand2", activebackground=HDR_BG,
+                activeforeground=HDR_FG, font=("Segoe UI", fs(8)),
+                command=lambda: self._book_popup(section, day, d)
+                ).pack(side=RIGHT, padx=4)
+        items = [it for it in section.get("items", []) if self._item_visible(it)]
+        pics = [it for it in items if it.get("image")]
+        fixed = [it for it in items if not it.get("image")
+                 and it.get("kind") in ("static", "missing")]
+        run = [it for it in items if not it.get("image")
+               and it.get("kind") not in ("static", "missing")]
+        if kind != "rhythms":
+            self._render_text_block(parent, section, run, day=day, d=d,
+                                    base=fs(9))
+        wrap = fs(9) * self.WEEK_COL_EM - 12
+        for it in fixed:
+            ttk.Label(parent, text="   " + (it.get("text") or ""),
+                      font=("Segoe UI", fs(8)), foreground=muted_fg(),
+                      wraplength=wrap, justify=LEFT).pack(anchor=W)
+        if pics:
+            n = len(pics)
+            ttk.Label(parent, text=f"📷 {n} picture{'s' if n != 1 else ''} "
+                                   "(in the day view)",
+                      font=("Segoe UI", fs(8)), foreground=muted_fg()
+                      ).pack(anchor=W)
+
+    def _render_week_rotation(self, parent, d):
+        lines = self._rotation_summary(d)
+        if not lines:
+            return
+        ttk.Label(parent, text="\n".join(lines), font=("Segoe UI", fs(8)),
+                  foreground=muted_fg(), justify=LEFT,
+                  wraplength=fs(9) * self.WEEK_COL_EM - 12
+                  ).pack(anchor=W, pady=(4, 0))
+
+    def _rotation_summary(self, d):
+        """The day's rotation and doublers as short lines, for the week."""
+        out = []
+        with self._as_date(d):
+            try:
+                if self._is_jazz:
+                    if self._jazz_ensemble():
+                        asg, _bench = self._jazz_rotation()
+                        out.append("🎷 " + self._jazz_status_text())
+                        out += [f"{seat}: {', '.join(names) if names else '—'}"
+                                for seat, names in asg]
+                elif self._percussion:
+                    group = self._section_group()
+                    if group is not None:
+                        asg, day, cycle = self._perc_assignments(group)
+                        if self._is_perc_paused():
+                            out.append("🥁 rotation paused")
+                        elif cycle:
+                            out.append(f"🥁 Day {day} of {cycle}")
+                        out += [f"{name}: {station}" for name, station in asg]
+                out += [f"🎷 {name}: {inst}"
+                        for name, inst in self._doublers_today()]
+            except Exception as e:
+                out.append(f"(couldn't work out the rotation: {e})")
+        return out
+
+    def _copy_day_to(self, src_d, src_day, targets):
+        """Add one day's lines to other days: the same additive copy as
+        ⧉ Copy Previous Day, so nothing already there is touched."""
+        self._commit_focused_text()
+        total = 0
+        for t in targets:
+            tday = self._day if t == self._date else self._load_day_for(t)[0]
+            n = spine.merge_previous_day(tday, src_day)
+            if n:
+                self._ensure_ids(tday)
+                self._save_day_for(t, tday)
+                total += n
+        self._render()
+        names = ", ".join(f"{t:%a} {t.day}" for t in targets)
+        self._saved_lbl.config(
+            text=(f"Added {total} line{'s' if total != 1 else ''} to {names}"
+                  if total else f"Nothing new for {names}"))
+
+    def _line_targets(self, d):
+        """Where a line can go: the other class days of its week, and the
+        first class day after the week when ``d`` is the last of them."""
+        week = self._week_class_days(d)
+        out = [t for t in week if t != d]
+        if week and d >= week[-1]:
+            nxt = self._step_class_day(d + timedelta(days=1), 1)
+            if nxt and nxt not in out:
+                out.append(nxt)
+        return out
+
+    def _copy_line_to(self, txt, section, ln, target, move=False):
+        """Copy (or move) one line to the same section on another day."""
+        item = self._line_item(txt, section, ln)
+        if item is None or spine._blank_line(item):
+            return
+        src_d = getattr(txt, "_date", None) or self._date
+        src_day = getattr(txt, "_day", None) or self._day
+        tday = self._day if target == self._date else self._load_day_for(target)[0]
+        secs = tday.setdefault("sections", [])
+        tsec = next((x for x in secs if spine.section_matches(x, section)), None)
+        if tsec is None:
+            tsec = {"title": section.get("title", ""),
+                    "kind": section.get("kind", ""), "items": []}
+            secs.append(tsec)
+        items = tsec.setdefault("items", [])
+        items[:] = [x for x in items if not spine._blank_line(x)]  # blanks give way
+        when = f"{target:%a} {target.day}"
+        copied = not any(spine._line_key(x) == spine._line_key(item)
+                         for x in items)
+        if copied:
+            copy = {k: v for k, v in item.items() if k != "id"}
+            copy["done"] = False
+            # ahead of any birthday lines, which stay last
+            at = next((n for n, x in enumerate(items)
+                       if x.get("kind") == "birthday"), len(items))
+            items.insert(at, copy)
+            self._ensure_ids(tday)
+            self._save_day_for(target, tday)
+        if move:
+            try:
+                section["items"].remove(item)
+            except ValueError:
+                pass
+            self._save_day_for(src_d, src_day)
+        self._render()
+        self._saved_lbl.config(text=(f"Moved to {when}" if move
+                                     else f"Copied to {when}" if copied
+                                     else f"Already on {when}"))
 
     def _hdr_label(self, parent, text, size, bg=HDR_BG, fg=HDR_FG):
         return _tk(tk.Label, parent, text=text, bg=bg, fg=fg, anchor="w",
@@ -1876,7 +2241,15 @@ class AgendasView(ttk.Frame):
     def _section_toolbar(self, parent, section):
         bar = ttk.Frame(parent)
         bar.pack(fill=X, pady=(2, 0))
+        self._format_buttons(bar)
+        ttk.Label(bar, text="select text, then a button · Enter = new line · "
+                            "Tab = detail line · right-click a line for "
+                            "color / period, or to copy it to another day",
+                  font=("Segoe UI", fs(8)), foreground=muted_fg()
+                  ).pack(side=LEFT, padx=8)
 
+    def _format_buttons(self, bar):
+        """B / I / U / 🖍: they act on the text box last typed in."""
         def fmt_btn(label, tag, font):
             _tk(tk.Button, bar, text=label, font=font, relief="groove", bd=1,
                 cursor="hand2", takefocus=0, padx=6,
@@ -1886,11 +2259,6 @@ class AgendasView(ttk.Frame):
         fmt_btn("I", "i", ("Segoe UI", fs(9), "italic"))
         fmt_btn("U", "u", ("Segoe UI", fs(9), "underline"))
         fmt_btn("🖍", "hl", ("Segoe UI", fs(9)))
-        ttk.Label(bar, text="select text, then a button · Enter = new line · "
-                            "Tab = detail line · right-click a line for "
-                            "color / period",
-                  font=("Segoe UI", fs(8)), foreground=muted_fg()
-                  ).pack(side=LEFT, padx=8)
 
     def _apply_to_focused(self, tag):
         txt = getattr(self, "_last_text", None)
@@ -1920,12 +2288,18 @@ class AgendasView(ttk.Frame):
         if section is not None:
             self._commit_text_block(txt, section)
 
-    def _render_text_block(self, parent, section, run):
-        base = fs(10)
+    def _render_text_block(self, parent, section, run, day=None, d=None,
+                           base=None):
+        """One text box for a run of lines.  ``day``/``d`` name the day the
+        box belongs to (the selected day unless the week view says otherwise),
+        so a commit saves the right day."""
+        base = base or fs(10)
         txt = _tk(tk.Text, parent, wrap="word", relief="solid", bd=1,
                   height=max(1, len(run)), font=("Segoe UI", base),
                   bg="#ffffff", fg="#1a1a1a", insertbackground="#1a1a1a",
                   undo=True, padx=6, pady=4)
+        txt._day = day if day is not None else self._day
+        txt._date = d or self._date
         txt.pack(fill=X, pady=1)
         txt.tag_configure("b", font=("Segoe UI", base, "bold"))
         txt.tag_configure("i", font=("Segoe UI", base, "italic"))
@@ -1972,13 +2346,13 @@ class AgendasView(ttk.Frame):
         return txt
 
     @staticmethod
-    def _autosize(txt):
+    def _autosize(txt, minimum=1):
         try:
             if not txt.winfo_exists():
                 return
             n = txt.count("1.0", "end", "displaylines")
             n = n[0] if isinstance(n, tuple) else (n or 1)
-            txt.configure(height=max(1, int(n)))
+            txt.configure(height=max(minimum, int(n)))
         except Exception:
             pass
 
@@ -2103,11 +2477,10 @@ class AgendasView(ttk.Frame):
         out += [x for x in region
                 if id(x) not in seen and id(x) not in run_set]
         section["items"] = items[:lo] + out + items[hi + 1:]
-        self._ensure_ids(self._day)
-        txt._run_items = [x for x in out if x in new_items or id(x) in
-                          {id(y) for y in new_items}]
+        day = getattr(txt, "_day", None) or self._day
+        self._ensure_ids(day)
         txt._run_items = new_items
-        self._save_day()
+        self._save_day_for(getattr(txt, "_date", None) or self._date, day)
 
     def _line_index(self, txt, event):
         return int(txt.index(f"@{event.x},{event.y}").split(".")[0])
@@ -2138,6 +2511,18 @@ class AgendasView(ttk.Frame):
                                command=lambda v=per, l=ln:
                                self._set_line_period(txt, section, l, v))
             menu.add_cascade(label="Show in period", menu=pm)
+        # To another day: the rest of this week, or the next class day.
+        targets = self._line_targets(getattr(txt, "_date", None) or self._date)
+        if targets:
+            menu.add_separator()
+            for label, move in (("Copy line to", False), ("Move line to", True)):
+                sub = tk.Menu(menu, tearoff=0)
+                for t in targets:
+                    sub.add_command(
+                        label=f"{t:%a %b} {t.day}",
+                        command=lambda t=t, m=move, l=ln:
+                        self._copy_line_to(txt, section, l, t, m))
+                menu.add_cascade(label=label, menu=sub)
         menu.add_separator()
         menu.add_command(label="Indent — detail line (no checkbox)",
                          command=lambda l=ln: self._menu_indent(txt, l))
@@ -2167,7 +2552,7 @@ class AgendasView(ttk.Frame):
             item["color"] = val
         else:
             item.pop("color", None)
-        self._save_day()
+        self._save_text_day(txt)
         self._render()
 
     def _set_line_period(self, txt, section, ln, val):
@@ -2178,7 +2563,7 @@ class AgendasView(ttk.Frame):
             item["section"] = val
         else:
             item.pop("section", None)
-        self._save_day()
+        self._save_text_day(txt)
         self._render()
 
     def _taggable_periods(self):
@@ -2380,6 +2765,12 @@ class AgendasView(ttk.Frame):
     def _bandbook_picker(self, parent, section):
         bar = ttk.Frame(parent)
         bar.pack(fill=X, pady=(4, 0))
+        self._book_controls(bar, section, self._day, self._date)
+
+    def _book_controls(self, bar, section, day, d):
+        """Page ▾ Line ▾ ➕ Add · ➕ Add whole page, from the Standard of
+        Excellence book this class uses.  A whole page is for the days the
+        class plays the page down; one line at a time is still there."""
         ttk.Label(bar, text="Add line — Page:",
                   font=("Segoe UI", fs(8))).pack(side=LEFT)
         pages = [str(p) for p in spine.soe_pages(self._book)]
@@ -2392,12 +2783,14 @@ class AgendasView(ttk.Frame):
                                   state="readonly", values=[])
         line_combo.pack(side=LEFT)
 
-        def on_page(_e=None):
+        def page_lines():
             try:
-                lines = spine.soe_lines_on_page(int(page_var.get()), self._book)
+                return spine.soe_lines_on_page(int(page_var.get()), self._book)
             except (ValueError, TypeError):
-                lines = []
-            labels = [f"#{r['n']} {r['title']}" for r in lines]
+                return []
+
+        def on_page(_e=None):
+            labels = [f"#{r['n']} {r['title']}" for r in page_lines()]
             line_combo.config(values=labels)
             line_var.set(labels[0] if labels else "")
         page_combo.bind("<<ComboboxSelected>>", on_page)
@@ -2410,12 +2803,61 @@ class AgendasView(ttk.Frame):
                 n = int(label.split()[0].lstrip("#"))
             except (ValueError, IndexError):
                 return
-            section.setdefault("items", []).append(
-                spine._item(spine.soe_label(n, self._book)))
-            self._save_day()
-            self._render()
+            if not self._add_book_lines(section, [n], day, d):
+                self._saved_lbl.config(text=f"{label} is already on the list")
         ttk.Button(bar, text="➕ Add", bootstyle=(SUCCESS, OUTLINE),
                    command=add).pack(side=LEFT, padx=6)
+
+        def add_page():
+            nums = [r["n"] for r in page_lines()]
+            if not nums:
+                return
+            added = self._add_book_lines(section, nums, day, d)
+            self._saved_lbl.config(
+                text=(f"Added {added} line{'s' if added != 1 else ''} from "
+                      f"page {page_var.get()}" if added
+                      else f"Page {page_var.get()} is already on the list"))
+        ttk.Button(bar, text="➕ Add whole page", bootstyle=(INFO, OUTLINE),
+                   command=add_page).pack(side=LEFT, padx=2)
+
+    def _add_book_lines(self, section, nums, day, d):
+        """Add book lines to a section, skipping any already there (so adding
+        a page twice doesn't double it).  Returns how many were added."""
+        items = section.setdefault("items", [])
+        items[:] = [x for x in items if not spine._blank_line(x)]  # blanks give way
+        have = {(it.get("text") or "").strip() for it in items}
+        added = 0
+        for n in nums:
+            label = spine.soe_label(n, self._book)
+            if label in have:
+                continue
+            items.append(spine._item(label))
+            have.add(label)
+            added += 1
+        if added:
+            self._ensure_ids(day)
+            self._save_day_for(d, day)
+            self._render()
+        return added
+
+    def _book_popup(self, section, day, d):
+        """The week view's band-book picker: a small window, since a column
+        has no room for the dropdowns.  Modal, so the column it adds to
+        can't change underneath it."""
+        win = ttk.Toplevel(master=self.winfo_toplevel())
+        win.title("Band book")
+        win.resizable(False, False)
+        body = ttk.Frame(win, padding=12)
+        body.pack(fill=BOTH, expand=True)
+        ttk.Label(body, text=f"{section.get('title') or 'Band book'} · "
+                             f"{d:%A, %b} {d.day}",
+                  font=("Segoe UI", fs(10), "bold")).pack(anchor=W, pady=(0, 6))
+        bar = ttk.Frame(body)
+        bar.pack(fill=X)
+        self._book_controls(bar, section, day, d)
+        ttk.Button(body, text="Done", bootstyle=SECONDARY,
+                   command=win.destroy).pack(anchor=E, pady=(10, 0))
+        win.grab_set()
 
     def _tm_picker(self, parent, section):
         """Advanced Warm Up: pick a concert key from Technique & Musicianship and
@@ -3158,6 +3600,7 @@ class AgendasView(ttk.Frame):
         self._present.protocol("WM_DELETE_WINDOW", self._close_present)
 
     def _close_present(self):
+        stop_timer_sound()          # a looping alarm must not outlive the window
         if self._present is not None:
             self._present.destroy()
         self._present = None
@@ -3612,7 +4055,7 @@ class _PresentWindow(ttk.Toplevel):
         self._banner_host.pack(fill=X)
         wrap = ttk.Frame(self._stage)
         wrap.pack(fill=BOTH, expand=True)
-        from ui.theme import smooth_wheel, thick_scrollbar
+        from ui.theme import thick_scrollbar, wheel_scrolls
         self._canvas = tk.Canvas(wrap, highlightthickness=0)
         vsb = thick_scrollbar(wrap, self._canvas.yview)
         self._canvas.configure(yscrollcommand=vsb.set)
@@ -3626,7 +4069,8 @@ class _PresentWindow(ttk.Toplevel):
             self._canvas,
             lambda: max(300, int(self._canvas.winfo_height() * 0.6))))
         self._canvas.bind("<Configure>", _width_follower(self._canvas, self._bwin))
-        self._canvas.bind_all("<MouseWheel>", smooth_wheel(self._canvas))
+        wheel_scrolls(self._canvas)
+        self._float = None              # the clock over other programs
 
         self.rebuild()
         self._tick()
@@ -3697,24 +4141,50 @@ class _PresentWindow(ttk.Toplevel):
     def _tick(self):
         if not self.winfo_exists():
             return
-        self._clock.config(text=time.strftime("%I:%M:%S %p").lstrip("0"))
+        now = time.strftime("%I:%M:%S %p").lstrip("0")
+        self._clock.config(text=now)
+        timer_text, danger = "", False
         if self._timer_started:
             if self._timer_running:
                 remaining = max(0, int(round(self._timer_end - time.time())))
                 if remaining <= 0:
-                    # Time's up: stays at 0:00 (red) until Reset or Start.
+                    # Time's up: stays at 0:00 (red) until Reset or Start,
+                    # and the alarm keeps sounding until then as well.
                     self._timer_running = False
                     self._timer_remaining = 0
                     self._go_btn.config(text="▶ Start")
-                    play_timer_sound(self._sound_var.get())
+                    play_timer_sound(self._sound_var.get(), loop=True)
             else:
                 remaining = self._timer_remaining
             m, s = divmod(remaining, 60)
             danger = remaining <= 10
+            timer_text = f"⏱ {m:d}:{s:02d}"
             self._timer_lbl.config(
-                text=f"⏱ {m:d}:{s:02d}",
+                text=timer_text,
                 bootstyle=(INVERSE, DANGER if danger else DARK))
+        self._float_clock(now, timer_text, danger)
         self.after(250, self._tick)
+
+    def _app_in_background(self):
+        """True while another program has the focus: she has gone to OneNote,
+        a browser or Teams, and this window is behind it."""
+        try:
+            return not str(self.tk.call("focus", "-displayof", self._w) or "")
+        except tk.TclError:
+            return False
+
+    def _float_clock(self, now, timer_text, danger):
+        """Keep the clock (and a running timer) on screen over other
+        programs, in the same spot as the header clock, so leaving the
+        agenda for a file or a browser doesn't take the time with it."""
+        if not self._app_in_background():
+            if self._float is not None:
+                self._float.hide()
+            return
+        if self._float is None:
+            self._float = _FloatingClock(self)
+        self._float.show(self.winfo_rootx(), self.winfo_rooty(),
+                         now, timer_text, danger)
 
     def _start_selected(self):
         secs = dict(TIMER_PRESETS).get(self._preset_var.get(), 300)
@@ -4182,6 +4652,66 @@ class _PresentWindow(ttk.Toplevel):
         t.after_idle(_size)
 
 
+class _FloatingClock(tk.Toplevel):
+    """The Present header's clock and timer, floated over other programs.
+
+    Opening OneNote, a browser or Teams on top of the projection took the
+    clock with it.  While another program has the focus this small window
+    sits on top of everything, at the very spot the header clock occupies,
+    showing the time and any running timer (red at the end, like the
+    header).  Clicking it brings the agenda back to the front.
+    """
+
+    def __init__(self, present):
+        super().__init__(present)
+        self.present = present
+        self.overrideredirect(True)         # no title bar: just the readout
+        try:
+            self.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        self.withdraw()
+        colors = ttk.Style().colors
+        self._bg, self._danger = colors.dark, colors.danger
+        font = ("Segoe UI", fs(26), "bold")
+        box = _tk(tk.Frame, self, bg=self._bg)
+        box.pack()
+        self._clock = _tk(tk.Label, box, text="", bg=self._bg, fg="#ffffff",
+                          font=font, cursor="hand2")
+        self._clock.pack(side=LEFT, padx=(18, 10), pady=6)
+        self._timer = _tk(tk.Label, box, text="", bg=self._bg, fg="#ffffff",
+                          font=font, cursor="hand2")
+        for w in (box, self._clock, self._timer):
+            w.bind("<Button-1>", self._back)
+        self._shown = False
+
+    def show(self, x, y, now, timer_text, danger):
+        self._clock.config(text=now)
+        if timer_text:
+            self._timer.config(text=timer_text,
+                               bg=self._danger if danger else self._bg)
+            self._timer.pack(side=LEFT, padx=(14, 18), pady=6)
+        else:
+            self._timer.pack_forget()
+        if not self._shown:
+            # Map first: a position asked of a withdrawn override-redirect
+            # window is forgotten, and it comes up at the screen's corner.
+            self.deiconify()
+            self.geometry(f"+{x}+{y}")
+            self.lift()
+            self._shown = True
+
+    def hide(self):
+        if self._shown:
+            self.withdraw()
+            self._shown = False
+
+    def _back(self, _e=None):
+        self.hide()
+        self.present.lift()
+        self.present.focus_force()
+
+
 # ─────────────────────────────────────────────────────────────── helpers ─────
 
 def _region_setter(canvas, pad):
@@ -4201,14 +4731,16 @@ def _region_setter(canvas, pad):
     return handler
 
 
-def _width_follower(canvas, item):
-    """Keep the page as wide as the canvas, touching it only on a real change."""
+def _width_follower(canvas, item, min_width=None):
+    """Keep the page as wide as the canvas (or ``min_width()``, whichever is
+    more), touching it only on a real change."""
     last = {"w": None}
 
     def handler(e):
-        if e.width != last["w"]:
-            last["w"] = e.width
-            canvas.itemconfig(item, width=e.width)
+        w = max(e.width, min_width() if min_width else 0)
+        if w != last["w"]:
+            last["w"] = w
+            canvas.itemconfig(item, width=w)
     return handler
 
 

@@ -106,9 +106,8 @@ class ImportWizard(ttk.Toplevel):
         win = cv.create_window((0, 0), window=body, anchor="nw")
         body.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
         cv.bind("<Configure>", lambda e: cv.itemconfig(win, width=e.width))
-        cv.bind("<Enter>", lambda e: cv.bind_all(
-            "<MouseWheel>", lambda ev: cv.yview_scroll(int(-ev.delta / 120), "units")))
-        cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(cv)
 
         self._build_inventory(body)
         self._build_rosters(body)
@@ -338,9 +337,8 @@ class ImportWizard(ttk.Toplevel):
         win = cv.create_window((0, 0), window=body, anchor="nw")
         body.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
         cv.bind("<Configure>", lambda e: cv.itemconfig(win, width=e.width))
-        cv.bind("<Enter>", lambda e: cv.bind_all(
-            "<MouseWheel>", lambda ev: cv.yview_scroll(int(-ev.delta / 120), "units")))
-        cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(cv)
 
         opts = ["— skip —"] + list(self._class_options)
         preset = rec["cls"].get()
@@ -621,9 +619,8 @@ class _ReconcileDialog(ttk.Toplevel):
         win = cv.create_window((0, 0), window=inner, anchor="nw")
         inner.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
         cv.bind("<Configure>", lambda e: cv.itemconfig(win, width=e.width))
-        cv.bind("<Enter>", lambda e: cv.bind_all(
-            "<MouseWheel>", lambda ev: cv.yview_scroll(int(-ev.delta / 120), "units")))
-        cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(cv)
         self._vars = {}
         for s in provisional:
             v = tk.BooleanVar(value=True)     # default: deactivate the phantom

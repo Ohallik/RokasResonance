@@ -82,14 +82,8 @@ class InstrumentDialog(ttk.Toplevel):
         content.bind("<Configure>", _on_configure)
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(content_window, width=e.width))
 
-        # Mouse wheel scrolling
-        def _on_mousewheel(event):
-            try:
-                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            except tk.TclError:
-                pass
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        self.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
 
         self._build_sections(content)
 

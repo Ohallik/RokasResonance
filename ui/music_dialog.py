@@ -144,15 +144,9 @@ class MusicDialog(ttk.Toplevel):
         canvas.bind("<Configure>",
                      lambda e: canvas.itemconfig(content_window, width=e.width))
 
-        def _on_mousewheel(event):
-            try:
-                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            except tk.TclError:
-                pass
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        self.protocol("WM_DELETE_WINDOW", lambda: (
-            canvas.unbind_all("<MouseWheel>"), self.destroy()
-        ))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
 
         self._build_sections(content)
 

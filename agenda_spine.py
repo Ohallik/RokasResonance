@@ -674,6 +674,17 @@ def _line_key(it):
     return ((it.get("text") or "").strip(), it.get("image") or "")
 
 
+def section_matches(a, b):
+    """Whether two days' sections are the same section: the same kind (a
+    band-book section is the band book whatever it is titled), or failing a
+    kind, the same title."""
+    ka, kb = a.get("kind") or "", b.get("kind") or ""
+    if ka and ka == kb:
+        return True
+    return ((a.get("title") or "").strip().lower()
+            == (b.get("title") or "").strip().lower())
+
+
 def merge_previous_day(today, src):
     """Add ``src``'s lines (an earlier day) to ``today``, in place.
 
@@ -692,12 +703,7 @@ def merge_previous_day(today, src):
     def is_bday(it, ids):
         return it.get("kind") == "birthday" or (it.get("id") and it.get("id") in ids)
 
-    def same_section(a, b):
-        ka, kb = a.get("kind") or "", b.get("kind") or ""
-        if ka and ka == kb:
-            return True
-        return ((a.get("title") or "").strip().lower()
-                == (b.get("title") or "").strip().lower())
+    same_section = section_matches
 
     secs = today.setdefault("sections", [])
     added = 0

@@ -194,9 +194,8 @@ class SettingsDialog(ttk.Toplevel):
         inner.bind("<Configure>",
                    lambda e: cv.configure(scrollregion=cv.bbox("all")))
         cv.bind("<Configure>", lambda e: cv.itemconfig(win, width=e.width))
-        cv.bind("<Enter>", lambda e: cv.bind_all(
-            "<MouseWheel>", lambda ev: cv.yview_scroll(int(-ev.delta / 120), "units")))
-        cv.bind("<Leave>", lambda e: cv.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(cv)
         return inner
 
     def _build_teacher_tab(self, parent):

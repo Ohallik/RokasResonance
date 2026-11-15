@@ -134,9 +134,8 @@ class JazzView(ttk.Frame):
         self._content.bind(
             "<Configure>", lambda e: _cv.configure(scrollregion=_cv.bbox("all")))
         _cv.bind("<Configure>", lambda e: _cv.itemconfig(_win, width=e.width))
-        _cv.bind("<Enter>", lambda e: _cv.bind_all(
-            "<MouseWheel>", lambda ev: _cv.yview_scroll(int(-ev.delta / 120), "units")))
-        _cv.bind("<Leave>", lambda e: _cv.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(_cv)
 
         self._name_lbl = ttk.Label(self._content, text="",
                                     font=("Segoe UI", fs(13), "bold"), bootstyle=PRIMARY)
@@ -1010,14 +1009,8 @@ class _WindsPanel(ttk.Labelframe):
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfig(win, width=e.width))
 
-        def _wheel(event):
-            try:
-                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            except tk.TclError:
-                pass
-        canvas.bind("<Enter>",
-                    lambda e: canvas.bind_all("<MouseWheel>", _wheel))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
 
 
     # ── data ────────────────────────────────────────────────────────────────

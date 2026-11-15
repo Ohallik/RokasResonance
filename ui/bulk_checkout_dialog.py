@@ -133,11 +133,8 @@ class BulkCheckoutDialog(ttk.Toplevel):
         left.bind("<Configure>", _on_frame_configure)
         left_canvas.bind("<Configure>", _on_canvas_resize)
 
-        def _on_mousewheel(e):
-            left_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
-        left_canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        self.bind("<Destroy>", lambda e: left_canvas.unbind_all("<MouseWheel>")
-                  if e.widget is self else None)
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(left_canvas)
 
         self._build_checkout_form(left)
 
@@ -334,6 +331,8 @@ class BulkCheckoutDialog(ttk.Toplevel):
             ci_canvas.itemconfig(_win_id, width=e.width)
         left.bind("<Configure>", _on_frame_cfg)
         ci_canvas.bind("<Configure>", _on_canvas_cfg)
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(ci_canvas)
 
         self._build_checkin_form(left)
 

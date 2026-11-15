@@ -197,13 +197,8 @@ class SeatingChartView(ttk.Frame):
         cfg.bind("<Configure>", lambda e: cfg_canvas.configure(scrollregion=cfg_canvas.bbox("all")))
         cfg_canvas.bind("<Configure>", lambda e: cfg_canvas.itemconfig(cfg_win, width=e.width))
 
-        def _wheel(event):
-            try:
-                cfg_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            except tk.TclError:
-                pass
-        cfg_canvas.bind("<Enter>", lambda e: cfg_canvas.bind_all("<MouseWheel>", _wheel))
-        cfg_canvas.bind("<Leave>", lambda e: cfg_canvas.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(cfg_canvas)
         self._build_config(cfg)
 
         right = ttk.Frame(body)
@@ -2553,6 +2548,8 @@ class _InstrumentDialog(ttk.Toplevel):
         cw = canvas.create_window((0, 0), window=inner, anchor=NW)
         inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
 
         self._vars = {}
         for s in sorted(roster, key=lambda x: (x["last"].lower(), x["name"].lower())):

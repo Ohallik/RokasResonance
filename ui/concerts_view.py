@@ -106,10 +106,8 @@ class ConcertsView(ttk.Frame):
         canvas.pack(side=LEFT, fill=BOTH, expand=True)
         sb.pack(side=RIGHT, fill=Y)
 
-        def _wheel(e):
-            canvas.yview_scroll(-1 * (e.delta // 120), "units")
-        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
         inner._canvas = canvas          # so refresh() can keep the scroll spot
         return inner
 
@@ -776,9 +774,8 @@ class ConcertsView(ttk.Frame):
         canvas.configure(yscrollcommand=sb.set)
         canvas.pack(side=LEFT, fill=BOTH, expand=True)
         sb.pack(side=RIGHT, fill=Y)
-        canvas.bind_all("<MouseWheel>",
-                        lambda e: canvas.yview_scroll(-1 * (e.delta // 120),
-                                                      "units"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
 
         # ── Format ──
         ttk.Label(body, text="Format", font=("Segoe UI", 9, "bold")
@@ -1603,8 +1600,8 @@ class _HonorsDialog(ttk.Toplevel):
         canvas.configure(yscrollcommand=sb.set)
         canvas.pack(side=LEFT, fill=BOTH, expand=True)
         sb.pack(side=RIGHT, fill=Y)
-        canvas.bind_all("<MouseWheel>",
-                        lambda e: canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
 
         members = [s for s in students
                    if any(e.strip() and e.strip().lower() in

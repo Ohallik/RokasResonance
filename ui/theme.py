@@ -272,13 +272,7 @@ def scroll_body(parent, **pack_kw):
                 lambda e: (canvas.itemconfigure(win_id, width=e.width), _on_inner()))
     canvas.configure(yscrollcommand=sb.set)
     canvas.pack(side="left", fill="both", expand=True)
-
-    def _wheel(e):
-        if inner.winfo_reqheight() > canvas.winfo_height():
-            canvas.yview_scroll(-1 * (e.delta // 120), "units")
-
-    canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
-    canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+    wheel_scrolls(canvas)
     return inner
 
 
@@ -753,7 +747,7 @@ def make_sortable(tree, columns=None):
     return apply
 
 
-def smooth_wheel(canvas, px_per_notch=None):
+def smooth_wheel(canvas, px_per_notch=None, axis="y"):
     """A <MouseWheel> handler that scrolls ``canvas`` by PIXELS, smoothly.
 
     The stock handler moved one "unit" per notch -- a tenth of the window --
@@ -761,9 +755,10 @@ def smooth_wheel(canvas, px_per_notch=None):
     they piled up into a jump.  This scrolls in proportion to the actual
     movement, keeps the fractions, and applies a burst of events as ONE move
     per frame (each move redraws every widget on the page, which is where the
-    flicker came from)."""
+    flicker came from).  ``axis="x"`` scrolls sideways (Shift + wheel)."""
     step = px_per_notch or max(40, fs(10) * 5)
-    canvas.configure(yscrollincrement=1)
+    canvas.configure(**{f"{axis}scrollincrement": 1})
+    scroll = canvas.yview_scroll if axis == "y" else canvas.xview_scroll
     state = {"px": 0.0, "job": None}
 
     def flush():
@@ -772,7 +767,7 @@ def smooth_wheel(canvas, px_per_notch=None):
         state["px"] -= n
         if n:
             try:
-                canvas.yview_scroll(n, "units")
+                scroll(n, "units")
             except tk.TclError:
                 pass
 
@@ -785,6 +780,104 @@ def smooth_wheel(canvas, px_per_notch=None):
                 pass
         return "break"
     return on_wheel
+
+
+# ── one mouse wheel for the whole app ────────────────────────────────────────
+# Tk hands the wheel to whatever widget has the keyboard focus, so every
+# scrolling pane used to grab the ONE app-wide wheel binding for itself when
+# the pointer came in and let go of it when the pointer left.  Thirty panes
+# shared that single binding.  A dialog closing, a pane being rebuilt (which
+# fires <Destroy>, where several of them unbound it), or the pointer crossing
+# from a pane onto the content drawn inside it switched the wheel off for
+# whichever pane was still open; a few panes never had the wheel at all.  Now
+# there is one binding, installed once, that finds the pane under the pointer
+# and scrolls it.  A pane opts in with wheel_scrolls(canvas) and never has to
+# unbind anything.
+
+_WHEEL_ROOT = None
+
+
+def wheel_scrolls(canvas, handler=None, sideways=False):
+    """Scroll ``canvas`` with the mouse wheel whenever the pointer is over it
+    or over anything drawn inside it.
+
+    ``handler`` replaces the default smooth pixel scrolling; ``sideways``
+    adds Shift + wheel for the x axis.  A Text, list or tree inside the pane
+    keeps the wheel while it has room to scroll itself; one that fits its
+    contents hands the wheel on to the pane, so a form full of one-line boxes
+    still scrolls.  Panes nested in panes work the same way, innermost first.
+    """
+    canvas._wheel = (handler or smooth_wheel(canvas),
+                     smooth_wheel(canvas, axis="x") if sideways else None)
+    install_wheel(canvas)
+    return canvas._wheel[0]
+
+
+def install_wheel(widget):
+    """Bind the app-wide wheel once; any widget reaches the application."""
+    global _WHEEL_ROOT
+    if _WHEEL_ROOT is not None:
+        try:
+            if _WHEEL_ROOT.winfo_exists():
+                return
+        except tk.TclError:
+            pass
+    _WHEEL_ROOT = widget._root()
+    widget.bind_all("<MouseWheel>", lambda e: _wheel_dispatch(e, "y"))
+    widget.bind_all("<Shift-MouseWheel>", lambda e: _wheel_dispatch(e, "x"))
+
+
+def _widget_under(event):
+    """The widget under the pointer, or None when that is another program's
+    window or one Tk made for itself (a dropdown's list), which tkinter has
+    no object for."""
+    root = _WHEEL_ROOT
+    try:
+        name = str(root.tk.call("winfo", "containing", "-displayof", root._w,
+                                event.x_root, event.y_root) or "")
+        return root.nametowidget(name) if name else None
+    except (tk.TclError, KeyError, AttributeError):
+        return None
+
+
+def _can_scroll(w, axis):
+    """Whether ``w`` has anything to scroll: a Tk view that fits reads
+    exactly (0.0, 1.0)."""
+    try:
+        a, b = (w.yview() if axis == "y" else w.xview())
+        return not (float(a) <= 0.0 and float(b) >= 1.0)
+    except (tk.TclError, AttributeError, ValueError, TypeError):
+        return False
+
+
+def _wheel_dispatch(event, axis):
+    if axis == "y" and event.state & 0x4:
+        return                      # Ctrl + wheel is zoom, someone else's
+    seq = "<MouseWheel>" if axis == "y" else "<Shift-MouseWheel>"
+    w = _widget_under(event)
+    if w is None:
+        return
+    try:
+        grab = w.grab_current()
+        if grab is not None and grab.winfo_toplevel() is not w.winfo_toplevel():
+            return                  # a dialog is up; what is behind it stays put
+    except tk.TclError:
+        pass
+    while w is not None:
+        cls = w.winfo_class()
+        if cls in ("Scrollbar", "TScrollbar"):
+            return                  # a bar scrolls its own widget
+        if cls in ("Text", "Listbox", "Treeview") and _can_scroll(w, axis):
+            return                  # it scrolled itself (its binding ran first)
+        pair = getattr(w, "_wheel", None)
+        if pair is not None:
+            h = pair[0 if axis == "y" else 1]
+            if h is not None and _can_scroll(w, axis):
+                h(event)
+                return "break"
+        elif w.bind(seq):
+            return                  # a pane with a wheel of its own (seating chart)
+        w = w.master
 
 
 def scrollbar_width() -> int:
@@ -810,15 +903,14 @@ def widen_scrollbars():
     _sb._THIN_SCROLLBAR_THICKNESS = scrollbar_width()
 
 
-def thick_scrollbar(parent, command):
-    """A vertical scrollbar wide enough to grab easily (the themed one is a
-    fixed 8-pixel sliver that the theme will not widen).  Scaled for the
-    display the same way the themed bars are, so every bar is one width."""
+def thick_scrollbar(parent, command, orient="vertical"):
+    """A scrollbar wide enough to grab easily (the themed one is a fixed
+    8-pixel sliver that the theme will not widen).  Scaled for the display
+    the same way the themed bars are, so every bar is one width."""
     width = scrollbar_width()
     try:
         from ttkbootstrap.style.scaling import Scaling
         width = Scaling.for_widget(parent).logical(width, minimum=width)
     except Exception:
         pass
-    return tk.Scrollbar(parent, orient="vertical", command=command,
-                        width=width)
+    return tk.Scrollbar(parent, orient=orient, command=command, width=width)

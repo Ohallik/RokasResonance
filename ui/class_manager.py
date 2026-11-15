@@ -480,13 +480,8 @@ class ClassDialog(ttk.Toplevel):
         content.bind("<Configure>", _resize)
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(cw, width=e.width))
 
-        def _wheel(event):
-            try:
-                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            except tk.TclError:
-                canvas.unbind_all("<MouseWheel>")
-        canvas.bind_all("<MouseWheel>", _wheel)
-        self.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
 
         self._build_form(content)
 

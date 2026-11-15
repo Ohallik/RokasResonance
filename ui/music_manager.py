@@ -611,13 +611,8 @@ class MusicManager(ttk.Frame):
         outer.bind("<Configure>", _resize)
         canvas.bind("<Configure>", _resize)
 
-        def _wheel(e):
-            try:
-                canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
-            except tk.TclError:
-                pass
-        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
 
         self._detail_labels = {}
         _muted = muted_fg()
@@ -1847,10 +1842,8 @@ class _TidyMarkupDialog(ttk.Toplevel):
         lst.bind("<Configure>",
                  lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
-        canvas.bind("<Enter>", lambda e: canvas.bind_all(
-            "<MouseWheel>",
-            lambda ev: canvas.yview_scroll(int(-ev.delta / 120), "units")))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
 
         for row, fixes in self._affected:
             self._add_row(lst, row, fixes)
@@ -3181,11 +3174,8 @@ class _FixSuggestionsDialog(ttk.Toplevel):
         inner.bind("<Configure>", _on_configure)
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(inner_id, width=e.width))
 
-        def _on_wheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-        canvas.bind_all("<MouseWheel>", _on_wheel)
-        self.bind("<Destroy>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
 
         # Group suggestions
         groups = [

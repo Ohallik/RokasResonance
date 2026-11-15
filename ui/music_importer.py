@@ -1016,7 +1016,6 @@ class BatchImportDialog(ttk.Toplevel):
         self._edit_vars: dict[str, tk.StringVar] = {}
         self._edit_notes: tk.Text | None = None
         self._enrich_var    = tk.BooleanVar(value=True)
-        self._mousewheel_bound = False
 
         # Override column config for choir mode
         if mode == "choir":
@@ -1312,14 +1311,8 @@ class BatchImportDialog(ttk.Toplevel):
         inner.bind("<Configure>", _resize)
         canv.bind("<Configure>", _width)
 
-        def _wheel(e):
-            try:
-                canv.yview_scroll(int(-1 * (e.delta / 120)), "units")
-            except tk.TclError:
-                pass
-        canv.bind_all("<MouseWheel>", _wheel)
-        self._mousewheel_bound = True
-        self._canv_ref = canv   # keep ref for unbinding
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canv)
 
         if self._mode == "choir":
             FIELDS = [
@@ -1476,9 +1469,4 @@ class BatchImportDialog(ttk.Toplevel):
         self.destroy()
 
     def _cleanup(self):
-        if self._mousewheel_bound:
-            try:
-                self._canv_ref.unbind_all("<MouseWheel>")
-            except Exception:
-                pass
-            self._mousewheel_bound = False
+        pass                # the wheel is app-wide now; nothing to unbind

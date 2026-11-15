@@ -339,9 +339,8 @@ class InstrumentCarryOverDialog(ttk.Toplevel):
         self._list.bind("<Configure>",
                         lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
-        canvas.bind("<Enter>", lambda e: canvas.bind_all(
-            "<MouseWheel>", lambda ev: canvas.yview_scroll(int(-ev.delta / 120), "units")))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(canvas)
 
         btn = ttk.Frame(self)
         btn.pack(fill=X, padx=16, pady=12)
