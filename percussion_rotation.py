@@ -437,8 +437,89 @@ def _percussion_day(student, day):
     return max(1, (day + 1) // 2)
 
 
+def _repeats(ring):
+    """How many times the ring puts a station right after itself, counting
+    the wrap from the last seat back to the first."""
+    n = len(ring)
+    if n < 2:
+        return 0
+    return sum(1 for i in range(n) if ring[i] == ring[(i + 1) % n])
+
+
+def _no_repeats(seats):
+    """The seats spread round a ring with no station twice in a row.
+
+    A player walks the ring one seat a day, so two equal seats side by side
+    were two snare days (or two mallet days) running.  The even spread
+    usually manages it, but not at the wrap: Mallets first and Mallets last
+    meant most of the section repeated Mallets at the end of every cycle.
+    Swaps that remove a repeat without making another fix that, in a fixed
+    order so the ring is the same every time.  A station holding more than
+    half the seats can't avoid touching itself; it repeats as little as it
+    can."""
+    ring = _interleave(seats)
+    n = len(ring)
+    while _repeats(ring):
+        best = ring
+        for i in range(n):
+            j = (i + 1) % n
+            if ring[i] != ring[j]:
+                continue
+            for k in range(n):
+                if ring[k] == ring[j]:
+                    continue
+                trial = list(ring)
+                trial[j], trial[k] = trial[k], trial[j]
+                if _repeats(trial) < _repeats(best):
+                    best = trial
+                    break
+            if best is not ring:
+                break
+        if best is ring:
+            break                      # no single swap helps
+        ring = best
+    if _repeats(ring) and max(ring.count(x) for x in ring) <= n // 2:
+        # Stuck, but this mix CAN alternate (no station over half): deal the
+        # biggest stations onto every other seat, then fill the gaps.  Less
+        # evenly spread than the swaps, but never two days running.
+        order = sorted(set(ring), key=lambda x: (-ring.count(x), ring.index(x)))
+        dealt = [x for x in order for _ in range(ring.count(x))]
+        slots = list(range(0, n, 2)) + list(range(1, n, 2))
+        out = [None] * n
+        for pos, label in zip(slots, dealt):
+            out[pos] = label
+        if _repeats(out) < _repeats(ring):
+            ring = out
+    return ring
+
+
+def _ring_size(n, stations=None):
+    """How many seats the ring has for ``n`` full-rotation players.
+
+    At least ``n`` (everyone needs a seat), and never fewer than MIN_RING (or
+    one per custom station).  With the teacher's own shares it rounds up to a
+    whole number of her pattern when that leaves only a spare seat or two:
+    Mallets 2, SD 2, Timp/aux 1, BD/SD 1 is a 6-day pattern, and 11 players
+    on a 12-seat ring get exactly 2, 2, 1 and 1 in every 6 days, where an
+    11-seat ring had to round SD down to 3 in 11.  The spare seat is just an
+    empty spot that moves round with everyone else."""
+    custom = norm_stations(stations)
+    floor = max(MIN_RING, len(custom)) if custom else MIN_RING
+    size = max(n, floor)
+    if custom:
+        from math import gcd
+        from functools import reduce
+        shares = [s["share"] for s in custom]
+        total = sum(shares) // reduce(gcd, shares)
+        whole = -(-size // total) * total
+        if whole - size <= max(1, n // 5):
+            size = whole
+    return size
+
+
 def build_ring(n, class_type, stations=None):
-    """Return the evenly-spread ring of seats for ``n`` full-rotation players.
+    """Return the ring of seats for ``n`` full-rotation players, spread so
+    no station comes up two days running.
 
     The ring never shrinks below MIN_RING seats: with 1-4 earned players the
     extra seats are simply unmanned each day, and the players advance through
@@ -446,9 +527,8 @@ def build_ring(n, class_type, stations=None):
     list the ring is at least long enough to visit every station."""
     if n <= 0:
         return []
-    custom = norm_stations(stations)
-    floor = max(MIN_RING, len(custom)) if custom else MIN_RING
-    return _interleave(allocate_seats(max(n, floor), class_type, stations))
+    return _no_repeats(allocate_seats(_ring_size(n, stations), class_type,
+                                      stations))
 
 
 def cycle_length(students, mallet_subrotation=True, inventory=None,
@@ -482,14 +562,12 @@ def cycle_length(students, mallet_subrotation=True, inventory=None,
     full = [s for s in rest if not s.get("mallets_only")]
     mo = [s for s in rest if s.get("mallets_only")]
     inv = _reduce_inventory(inventory, _reserved_instruments(limited))
-    custom = norm_stations(stations)
-    ring_floor = max(MIN_RING, len(custom)) if custom else MIN_RING
     lengths = []
 
     def need(group, n):
         lengths.append(n * (2 if any(_is_alternating(s) for s in group) else 1))
     if full:
-        need(full, max(len(full), ring_floor))
+        need(full, _ring_size(len(full), stations))
     if mo:
         need(mo, len(_mallet_slot_walk(len(mo), inv))
              if mallet_subrotation else 1)
@@ -528,6 +606,19 @@ def _mallets_only_station(j, mo_count, day, inventory, mallet_subrotation):
         return MALLETS
     slots = _mallet_slot_walk(mo_count, inventory)
     return slots[(day - 1 + j) % len(slots)]
+
+
+def player_balance(n, class_type, stations=None):
+    """What one full-rotation player gets, for the station editor's preview:
+    ``(ring, [(station, seats in the ring)])`` in the station list's order.
+    A station with k seats on an L-seat ring comes up k times every L days
+    for every player, and has k players on it on a typical day."""
+    ring = build_ring(n, class_type, stations)
+    order = []
+    for label in [s["name"] for s in (norm_stations(stations) or [])] + ring:
+        if label not in order and label in ring:
+            order.append(label)
+    return ring, [(label, ring.count(label)) for label in order]
 
 
 def station_summary(n, class_type, stations=None):

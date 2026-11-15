@@ -343,18 +343,10 @@ class PercussionRotationView(ttk.Frame):
             lambda e: _cv.configure(scrollregion=_cv.bbox("all")))
         _cv.bind("<Configure>", lambda e: _cv.itemconfig(_cwin, width=e.width))
 
-        def _pane_wheel(ev):
-            # The two treeviews scroll themselves; the pane only scrolls when
-            # the wheel is over everything else.
-            w = _cv.winfo_containing(ev.x_root, ev.y_root)
-            while w is not None:
-                if isinstance(w, ttk.Treeview):
-                    return
-                w = getattr(w, "master", None)
-            _cv.yview_scroll(int(-ev.delta / 120), "units")
-        _cv.bind("<Enter>",
-                 lambda e: _cv.bind_all("<MouseWheel>", _pane_wheel))
-        _cv.bind("<Leave>", lambda e: _cv.unbind_all("<MouseWheel>"))
+        # The two treeviews scroll themselves while they have room; the
+        # pane scrolls when the wheel is over everything else.
+        from ui.theme import wheel_scrolls
+        wheel_scrolls(_cv)
 
         # -- Header row: section name + composition summary --
         self._section_lbl = ttk.Label(self._content, text="",
@@ -526,13 +518,23 @@ class PercussionRotationView(ttk.Frame):
                                     title="No Section", parent=self)
             return
         import json
+        payload = section_payload(self.db, g)
+        full = sum(1 for s in payload
+                   if not s["mallets_only"] and not s["allowed_stations"])
+        others = [o for o in self.db.get_percussion_groups()
+                  if o["id"] != g["id"]]
         dlg = _StationsDialog(self.winfo_toplevel(), g["name"], g["class_type"],
-                              self._stations(g))
+                              self._stations(g), players=full,
+                              section_size=len(payload), others=others)
         self.wait_window(dlg)
         if not dlg.saved:
             return
-        val = json.dumps(dlg.stations) if dlg.stations else None
-        self.db.update_percussion_group(g["id"], {"stations": val})
+        for target in [g] + [o for o in others if o["id"] in dlg.also]:
+            # Saved unchanged from a section's own built-in list, it stores
+            # nothing, so that section keeps following the built-in rotation.
+            same = dlg.items == pr.default_stations(target["class_type"])
+            val = None if same else json.dumps(dlg.items)
+            self.db.update_percussion_group(target["id"], {"stations": val})
         self._render()
 
     def _edit_equipment(self):
@@ -1203,11 +1205,21 @@ class _StationsDialog(ttk.Toplevel):
     number, not a spreadsheet.
     """
 
-    def __init__(self, parent, section_name, class_type, current=None):
+    def __init__(self, parent, section_name, class_type, current=None,
+                 players=0, section_size=0, others=()):
         super().__init__(master=parent)
         self.saved = False
         self.stations = None
+        self.items = None
+        self.also = set()
         self._class_type = class_type
+        # The preview is worked out for this section's real size: how often a
+        # player gets a station depends on how many share the ring.  Before
+        # anyone has earned the full rotation, show it for the whole section,
+        # which is what it will be once they have.
+        self._players = players or section_size or pr.MIN_RING
+        self._players_earned = bool(players)
+        self._others = list(others)
         self.title(f"Rotation Stations — {section_name}")
         self.grab_set()
         self.lift()
@@ -1228,14 +1240,21 @@ class _StationsDialog(ttk.Toplevel):
                    bootstyle=(SECONDARY, OUTLINE),
                    command=self._use_builtin).pack(side=LEFT, padx=4)
 
-        body = ttk.Frame(self)
-        body.pack(fill=BOTH, expand=True, padx=16, pady=10)
+        # Scrolls: with the preview and the other sections listed it runs
+        # past the bottom of a laptop screen.
+        from ui.theme import scroll_body
+        body = scroll_body(self, padx=16, pady=10)
         ttk.Label(body, text="One row per station. “Share” is how much of the "
                              "rotation that station is worth — a station with "
                              "share 4 comes up twice as often as one with "
-                             "share 2.",
+                             "share 2. Think of the shares as days: Mallets 2, "
+                             "SD 2, Timp/aux 1, BD/SD 1 is a 6-day pattern "
+                             "each player walks. The box below the list shows "
+                             "what that means for this section.",
                   font=("Segoe UI", 9), wraplength=430, justify=LEFT).pack(anchor=W)
         for bullet in [
+                "Nobody gets the same station two days in a row, unless one "
+                "station is more than half the rotation.",
                 "Delete a row to drop that station entirely (no drum set? "
                 "remove it and nobody is ever assigned to it).",
                 "Add your own — Congas, Cajón, Timpani on its own, "
@@ -1274,6 +1293,27 @@ class _StationsDialog(ttk.Toplevel):
         ttk.Button(add, text="➕ Add Station", bootstyle=(SUCCESS, OUTLINE),
                    command=lambda: self._add_row("", 1)).pack(side=LEFT)
         self._pct_lbl.pack(anchor=W, pady=(10, 0))
+
+        # Other sections can take the same list on Save.  This one only by
+        # default: each class is balanced on its own unless she says so.
+        self._also_vars = []
+        if self._others:
+            ttk.Label(body, text="Also use this list for:",
+                      font=("Segoe UI", 9, "bold")).pack(anchor=W, pady=(12, 0))
+            grid = ttk.Frame(body)
+            grid.pack(fill=X)
+            for i, o in enumerate(self._others):
+                v = tk.BooleanVar(value=False)
+                kind = ("" if o["class_type"] == class_type
+                        else "  (Intermediate/Advanced)"
+                        if o["class_type"] == pr.INT_ADV else "  (Entry)")
+                ttk.Checkbutton(grid, text=o["name"] + kind, variable=v).grid(
+                    row=i, column=0, sticky=W, pady=1)
+                self._also_vars.append((o["id"], v))
+            ttk.Button(body, text="Check all", bootstyle=(SECONDARY, LINK),
+                       padding=0,
+                       command=lambda: [v.set(True) for _i, v in self._also_vars]
+                       ).pack(anchor=W)
 
         for s in (current or pr.default_stations(class_type)):
             self._add_row(s["name"], s["share"], s.get("max"))
@@ -1338,11 +1378,39 @@ class _StationsDialog(ttk.Toplevel):
         if not items or not total:
             self._pct_lbl.config(text="Add at least one station.")
             return
-        parts = [f"{i['name']} {round(100 * i['share'] / total)}%"
-                 + (f" (at most {i['max']})" if i.get("max") else "")
-                 for i in items]
-        self._pct_lbl.config(
-            text="Roughly:  " + " · ".join(parts) + "  of each player's days.")
+        n = self._players
+        ring, balance = pr.player_balance(n, self._class_type, items)
+        size = len(ring)
+        if not size:
+            self._pct_lbl.config(text="")
+            return
+
+        def often(count):
+            per5 = count * 5 / size
+            if per5 >= 0.95:
+                return f"{per5:.1f}".rstrip("0").rstrip(".") + " a week"
+            return f"every {size / count:.0f} days"
+        who = (f"With {n} players on the full rotation"
+               if self._players_earned else
+               f"Once all {n} have earned the full rotation")
+        lines = [f"{who}, each player gets (5 class days = a week):",
+                 "    " + " · ".join(f"{label} {often(c)}"
+                                     for label, c in balance)]
+        spare = size - n
+        lines.append("On a typical day:  " + ", ".join(
+            f"{c} on {label}" for label, c in balance)
+            + (f"  (and {spare} empty spot{'s' if spare != 1 else ''} that "
+               "moves round)" if spare > 0 else ""))
+        if pr._repeats(ring):
+            top = max(set(ring), key=ring.count)
+            lines.append(f"⚠ {top} is more than half the rotation, so some "
+                         "days it comes up two days running.")
+        else:
+            lines.append("✓ Nobody gets the same station two days in a row.")
+        if any(label == pr.PAD for label, _c in balance):
+            lines.append("A station's “At most” sends the players over it to "
+                         "a practice pad.")
+        self._pct_lbl.config(text="\n".join(lines))
 
     def _use_builtin(self):
         for row, *_rest in list(self._rows):
@@ -1364,6 +1432,8 @@ class _StationsDialog(ttk.Toplevel):
             self.stations = None
         else:
             self.stations = items
+        self.items = items
+        self.also = {gid for gid, v in self._also_vars if v.get()}
         self.saved = True
         self.destroy()
 
